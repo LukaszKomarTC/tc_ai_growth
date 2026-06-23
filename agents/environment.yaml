@@ -1,0 +1,14 @@
+# Managed Agents environment (control plane). Apply once with the ant CLI:
+#   ant beta:environments create < agents/environment.yaml
+#
+# Cloud sandbox with limited egress: the agent only needs to reach our orchestrator's custom-tool
+# channel and (if any MCP servers are added later) their domains. Host-side custom tools mean the
+# Google/Meta secrets never live here — see docs/SETUP.md.
+name: tc-growth-env
+config:
+  type: cloud
+  networking:
+    type: limited
+    allow_package_managers: false
+    allow_mcp_servers: true
+    allowed_hosts: []

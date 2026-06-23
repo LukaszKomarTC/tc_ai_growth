@@ -1,0 +1,53 @@
+"""Central configuration and KPI definitions (provider-neutral)."""
+
+from __future__ import annotations
+
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    """Environment-driven settings. Secrets come from the environment / a vault, never code."""
+
+    model_config = SettingsConfigDict(env_prefix="TC_", env_file=".env", extra="ignore")
+
+    # --- WordPress connector ---
+    wp_base_url: str = Field(default="", description="e.g. https://tossacycling.com")
+    wp_user: str = Field(default="", description="Dedicated agent WordPress user login")
+    wp_app_password: str = Field(default="", description="WordPress Application Password")
+    wp_signing_key: str = Field(default="", description="Shared HMAC key (matches plugin)")
+
+    # --- Google ---
+    gsc_site_url: str = Field(default="", description="Search Console property, e.g. sc-domain:tossacycling.com")
+    ga4_property_id: str = Field(default="", description="GA4 numeric property id")
+    google_ads_customer_id: str = Field(default="", description="Google Ads customer id (no dashes)")
+    pagespeed_api_key: str = Field(default="", description="PageSpeed Insights API key")
+
+    # --- Meta ---
+    meta_ad_account_id: str = Field(default="", description="act_<id>")
+
+    # --- AI runtime (only used by runtime/) ---
+    ai_provider: str = Field(default="anthropic", description="anthropic | openai | gemini")
+    ai_model: str = Field(default="claude-opus-4-8")
+    ai_model_cheap: str = Field(default="claude-haiku-4-5")
+
+    # --- Reporting ---
+    report_channel: str = Field(default="email", description="email | telegram")
+    report_recipient: str = Field(default="lukaszkomar@gmail.com")
+
+
+# Business KPIs the agent reasons against. Provider-neutral; referenced by core/ and the prompts.
+KPIS = {
+    "bookings": "Count of completed WooCommerce rental/tour orders.",
+    "revenue": "Gross revenue from completed orders, by channel and product.",
+    "conversion_rate": "Sessions -> bookings, by landing page and channel.",
+    "ctr": "Search Console click-through rate per query/page.",
+    "avg_position": "Average Search Console position per query/page.",
+    "ad_spend": "Spend per campaign across Google Ads and Meta.",
+    "cost_per_booking": "Ad spend / tracked bookings per campaign.",
+    "roas": "Revenue attributed / ad spend per campaign.",
+}
+
+
+def get_settings() -> Settings:
+    return Settings()

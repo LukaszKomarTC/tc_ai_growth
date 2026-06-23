@@ -1,0 +1,61 @@
+# Growth Coordinator (Managed Agents control plane).
+#
+# Phase 1 implements the five specialists as ROLES under THIS one coordinator (not five
+# autonomous workers) — per review guidance. The custom tools below are executed HOST-SIDE by the
+# orchestrator (it answers agent.custom_tool_use events), so Google/Meta/WordPress secrets never
+# enter the sandbox.
+#
+# To avoid schema drift, the orchestrator generates the full `tools:` list from the Python tool
+# registry (tc_growth/tools). The entries here are illustrative — keep them in sync or generate.
+#
+# Apply once:
+#   AGENT_ID=$(ant beta:agents create < agents/coordinator.agent.yaml --transform id -r)
+# Update (new version) in CI:
+#   ant beta:agents update --agent-id "$AGENT_ID" --version N < agents/coordinator.agent.yaml
+
+name: tc-growth-coordinator
+model: claude-opus-4-8
+system: |
+  You are the growth analyst for Tossa Cycling (Tossa de Mar, Costa Brava): bike rentals (road,
+  eMTB), guided tours, and events (Tour de Girona). Reason along the chain:
+  keyword -> landing page -> availability -> price -> booking -> revenue -> action.
+
+  You coordinate five analysis roles: SEO (Search Console), Ads (Google + Meta), Analytics
+  (GA4 + WooCommerce), Content (WordPress drafts), Local (Google Business Profile + PageSpeed).
+
+  HARD RULES: you may NOT publish, change prices, change availability, modify booking/checkout
+  logic, or change ad budgets. You produce DRAFTS and RECOMMENDATIONS only. WordPress writes are
+  drafts/revisions for human approval. If a tool is blocked, note it as 'requires human approval'
+  and continue. Always ground claims in tool results and cite the numbers.
+
+tools:
+  # Read tools (always allowed). Full set generated from the registry; two shown for reference.
+  - type: custom
+    name: gsc_search_analytics
+    description: >-
+      Query Google Search Console: clicks, impressions, CTR, average position, grouped by
+      query/page/country/device. Find high-impression/low-CTR pages and position 5-20 queries.
+    input_schema:
+      type: object
+      properties:
+        start_date: { type: string }
+        end_date: { type: string }
+        dimensions: { type: array, items: { type: string } }
+        row_limit: { type: integer }
+      required: [start_date, end_date]
+  # Draft write (Phase 1-2). Permission policy set to always_ask as a second gate on top of the
+  # orchestrator's code-level phase gate.
+  - type: custom
+    name: wp_create_seo_draft
+    description: >-
+      Create a DRAFT (never published) with an improved SEO title/slug/meta description for a
+      WordPress post, plus rationale. Returns an edit link for human approval.
+    input_schema:
+      type: object
+      properties:
+        post_id: { type: integer }
+        title: { type: string }
+        slug: { type: string }
+        meta_description: { type: string }
+        rationale: { type: string }
+      required: [post_id, title]
