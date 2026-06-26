@@ -34,6 +34,14 @@ class Settings(BaseSettings):
     # --- Reporting ---
     report_channel: str = Field(default="email", description="email | telegram")
     report_recipient: str = Field(default="lukaszkomar@gmail.com")
+    report_sender: str = Field(default="", description="From address; defaults to smtp_user")
+
+    # SMTP (email delivery). When unset, delivery falls back to stdout (never raises).
+    smtp_host: str = Field(default="")
+    smtp_port: int = Field(default=587)
+    smtp_user: str = Field(default="")
+    smtp_password: str = Field(default="")
+    smtp_starttls: bool = Field(default=True)
 
 
 # Business KPIs the agent reasons against. Provider-neutral; referenced by core/ and the prompts.

@@ -60,8 +60,31 @@ def deliver(report: str) -> None:
 
 
 def _deliver_email(report: str) -> None:
-    # Wire to your transactional email provider (SES/Postmark/SMTP). Left minimal on purpose.
-    print(f"[email -> {get_settings().report_recipient}]\n{report}")
+    """Send via SMTP. Falls back to stdout (and never raises) when SMTP is not configured or a
+    send fails, so a scheduled run is never broken by a delivery problem."""
+    import smtplib
+    from email.message import EmailMessage
+
+    s = get_settings()
+    if not s.smtp_host or not s.report_recipient:
+        print(f"[email not configured -> {s.report_recipient}]\n{report}")
+        return
+
+    msg = EmailMessage()
+    msg["Subject"] = "Tossa Cycling — Growth Report"
+    msg["From"] = s.report_sender or s.smtp_user or s.report_recipient
+    msg["To"] = s.report_recipient
+    msg.set_content(report)
+
+    try:
+        with smtplib.SMTP(s.smtp_host, s.smtp_port, timeout=30) as smtp:
+            if s.smtp_starttls:
+                smtp.starttls()
+            if s.smtp_user:
+                smtp.login(s.smtp_user, s.smtp_password)
+            smtp.send_message(msg)
+    except Exception as exc:  # pragma: no cover - delivery must never break a scheduled run
+        print(f"[email delivery failed: {exc}]\n{report}")
 
 
 def _deliver_telegram(report: str) -> None:
