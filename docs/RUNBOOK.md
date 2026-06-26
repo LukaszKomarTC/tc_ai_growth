@@ -32,9 +32,18 @@ weekly report). Raising the phase is a deliberate code/config change, reviewed b
 
 ## Guardrail verification (run after any change)
 
+**Run `make check` before every push.** It mirrors CI exactly: an editable install
+(`pip install -e ".[dev]"` — exercises the packaging/build backend), an import smoke check,
+the full pytest suite (phase gate, forbidden capabilities, portability invariant, runtime
+driver, delivery routing), and `php -l` over the connector.
+
 ```sh
-cd orchestrator && pytest -q   # phase gate, forbidden capabilities, portability invariant
+make check
 ```
+
+A plain `cd orchestrator && pytest -q` runs the tests but does **not** exercise the build — it
+will miss packaging errors (e.g. setuptools flat-layout discovery) that CI catches. Use
+`make check` as the gate.
 
 Then attempt a draft tool in `Phase.READ_ONLY` and confirm it is blocked and logged.
 
