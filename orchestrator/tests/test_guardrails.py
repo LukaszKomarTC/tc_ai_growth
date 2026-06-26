@@ -63,3 +63,9 @@ def test_registry_populates():
     reg = load_all()
     names = {t.name for t in reg.all()}
     assert {"gsc_search_analytics", "wp_create_seo_draft", "pagespeed_check"} <= names
+
+
+def test_woo_revenue_attribution_is_read_only_tool():
+    names = {t.name for t in load_all().all()}
+    assert "woo_revenue_attribution" in names
+    assert is_tool_allowed("woo_revenue_attribution", Phase.READ_ONLY)

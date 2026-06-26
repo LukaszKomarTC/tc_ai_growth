@@ -19,7 +19,9 @@ Produce this week's growth report for Tossa Cycling. Steps:
 1. Pull Search Console for the last 28 days (group by query, then by page) and identify the top
    SEO opportunities (high-impression/low-CTR and position 5-20).
 2. Pull GA4 for the last 28 days (channel group + landing page) to connect traffic to bookings
-   and revenue; flag pages that get traffic but don't convert.
+   and revenue; flag pages that get traffic but don't convert. Cross-check against
+   woo_revenue_attribution (actual WooCommerce bookings/revenue by source) to ground the
+   channel ROI in real orders, not just GA4 estimates.
 3. Pull Google Ads and Meta Ads performance; flag wasted spend (>=50 EUR, 0 conversions) and
    best performers.
 4. Check PageSpeed on the home page and the road-bike-rental page.

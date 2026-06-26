@@ -28,6 +28,7 @@ TOOL_MIN_PHASE: dict[str, Phase] = {
     "pagespeed_check": Phase.READ_ONLY,
     "wp_list": Phase.READ_ONLY,
     "wp_seo_audit": Phase.READ_ONLY,
+    "woo_revenue_attribution": Phase.READ_ONLY,
     # draft writes — Phase 1-2
     "wp_create_seo_draft": Phase.DRAFTS,
     "wp_create_product_revision": Phase.DRAFTS,

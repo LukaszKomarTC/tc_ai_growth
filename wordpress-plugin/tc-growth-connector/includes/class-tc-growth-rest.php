@@ -59,6 +59,15 @@ class TC_Growth_REST {
 			'args'                => $this->collection_args(),
 		) );
 
+		register_rest_route( TC_GROWTH_NAMESPACE, '/orders-attribution', array(
+			'methods'             => WP_REST_Server::READABLE,
+			'callback'            => array( $this, 'get_orders_attribution' ),
+			'permission_callback' => $read,
+			'args'                => array(
+				'days' => array( 'type' => 'integer', 'default' => 28, 'minimum' => 1, 'maximum' => 365 ),
+			),
+		) );
+
 		register_rest_route( TC_GROWTH_NAMESPACE, '/seo-audit-data', array(
 			'methods'             => WP_REST_Server::READABLE,
 			'callback'            => array( $this, 'get_seo_audit_data' ),
@@ -249,6 +258,71 @@ class TC_Growth_REST {
 
 		TC_Growth_Audit::log( wp_get_current_user()->user_login, 'read-seo-audit', 'post', $post_id );
 		return rest_ensure_response( $data );
+	}
+
+	/**
+	 * Revenue attribution: recent completed orders aggregated by acquisition source.
+	 *
+	 * Read-only. Powers the keyword -> ... -> revenue chain by tying bookings to the channel/
+	 * source that produced them, using WooCommerce's built-in Order Attribution meta
+	 * (_wc_order_attribution_*). Never modifies orders.
+	 */
+	public function get_orders_attribution( WP_REST_Request $request ) {
+		if ( ! function_exists( 'wc_get_orders' ) ) {
+			return new WP_Error( 'tc_growth_no_woo', __( 'WooCommerce not active.', 'tc-growth-connector' ), array( 'status' => 412 ) );
+		}
+
+		$days  = (int) $request->get_param( 'days' );
+		$after = gmdate( 'Y-m-d H:i:s', time() - ( $days * DAY_IN_SECONDS ) );
+
+		$orders = wc_get_orders( array(
+			'status'       => array( 'wc-completed', 'wc-processing' ),
+			'date_created' => '>=' . $after,
+			'limit'        => 500,
+			'return'       => 'objects',
+		) );
+
+		$by_source = array();
+		$totals    = array( 'orders' => 0, 'revenue' => 0.0 );
+
+		foreach ( $orders as $order ) {
+			$source = $order->get_meta( '_wc_order_attribution_utm_source' );
+			if ( ! $source ) {
+				$source = $order->get_meta( '_wc_order_attribution_source_type' );
+			}
+			$source = $source ? sanitize_text_field( $source ) : 'unknown';
+			$total  = (float) $order->get_total();
+
+			if ( ! isset( $by_source[ $source ] ) ) {
+				$by_source[ $source ] = array( 'orders' => 0, 'revenue' => 0.0 );
+			}
+			$by_source[ $source ]['orders']++;
+			$by_source[ $source ]['revenue'] += $total;
+			$totals['orders']++;
+			$totals['revenue'] += $total;
+		}
+
+		// Round and sort by revenue desc.
+		$rows = array();
+		foreach ( $by_source as $source => $agg ) {
+			$rows[] = array(
+				'source'  => $source,
+				'orders'  => $agg['orders'],
+				'revenue' => round( $agg['revenue'], 2 ),
+			);
+		}
+		usort( $rows, static function ( $a, $b ) {
+			return $b['revenue'] <=> $a['revenue'];
+		} );
+
+		TC_Growth_Audit::log( wp_get_current_user()->user_login, 'read-orders-attribution', null, null, array( 'days' => $days, 'orders' => $totals['orders'] ) );
+
+		return rest_ensure_response( array(
+			'days'       => $days,
+			'currency'   => function_exists( 'get_woocommerce_currency' ) ? get_woocommerce_currency() : '',
+			'totals'     => array( 'orders' => $totals['orders'], 'revenue' => round( $totals['revenue'], 2 ) ),
+			'by_source'  => $rows,
+		) );
 	}
 
 	/* -------------------------------------------------------------- DRAFT WRITES -------- */

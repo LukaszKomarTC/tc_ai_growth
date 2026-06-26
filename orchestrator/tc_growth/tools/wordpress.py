@@ -73,6 +73,11 @@ def _list(args: dict[str, Any]) -> Any:
     return _request("GET", f"/{kind}?page={page}&per_page={per_page}")
 
 
+def _orders_attribution(args: dict[str, Any]) -> Any:
+    days = int(args.get("days", 28))
+    return _request("GET", f"/orders-attribution?days={days}")
+
+
 def _create_seo_draft(args: dict[str, Any]) -> Any:
     import json
 
@@ -113,6 +118,18 @@ registry.register(Tool(
         "required": ["kind"],
     },
     handler=_list,
+))
+
+registry.register(Tool(
+    name="woo_revenue_attribution",
+    description="WooCommerce revenue & bookings for the last N days, aggregated by acquisition "
+                "source (WooCommerce Order Attribution). Use to tie SEO/ad channels to actual "
+                "bookings and revenue — the end of the keyword->revenue chain.",
+    input_schema={
+        "type": "object",
+        "properties": {"days": {"type": "integer", "default": 28, "minimum": 1, "maximum": 365}},
+    },
+    handler=_orders_attribution,
 ))
 
 registry.register(Tool(
