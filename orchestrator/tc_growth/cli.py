@@ -19,14 +19,22 @@ from .core.approval import Phase
 from .tools.load import load_all
 
 
-def _build_runtime():
-    """Instantiate the configured provider runtime. Only this function knows the provider."""
-    s = get_settings()
-    if s.ai_provider == "anthropic":
-        from .runtime.anthropic_runtime import AnthropicRuntime
+def _build_runtime(kind: str = "messages"):
+    """Instantiate the configured provider runtime. Only this function knows the provider.
 
-        return AnthropicRuntime()
-    raise SystemExit(f"Unknown / unconfigured ai_provider: {s.ai_provider}")
+    kind="messages"  -> local Messages-API tool loop (no Managed Agents needed; good for smoke).
+    kind="managed"   -> hosted Managed Agents session driver (needs TC_COORDINATOR_AGENT_ID + TC_ENV_ID).
+    """
+    s = get_settings()
+    if s.ai_provider != "anthropic":
+        raise SystemExit(f"Unknown / unconfigured ai_provider: {s.ai_provider}")
+    if kind == "managed":
+        from .runtime.managed_agents import ManagedAgentsRuntime
+
+        return ManagedAgentsRuntime()
+    from .runtime.anthropic_runtime import AnthropicRuntime
+
+    return AnthropicRuntime()
 
 
 def cmd_list_tools() -> int:
@@ -42,10 +50,10 @@ def cmd_smoke(name: str, raw_args: str) -> int:
     return 0 if payload.get("ok") else 1
 
 
-def cmd_weekly_report() -> int:
+def cmd_weekly_report(kind: str = "messages") -> int:
     from .report import build_weekly_report, deliver
 
-    runtime = _build_runtime()
+    runtime = _build_runtime(kind)
     report = build_weekly_report(runtime, phase=Phase.READ_ONLY)
     deliver(report)
     return 0
@@ -62,7 +70,8 @@ def main(argv: list[str] | None = None) -> int:
     if cmd == "smoke":
         return cmd_smoke(rest[0], rest[1] if len(rest) > 1 else "")
     if cmd == "weekly-report":
-        return cmd_weekly_report()
+        # Optional: `weekly-report managed` to use the hosted Managed Agents runtime.
+        return cmd_weekly_report(rest[0] if rest else "messages")
     print(__doc__)
     return 1
 
