@@ -29,6 +29,7 @@ TOOL_MIN_PHASE: dict[str, Phase] = {
     "wp_list": Phase.READ_ONLY,
     "wp_seo_audit": Phase.READ_ONLY,
     "woo_revenue_attribution": Phase.READ_ONLY,
+    "budget_recommendations": Phase.READ_ONLY,  # dry-run analysis, changes nothing
     # draft writes — Phase 1-2
     "wp_create_seo_draft": Phase.DRAFTS,
     "wp_create_product_revision": Phase.DRAFTS,
@@ -37,6 +38,9 @@ TOOL_MIN_PHASE: dict[str, Phase] = {
     "draft_gbp_post": Phase.DRAFTS,
     # Phase 3 — controlled execution (live changes). Also require human confirmation (ALWAYS_ASK).
     "publish_seo_draft": Phase.CONTROLLED_EXECUTION,
+    # Declared but intentionally NOT registered as a tool yet — awaits ad-platform write access.
+    # Listed here so the gate is explicit; until a handler exists it cannot be dispatched.
+    "ad_budget_change": Phase.CONTROLLED_EXECUTION,
 }
 
 # Tools that ALWAYS require an explicit human confirmation, regardless of phase. In an autonomous

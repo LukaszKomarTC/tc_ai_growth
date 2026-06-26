@@ -18,5 +18,6 @@ def load_all() -> ToolRegistry:
     from . import meta_ads  # noqa: F401        Meta Ads
     from . import gbp  # noqa: F401             local
     from . import pagespeed  # noqa: F401       performance
+    from . import budget  # noqa: F401          ad-budget recommendations (dry-run)
 
     return registry

@@ -23,7 +23,9 @@ Produce this week's growth report for Tossa Cycling. Steps:
    woo_revenue_attribution (actual WooCommerce bookings/revenue by source) to ground the
    channel ROI in real orders, not just GA4 estimates.
 3. Pull Google Ads and Meta Ads performance; flag wasted spend (>=50 EUR, 0 conversions) and
-   best performers.
+   best performers. Pass the campaign rows to budget_recommendations to get bounded, capped
+   budget-change suggestions (dry-run — these are recommendations for human approval, never
+   applied).
 4. Check PageSpeed on the home page and the road-bike-rental page.
 Then output four sections: SEO Opportunities, Ads Efficiency, Revenue Insights, Recommended
 Actions (prioritised). For tools that are blocked or not yet provisioned, note them under
