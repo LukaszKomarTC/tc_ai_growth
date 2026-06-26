@@ -17,9 +17,25 @@ weekly report). Raising the phase is a deliberate code/config change, reviewed b
 
 ## Approving drafts
 
-1. Drafts appear in WordPress as draft posts / native revisions with a `_tc_growth_rationale`.
-2. Review the diff and the rationale; edit if needed; publish from the WordPress editor.
+1. Drafts appear in WordPress as draft posts / native revisions (SEO), draft "Growth Drafts"
+   (ad copy / GBP posts — the `tc_growth_asset` type), each with a `_tc_growth_rationale`.
+2. Review the diff and the rationale; edit if needed; publish/use from the WordPress editor.
 3. The connector audit table (`wp_tc_growth_audit`) records every read and draft created.
+
+### Phase 3: letting the agent apply an SEO draft (triple-gated)
+
+`publish_seo_draft` is the only tool that changes the live site. It can run **only** when all
+three hold:
+
+1. **Phase** — the orchestrator is invoked at `Phase.CONTROLLED_EXECUTION` (a code/config change).
+2. **Confirmation** — the runtime was given a human-confirmation hook; an autonomous/scheduled run
+   has none, so the tool is refused.
+3. **Human approval in WordPress** — on the SEO draft's edit screen, the **"TC Growth — Approve to
+   apply"** checkbox is ticked. That flag (`_tc_growth_approved`) can only be set by a user with
+   `publish_posts`; the contributor-level agent user cannot self-approve.
+
+Applying then copies title/slug/meta-description to the live source page and trashes the draft.
+Price, availability, booking, and checkout are never touched.
 
 ## Kill switch (stop everything fast)
 

@@ -16,8 +16,10 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from typing import Callable
+
 from ..config import get_settings
-from ..core.approval import Phase, is_tool_allowed
+from ..core.approval import Phase, is_tool_allowed, needs_confirmation
 from ..tools.base import ToolRegistry
 from .base import RuntimeResult
 
@@ -47,7 +49,11 @@ class ManagedAgentsRuntime:
         environment_id: str | None = None,
         api_key: str | None = None,
         client: Any | None = None,
+        confirm: Callable[[str, dict], bool] | None = None,
     ):
+        # Human-confirmation hook for ALWAYS_ASK tools. None (the default) => such tools are
+        # refused, so autonomous / scheduled runs can never trigger a live change.
+        self._confirm = confirm
         if client is not None:
             self._client = client
         else:
@@ -107,11 +113,21 @@ class ManagedAgentsRuntime:
                 use_id = getattr(event, "id", "")
 
                 if not is_tool_allowed(name, phase):
-                    blocked.append({"tool": name, "phase": int(phase)})
+                    blocked.append({"tool": name, "phase": int(phase), "reason": "phase"})
                     self._send_tool_result(
                         beta, session.id, use_id,
                         f"Blocked: tool '{name}' is not permitted in phase {int(phase)}. "
                         "Requires a higher phase / human approval.",
+                        is_error=True,
+                    )
+                    continue
+
+                if needs_confirmation(name) and not self._confirmed(name, args):
+                    blocked.append({"tool": name, "phase": int(phase), "reason": "confirmation"})
+                    self._send_tool_result(
+                        beta, session.id, use_id,
+                        f"Blocked: tool '{name}' requires explicit human confirmation, which is "
+                        "not available in this run.",
                         is_error=True,
                     )
                     continue
@@ -128,6 +144,9 @@ class ManagedAgentsRuntime:
                 break
 
         return RuntimeResult(text="".join(texts), tool_calls=tool_calls, blocked_calls=blocked)
+
+    def _confirmed(self, name: str, args: dict) -> bool:
+        return bool(self._confirm and self._confirm(name, args))
 
     @staticmethod
     def _send_tool_result(beta: Any, session_id: str, use_id: str, text: str, *, is_error: bool = False) -> None:

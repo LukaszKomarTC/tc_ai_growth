@@ -102,6 +102,13 @@ def _create_product_revision(args: dict[str, Any]) -> Any:
     return _request("POST", "/create-product-revision", body=body)
 
 
+def _publish_seo_draft(args: dict[str, Any]) -> Any:
+    import json
+
+    body = json.dumps({"draft_id": int(args["draft_id"])})
+    return _request("POST", "/publish-seo-draft", body=body)
+
+
 def _create_draft_asset(asset_type: str, args: dict[str, Any]) -> Any:
     import json
 
@@ -228,4 +235,20 @@ registry.register(Tool(
                 "stored as a DRAFT for human approval. Does not publish to GBP.",
     input_schema=_ASSET_SCHEMA,
     handler=lambda args: _create_draft_asset("gbp_post", args),
+))
+
+# Phase 3 — controlled execution. Applies a HUMAN-APPROVED SEO draft to the live page. Gated to
+# CONTROLLED_EXECUTION phase AND always-ask confirmation in the runtimes; the connector also
+# refuses unless a human marked the draft approved. Triple-gated by design.
+registry.register(Tool(
+    name="publish_seo_draft",
+    description="Apply a previously human-APPROVED SEO draft to its live source page (title, slug, "
+                "meta description). Fails unless a human approved the draft in WordPress. This is "
+                "the only tool that changes the live site.",
+    input_schema={
+        "type": "object",
+        "properties": {"draft_id": {"type": "integer", "description": "ID of an approved SEO draft"}},
+        "required": ["draft_id"],
+    },
+    handler=_publish_seo_draft,
 ))

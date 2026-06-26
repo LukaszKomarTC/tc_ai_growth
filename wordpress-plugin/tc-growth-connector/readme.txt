@@ -44,10 +44,14 @@ Read:
 * GET  /rentals
 * GET  /seo-audit-data?post_id=ID
 
-Draft-write:
+Draft-write (Phase 1-2):
 * POST /create-seo-draft
 * POST /create-product-revision
+* POST /create-draft-asset       (ad copy / GBP posts -> "Growth Drafts")
 * POST /log-agent-action
+
+Controlled execution (Phase 3, human-approved only):
+* POST /publish-seo-draft        (applies an approved SEO draft to the live page)
 
 == Changelog ==
 

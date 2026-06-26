@@ -95,6 +95,13 @@ class TC_Growth_REST {
 			'permission_callback' => $write,
 		) );
 
+		// Phase 3 — controlled execution. Applies a HUMAN-APPROVED SEO draft to the live page.
+		register_rest_route( TC_GROWTH_NAMESPACE, '/publish-seo-draft', array(
+			'methods'             => WP_REST_Server::CREATABLE,
+			'callback'            => array( $this, 'publish_seo_draft' ),
+			'permission_callback' => $write,
+		) );
+
 		register_rest_route( TC_GROWTH_NAMESPACE, '/log-agent-action', array(
 			'methods'             => WP_REST_Server::CREATABLE,
 			'callback'            => array( $this, 'log_agent_action' ),
@@ -484,6 +491,74 @@ class TC_Growth_REST {
 			'revision_id' => $revision_id,
 			'edit_link'   => get_edit_post_link( $post_id, 'raw' ),
 			'status'      => 'revision',
+		) );
+	}
+
+	/**
+	 * Apply a HUMAN-APPROVED SEO draft to its live source page (Phase 3, controlled execution).
+	 *
+	 * Guardrails:
+	 *  - The draft must be one created by this connector (carries _tc_growth_source_post).
+	 *  - The draft must be explicitly approved by a human: meta _tc_growth_approved === '1'.
+	 *    That flag can only be set by a user with `publish_posts` (see the approval meta box),
+	 *    a capability the contributor-level agent user does NOT have — so the agent can request
+	 *    publication but cannot self-approve it.
+	 *  - Applies title, slug, and meta description only. Never touches price/availability/booking.
+	 */
+	public function publish_seo_draft( WP_REST_Request $request ) {
+		$params   = $request->get_json_params();
+		$draft_id = isset( $params['draft_id'] ) ? (int) $params['draft_id'] : 0;
+		$draft    = get_post( $draft_id );
+
+		if ( ! $draft ) {
+			return new WP_Error( 'tc_growth_not_found', __( 'Draft not found.', 'tc-growth-connector' ), array( 'status' => 404 ) );
+		}
+
+		$source_id = (int) get_post_meta( $draft_id, '_tc_growth_source_post', true );
+		if ( ! $source_id || ! get_post( $source_id ) ) {
+			return new WP_Error( 'tc_growth_not_a_draft', __( 'Not a connector SEO draft.', 'tc-growth-connector' ), array( 'status' => 400 ) );
+		}
+
+		if ( '1' !== (string) get_post_meta( $draft_id, '_tc_growth_approved', true ) ) {
+			return new WP_Error(
+				'tc_growth_not_approved',
+				__( 'Draft is not human-approved. A human editor must approve it first.', 'tc-growth-connector' ),
+				array( 'status' => 403 )
+			);
+		}
+
+		// Apply title + slug to the live source post (keeps its published status).
+		$update = wp_update_post( array(
+			'ID'         => $source_id,
+			'post_title' => $draft->post_title,
+			'post_name'  => $draft->post_name,
+		), true );
+		if ( is_wp_error( $update ) ) {
+			return $update;
+		}
+
+		// Apply the proposed meta description to whichever SEO plugin is present.
+		$meta_desc = get_post_meta( $draft_id, '_tc_growth_proposed_meta_description', true );
+		if ( $meta_desc ) {
+			update_post_meta( $source_id, '_yoast_wpseo_metadesc', $meta_desc );
+			update_post_meta( $source_id, 'rank_math_description', $meta_desc );
+		}
+
+		// Retire the draft so it can't be applied twice.
+		wp_update_post( array( 'ID' => $draft_id, 'post_status' => 'trash' ) );
+
+		TC_Growth_Audit::log(
+			wp_get_current_user()->user_login,
+			'publish-seo-draft',
+			'post',
+			$source_id,
+			array( 'draft_id' => $draft_id )
+		);
+
+		return rest_ensure_response( array(
+			'source_post' => $source_id,
+			'applied'     => true,
+			'url'         => get_permalink( $source_id ),
 		) );
 	}
 

@@ -35,15 +35,25 @@ TOOL_MIN_PHASE: dict[str, Phase] = {
     "draft_google_ad": Phase.DRAFTS,
     "draft_meta_ad": Phase.DRAFTS,
     "draft_gbp_post": Phase.DRAFTS,
-    # (Phase 3 execution tools will be registered later and gated to CONTROLLED_EXECUTION)
+    # Phase 3 — controlled execution (live changes). Also require human confirmation (ALWAYS_ASK).
+    "publish_seo_draft": Phase.CONTROLLED_EXECUTION,
 }
 
-# Actions that ALWAYS require an explicit human confirmation, regardless of phase.
+# Tools that ALWAYS require an explicit human confirmation, regardless of phase. In an autonomous
+# / scheduled run (no confirmation hook) these are refused by the runtimes — they can only execute
+# when a human is in the loop to approve the specific call.
 ALWAYS_ASK = {
+    "publish_seo_draft",
+    # future Phase 3 execution tools:
     "ad_budget_change",
     "publish_post",
     "create_campaign",
 }
+
+
+def needs_confirmation(tool_name: str) -> bool:
+    """True if the tool may only run with an explicit per-call human confirmation."""
+    return tool_name in ALWAYS_ASK
 
 # Capabilities that must NEVER exist as automated tools in this system.
 FORBIDDEN_CAPABILITIES = {

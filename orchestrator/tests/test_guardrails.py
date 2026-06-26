@@ -9,6 +9,7 @@ from tc_growth.core.approval import (
     Phase,
     assert_not_forbidden,
     is_tool_allowed,
+    needs_confirmation,
 )
 from tc_growth.core.opportunities import score_seo_rows, wasted_ad_spend
 from tc_growth.tools.load import load_all
@@ -69,6 +70,17 @@ def test_woo_revenue_attribution_is_read_only_tool():
     names = {t.name for t in load_all().all()}
     assert "woo_revenue_attribution" in names
     assert is_tool_allowed("woo_revenue_attribution", Phase.READ_ONLY)
+
+
+def test_publish_seo_draft_is_phase3_and_needs_confirmation():
+    names = {t.name for t in load_all().all()}
+    assert "publish_seo_draft" in names
+    # Only allowed at controlled-execution phase...
+    assert not is_tool_allowed("publish_seo_draft", Phase.READ_ONLY)
+    assert not is_tool_allowed("publish_seo_draft", Phase.DRAFTS)
+    assert is_tool_allowed("publish_seo_draft", Phase.CONTROLLED_EXECUTION)
+    # ...and always requires explicit human confirmation.
+    assert needs_confirmation("publish_seo_draft")
 
 
 def test_phase2_draft_tools_registered_and_gated_to_drafts():

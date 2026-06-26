@@ -25,6 +25,12 @@ def _registry() -> ToolRegistry:
         input_schema={"type": "object"},
         handler=lambda args: {"draft_id": 99},
     ))
+    reg.register(Tool(
+        name="publish_seo_draft",  # always-ask tool — needs confirmation even at phase 3
+        description="publish",
+        input_schema={"type": "object"},
+        handler=lambda args: {"applied": True},
+    ))
     return reg
 
 
@@ -94,4 +100,27 @@ def test_draft_tool_allowed_in_drafts_phase():
     )
     result = runtime.run_session(task="go", tools=_registry(), phase=Phase.DRAFTS)
     assert [c["tool"] for c in result.tool_calls] == ["wp_create_seo_draft"]
+    assert result.blocked_calls == []
+
+
+def test_always_ask_tool_blocked_without_confirmation_even_at_phase3():
+    sent: list[dict] = []
+    events = [_tool_use("publish_seo_draft", "u1"), _idle_terminal()]
+    runtime = ManagedAgentsRuntime(
+        agent_id="agent_x", environment_id="env_x", client=_FakeClient(events, sent)
+    )
+    result = runtime.run_session(task="go", tools=_registry(), phase=Phase.CONTROLLED_EXECUTION)
+    assert result.tool_calls == []
+    assert result.blocked_calls and result.blocked_calls[0]["reason"] == "confirmation"
+
+
+def test_always_ask_tool_runs_with_confirmation_at_phase3():
+    sent: list[dict] = []
+    events = [_tool_use("publish_seo_draft", "u1"), _idle_terminal()]
+    runtime = ManagedAgentsRuntime(
+        agent_id="agent_x", environment_id="env_x",
+        client=_FakeClient(events, sent), confirm=lambda name, args: True,
+    )
+    result = runtime.run_session(task="go", tools=_registry(), phase=Phase.CONTROLLED_EXECUTION)
+    assert [c["tool"] for c in result.tool_calls] == ["publish_seo_draft"]
     assert result.blocked_calls == []

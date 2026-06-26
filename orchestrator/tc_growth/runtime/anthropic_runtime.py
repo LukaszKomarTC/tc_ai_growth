@@ -13,7 +13,9 @@ This module is the ONLY one that imports `anthropic`.
 
 from __future__ import annotations
 
-from ..core.approval import Phase, is_tool_allowed
+from typing import Callable
+
+from ..core.approval import Phase, is_tool_allowed, needs_confirmation
 from ..tools.base import ToolRegistry
 from .base import RuntimeResult
 
@@ -24,9 +26,11 @@ _DEFAULT_MODEL = "claude-opus-4-8"
 class AnthropicRuntime:
     """Implements the AgentRuntime protocol against the Claude Messages API."""
 
-    def __init__(self, api_key: str | None = None):
+    def __init__(self, api_key: str | None = None, confirm: Callable[[str, dict], bool] | None = None):
         import anthropic  # local import keeps the provider dependency contained
 
+        # Human-confirmation hook for ALWAYS_ASK tools; None => such tools are refused.
+        self._confirm = confirm
         self._client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
 
     def run(
@@ -68,13 +72,25 @@ class AnthropicRuntime:
                     continue
                 # Phase gate enforced in code — independent of the model's judgement.
                 if not is_tool_allowed(block.name, phase):
-                    blocked.append({"tool": block.name, "phase": int(phase)})
+                    blocked.append({"tool": block.name, "phase": int(phase), "reason": "phase"})
                     results.append({
                         "type": "tool_result",
                         "tool_use_id": block.id,
                         "is_error": True,
                         "content": f"Blocked: tool '{block.name}' is not permitted in phase "
                                    f"{int(phase)}. This action requires a higher phase / human approval.",
+                    })
+                    continue
+
+                # Always-ask tools need an explicit per-call human confirmation.
+                if needs_confirmation(block.name) and not (self._confirm and self._confirm(block.name, dict(block.input))):
+                    blocked.append({"tool": block.name, "phase": int(phase), "reason": "confirmation"})
+                    results.append({
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "is_error": True,
+                        "content": f"Blocked: tool '{block.name}' requires explicit human "
+                                   "confirmation, which is not available in this run.",
                     })
                     continue
 
