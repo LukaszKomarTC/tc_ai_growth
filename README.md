@@ -42,8 +42,17 @@ docs/              ARCHITECTURE, SETUP, RUNBOOK
 
 ## Status
 
-Phase 0 (foundations) scaffold. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the
-design and the plan file for the full phased roadmap.
+Phase 0 (foundations) + first increments:
+
+- ✅ WordPress connector plugin (read + draft-only writes, HMAC auth, audit log)
+- ✅ Provider-neutral orchestrator (tools / core / runtime), portability test-enforced
+- ✅ Local Messages-API runtime **and** hosted Managed Agents session driver
+- ✅ WooCommerce revenue attribution (bookings by source)
+- ✅ Real report delivery (SMTP email + Telegram)
+- ✅ CI (pytest + PHP lint) on push/PR — 14 tests green
+
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the design and the plan file for the full
+phased roadmap.
 
 ## Quick start
 
