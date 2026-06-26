@@ -32,6 +32,9 @@ TOOL_MIN_PHASE: dict[str, Phase] = {
     # draft writes — Phase 1-2
     "wp_create_seo_draft": Phase.DRAFTS,
     "wp_create_product_revision": Phase.DRAFTS,
+    "draft_google_ad": Phase.DRAFTS,
+    "draft_meta_ad": Phase.DRAFTS,
+    "draft_gbp_post": Phase.DRAFTS,
     # (Phase 3 execution tools will be registered later and gated to CONTROLLED_EXECUTION)
 }
 

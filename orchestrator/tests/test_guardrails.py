@@ -69,3 +69,13 @@ def test_woo_revenue_attribution_is_read_only_tool():
     names = {t.name for t in load_all().all()}
     assert "woo_revenue_attribution" in names
     assert is_tool_allowed("woo_revenue_attribution", Phase.READ_ONLY)
+
+
+def test_phase2_draft_tools_registered_and_gated_to_drafts():
+    names = {t.name for t in load_all().all()}
+    draft_tools = {"draft_google_ad", "draft_meta_ad", "draft_gbp_post", "wp_create_product_revision"}
+    assert draft_tools <= names
+    for name in draft_tools:
+        # Drafts are blocked in read-only, allowed from the drafts phase onward.
+        assert not is_tool_allowed(name, Phase.READ_ONLY)
+        assert is_tool_allowed(name, Phase.DRAFTS)

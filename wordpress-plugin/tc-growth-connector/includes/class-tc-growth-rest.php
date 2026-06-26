@@ -83,6 +83,12 @@ class TC_Growth_REST {
 			'permission_callback' => $write,
 		) );
 
+		register_rest_route( TC_GROWTH_NAMESPACE, '/create-draft-asset', array(
+			'methods'             => WP_REST_Server::CREATABLE,
+			'callback'            => array( $this, 'create_draft_asset' ),
+			'permission_callback' => $write,
+		) );
+
 		register_rest_route( TC_GROWTH_NAMESPACE, '/create-product-revision', array(
 			'methods'             => WP_REST_Server::CREATABLE,
 			'callback'            => array( $this, 'create_product_revision' ),
@@ -378,6 +384,61 @@ class TC_Growth_REST {
 			'source_post' => $post_id,
 			'edit_link'   => get_edit_post_link( $draft_id, 'raw' ),
 			'status'      => 'draft',
+		) );
+	}
+
+	/**
+	 * Create a draft "growth asset" (ad copy, GBP post, FAQ block, internal-link plan, ...).
+	 *
+	 * Stored as a DRAFT of the private tc_growth_asset post type — reviewable in wp-admin under
+	 * "Growth Drafts", never published, never touches the live site or any ad platform.
+	 */
+	public function create_draft_asset( WP_REST_Request $request ) {
+		$params = $request->get_json_params();
+
+		$allowed_types = array( 'google_ad', 'meta_ad', 'gbp_post', 'faq', 'internal_links', 'other' );
+		$asset_type    = isset( $params['asset_type'] ) ? sanitize_key( $params['asset_type'] ) : 'other';
+		if ( ! in_array( $asset_type, $allowed_types, true ) ) {
+			$asset_type = 'other';
+		}
+
+		$title     = isset( $params['title'] ) ? sanitize_text_field( $params['title'] ) : __( 'Untitled growth draft', 'tc-growth-connector' );
+		$body      = isset( $params['body'] ) ? wp_kses_post( $params['body'] ) : '';
+		$target    = isset( $params['target_url'] ) ? esc_url_raw( $params['target_url'] ) : '';
+		$rationale = isset( $params['rationale'] ) ? sanitize_textarea_field( $params['rationale'] ) : '';
+		$meta      = ( isset( $params['meta'] ) && is_array( $params['meta'] ) ) ? $params['meta'] : array();
+
+		$draft_id = wp_insert_post( array(
+			'post_type'    => 'tc_growth_asset',
+			'post_status'  => 'draft',
+			'post_title'   => '[' . $asset_type . '] ' . $title,
+			'post_content' => $body,
+		), true );
+
+		if ( is_wp_error( $draft_id ) ) {
+			return $draft_id;
+		}
+
+		update_post_meta( $draft_id, '_tc_growth_asset_type', $asset_type );
+		update_post_meta( $draft_id, '_tc_growth_target_url', $target );
+		update_post_meta( $draft_id, '_tc_growth_rationale', $rationale );
+		foreach ( $meta as $key => $value ) {
+			update_post_meta( $draft_id, '_tc_growth_' . sanitize_key( $key ), sanitize_text_field( is_scalar( $value ) ? $value : wp_json_encode( $value ) ) );
+		}
+
+		TC_Growth_Audit::log(
+			wp_get_current_user()->user_login,
+			'create-draft-asset',
+			'tc_growth_asset',
+			$draft_id,
+			array( 'asset_type' => $asset_type, 'title' => $title )
+		);
+
+		return rest_ensure_response( array(
+			'draft_id'   => $draft_id,
+			'asset_type' => $asset_type,
+			'edit_link'  => get_edit_post_link( $draft_id, 'raw' ),
+			'status'     => 'draft',
 		) );
 	}
 

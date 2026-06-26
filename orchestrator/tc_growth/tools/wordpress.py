@@ -91,6 +91,31 @@ def _create_seo_draft(args: dict[str, Any]) -> Any:
     return _request("POST", "/create-seo-draft", body=body)
 
 
+def _create_product_revision(args: dict[str, Any]) -> Any:
+    import json
+
+    body = json.dumps({
+        "post_id": int(args["post_id"]),
+        "description": args.get("description", ""),
+        "rationale": args.get("rationale", ""),
+    })
+    return _request("POST", "/create-product-revision", body=body)
+
+
+def _create_draft_asset(asset_type: str, args: dict[str, Any]) -> Any:
+    import json
+
+    body = json.dumps({
+        "asset_type": asset_type,
+        "title": args.get("title", ""),
+        "body": args.get("body", ""),
+        "target_url": args.get("target_url", ""),
+        "rationale": args.get("rationale", ""),
+        "meta": args.get("meta", {}),
+    })
+    return _request("POST", "/create-draft-asset", body=body)
+
+
 # ----------------------------------------------------------------------------- tools -------
 
 registry.register(Tool(
@@ -148,4 +173,59 @@ registry.register(Tool(
         "required": ["post_id", "title"],
     },
     handler=_create_seo_draft,
+))
+
+registry.register(Tool(
+    name="wp_create_product_revision",
+    description="Create a native WordPress revision of a product DESCRIPTION (content only) for "
+                "human review/restore. Never touches price, stock, or availability.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "post_id": {"type": "integer"},
+            "description": {"type": "string", "description": "Improved product description (HTML allowed)"},
+            "rationale": {"type": "string"},
+        },
+        "required": ["post_id", "description"],
+    },
+    handler=_create_product_revision,
+))
+
+# Phase 2 draft assets — ad copy and GBP posts stored as drafts for human approval. No writes to
+# any ad platform; these produce reviewable content under "Growth Drafts" in wp-admin.
+_ASSET_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string", "description": "Headline / short label"},
+        "body": {"type": "string", "description": "Full copy (HTML allowed)"},
+        "target_url": {"type": "string", "description": "Landing page the asset points to"},
+        "rationale": {"type": "string"},
+        "meta": {"type": "object", "description": "Optional structured fields (e.g. headlines, descriptions, keywords)"},
+    },
+    "required": ["title", "body"],
+}
+
+registry.register(Tool(
+    name="draft_google_ad",
+    description="Draft Google Ads copy (responsive search ad: headlines + descriptions) for a "
+                "landing page, stored as a DRAFT for human approval. Does not create or change "
+                "any live campaign.",
+    input_schema=_ASSET_SCHEMA,
+    handler=lambda args: _create_draft_asset("google_ad", args),
+))
+
+registry.register(Tool(
+    name="draft_meta_ad",
+    description="Draft Meta (Facebook/Instagram) ad copy (primary text, headline, description) "
+                "for a campaign idea, stored as a DRAFT for human approval. No live changes.",
+    input_schema=_ASSET_SCHEMA,
+    handler=lambda args: _create_draft_asset("meta_ad", args),
+))
+
+registry.register(Tool(
+    name="draft_gbp_post",
+    description="Draft a Google Business Profile post (offer/update/event) for Tossa Cycling, "
+                "stored as a DRAFT for human approval. Does not publish to GBP.",
+    input_schema=_ASSET_SCHEMA,
+    handler=lambda args: _create_draft_asset("gbp_post", args),
 ))
