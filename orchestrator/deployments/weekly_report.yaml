@@ -1,0 +1,31 @@
+# Scheduled deployment — the weekly opportunity report.
+#
+# Fires the coordinator on a cron cadence; each firing creates a session that runs the weekly
+# task and writes the digest. Apply once the coordinator agent + environment exist:
+#
+#   ant beta:deployments create < orchestrator/deployments/weekly_report.yaml
+#
+# Test immediately (works even before the first scheduled fire):
+#   ant beta:deployments run --deployment-id <id>
+#
+# NOTE: deployments are a newer Managed Agents surface — verify your CLI/SDK exposes them
+# (`ant beta:deployments --help`); otherwise POST /v1/deployments with the managed-agents beta
+# header. The orchestrator's `weekly-report` CLI command is the provider-portable fallback that
+# runs the same task via the Messages API without a deployment.
+
+name: tc-growth-weekly-report
+agent: "${TC_COORDINATOR_AGENT_ID}"
+environment_id: "${TC_ENV_ID}"
+initial_events:
+  - type: user.message
+    content:
+      - type: text
+        text: |
+          Produce this week's Tossa Cycling growth report: SEO Opportunities, Ads Efficiency,
+          Revenue Insights, and prioritised Recommended Actions. Pull Search Console (28d),
+          GA4 (28d), Google Ads, Meta Ads, and PageSpeed on the home + road-bike-rental pages.
+          Note any blocked/unprovisioned tools under "Pending integrations". Drafts only.
+schedule:
+  type: cron
+  expression: "0 7 * * 1"   # Mondays 07:00
+  timezone: "Europe/Madrid"

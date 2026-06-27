@@ -1,0 +1,41 @@
+[project]
+name = "tc-growth-orchestrator"
+version = "0.1.0"
+description = "Provider-neutral orchestrator for the Tossa Cycling AI growth agent system."
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "python-dateutil>=2.9",
+]
+
+[project.optional-dependencies]
+# The Anthropic runtime adapter is the ONLY place that depends on a specific AI provider.
+# Swapping providers means adding a sibling extra (e.g. `openai`), not touching tools/ or core/.
+anthropic = ["anthropic>=0.49"]
+# Google + Meta API clients used by the host-side tools.
+google = [
+    "google-analytics-data>=0.18",
+    "google-api-python-client>=2.130",
+    "google-auth>=2.30",
+    "google-auth-oauthlib>=1.2",
+    "google-ads>=25.0",
+]
+dev = ["pytest>=8", "ruff>=0.5", "mypy>=1.10"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+# Only the package ships; deployments/ (YAML) and tests/ are not importable packages.
+# Without this, setuptools flat-layout auto-discovery errors on multiple top-level dirs.
+[tool.setuptools.packages.find]
+include = ["tc_growth*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

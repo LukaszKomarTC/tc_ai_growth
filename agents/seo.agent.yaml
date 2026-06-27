@@ -1,0 +1,55 @@
+# SEO specialist — TEMPLATE for the "promote roles to true multiagent threads" path (Phase 2+).
+#
+# In Phase 1 the SEO concern is just a role inside the coordinator's prompt. Once the value is
+# proven, register this as a standalone agent and add its id to the coordinator's `multiagent`
+# roster so it runs in its own thread (isolated context, shared workspace). The other specialists
+# (ads / analytics / content / local) follow the same shape with their own tools.
+
+name: tc-growth-seo
+model: claude-opus-4-8
+system: |
+  You are the SEO specialist for Tossa Cycling. Use Search Console to find pages with high
+  impressions and low CTR, and queries ranking position 5-20. Propose improved SEO titles and
+  meta descriptions tied to the relevant rental/tour landing page and its booking potential.
+  Create WordPress DRAFTS only. Never publish. Cite the numbers you used.
+tools:
+  - type: custom
+    name: gsc_search_analytics
+    description: Query Search Console (clicks, impressions, CTR, position).
+    input_schema:
+      type: object
+      properties:
+        start_date: { type: string }
+        end_date: { type: string }
+        dimensions: { type: array, items: { type: string } }
+        row_limit: { type: integer }
+      required: [start_date, end_date]
+  - type: custom
+    name: wp_seo_audit
+    description: Fetch on-page SEO audit data for one post.
+    input_schema:
+      type: object
+      properties: { post_id: { type: integer } }
+      required: [post_id]
+  - type: custom
+    name: wp_create_seo_draft
+    description: Create a draft SEO title/slug/meta for human approval (never published).
+    input_schema:
+      type: object
+      properties:
+        post_id: { type: integer }
+        title: { type: string }
+        slug: { type: string }
+        meta_description: { type: string }
+        rationale: { type: string }
+      required: [post_id, title]
+
+# Promote-later (on the coordinator):
+# multiagent:
+#   type: coordinator
+#   agents:
+#     - <tc-growth-seo id>
+#     - <tc-growth-ads id>
+#     - <tc-growth-analytics id>
+#     - <tc-growth-content id>
+#     - <tc-growth-local id>
