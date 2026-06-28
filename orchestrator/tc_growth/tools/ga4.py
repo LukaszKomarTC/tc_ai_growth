@@ -28,9 +28,12 @@ def _client():
 
 
 def _report(args: dict[str, Any]) -> Any:
-    from google.analytics.data_v1beta.types import (  # type: ignore
-        DateRange, Dimension, Metric, RunReportRequest,
-    )
+    try:
+        from google.analytics.data_v1beta.types import (  # type: ignore
+            DateRange, Dimension, Metric, RunReportRequest,
+        )
+    except ImportError as exc:  # pragma: no cover
+        raise ToolError("google-analytics-data not installed. Install the 'google' extra.") from exc
 
     s = get_settings()
     if not s.ga4_property_id:

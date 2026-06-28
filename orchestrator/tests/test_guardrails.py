@@ -60,6 +60,23 @@ def test_tools_and_core_do_not_import_an_ai_sdk():
     assert not offenders, f"AI-SDK import leaked into tools/ or core/: {offenders}"
 
 
+def test_dispatch_is_fail_safe_for_unexpected_errors():
+    """A tool handler that raises a non-ToolError must not crash the run — dispatch converts it
+    to a structured error result (so weekly-report / the agent loop degrade gracefully)."""
+    from tc_growth.tools.base import Tool, ToolRegistry
+
+    reg = ToolRegistry()
+    reg.register(Tool(
+        name="boom",
+        description="raises",
+        input_schema={"type": "object"},
+        handler=lambda args: (_ for _ in ()).throw(ValueError("kaboom")),
+    ))
+    out = reg.dispatch("boom", {})
+    assert out["ok"] is False
+    assert "ValueError" in out["error"] and "kaboom" in out["error"]
+
+
 def test_registry_populates():
     reg = load_all()
     names = {t.name for t in reg.all()}

@@ -58,12 +58,16 @@ class ToolRegistry:
         return list(self._tools.values())
 
     def dispatch(self, name: str, arguments: dict[str, Any]) -> Any:
-        """Run a tool by name. Tool errors are returned as structured payloads, not raised,
-        so the agent loop can feed them back as tool results."""
+        """Run a tool by name. ALL failures are returned as structured payloads, never raised, so
+        a single tool can never crash the run or the agent loop — the model/report just sees an
+        error result and moves on. Expected failures use ToolError; anything else is caught as a
+        fail-safe and reported with its type."""
         try:
             return {"ok": True, "result": self.get(name).run(arguments)}
         except ToolError as exc:
             return {"ok": False, "error": str(exc)}
+        except Exception as exc:  # fail-safe — must never propagate out of a tool call
+            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
 
 # Module-level registry the tool modules append to on import.

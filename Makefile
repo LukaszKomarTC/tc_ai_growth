@@ -6,7 +6,7 @@
 # backend, which is what caught the flat-layout packaging error CI hit (and a deps-only local
 # install would miss).
 
-.PHONY: check test lint-php clean
+.PHONY: check test lint-php smoke clean
 
 check: test lint-php
 	@echo "== check OK =="
@@ -29,6 +29,10 @@ lint-php:
 	else \
 	  echo "php not installed locally — skipped (CI runs it)"; \
 	fi
+
+smoke:
+	@echo "== read-only smoke (staging) — invokes read tools only, never writes =="
+	cd orchestrator && bash scripts/smoke.sh
 
 clean:
 	rm -rf orchestrator/.venv-check orchestrator/*.egg-info
