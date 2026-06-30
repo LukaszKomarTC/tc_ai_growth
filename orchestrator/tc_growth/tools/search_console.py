@@ -6,10 +6,38 @@ Credentials are loaded host-side (service account or OAuth) so tokens never ente
 
 from __future__ import annotations
 
+import datetime as dt
+import re
 from typing import Any
 
 from ..config import get_settings
 from .base import Tool, ToolError, registry
+
+_REL_DAYS = re.compile(r"^(\d+)daysAgo$")
+_ABS_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _resolve_date(value: str, *, today: dt.date | None = None) -> str:
+    """Normalise a date to YYYY-MM-DD for the Search Console API.
+
+    Search Console only accepts absolute dates, but GA4 accepts relative ones like '28daysAgo'
+    and 'today'. To keep both tools consistent (and stop the report agent tripping on the
+    difference), accept the GA4-style shorthand here and convert it.
+    """
+    v = (value or "").strip()
+    if _ABS_DATE.match(v):
+        return v
+    today = today or dt.date.today()
+    if v == "today":
+        return today.isoformat()
+    if v == "yesterday":
+        return (today - dt.timedelta(days=1)).isoformat()
+    m = _REL_DAYS.match(v)
+    if m:
+        return (today - dt.timedelta(days=int(m.group(1)))).isoformat()
+    raise ToolError(
+        f"Invalid date '{value}'. Use YYYY-MM-DD, 'today', 'yesterday', or 'NdaysAgo'."
+    )
 
 
 def _service():
@@ -41,8 +69,8 @@ def _query(args: dict[str, Any]) -> Any:
     dimensions = args.get("dimensions", ["query"])
     row_limit = int(args.get("row_limit", 25))
     request_body = {
-        "startDate": args["start_date"],
-        "endDate": args["end_date"],
+        "startDate": _resolve_date(args["start_date"]),
+        "endDate": _resolve_date(args["end_date"]),
         "dimensions": dimensions,
         "rowLimit": row_limit,
     }
@@ -69,8 +97,8 @@ registry.register(Tool(
     input_schema={
         "type": "object",
         "properties": {
-            "start_date": {"type": "string", "description": "YYYY-MM-DD"},
-            "end_date": {"type": "string", "description": "YYYY-MM-DD"},
+            "start_date": {"type": "string", "description": "YYYY-MM-DD, or relative: '28daysAgo' / 'today' / 'yesterday'"},
+            "end_date": {"type": "string", "description": "YYYY-MM-DD, or relative: '28daysAgo' / 'today' / 'yesterday'"},
             "dimensions": {
                 "type": "array",
                 "items": {"type": "string", "enum": ["query", "page", "country", "device", "date"]},
