@@ -11,6 +11,7 @@ import time
 
 from .config import get_settings
 from .core.approval import Phase
+from .memory import known_cases_block
 from .prompts import COORDINATOR
 from .runtime.base import AgentRuntime, RuntimeResult
 from .tools.load import load_all
@@ -66,11 +67,13 @@ Actions (prioritised). For tools that are blocked or not yet provisioned, note t
 def build_weekly_report(runtime: AgentRuntime, *, phase: Phase = Phase.READ_ONLY, persist: bool = True) -> str:
     tools = load_all()
     s = get_settings()
+    memory = known_cases_block()
+    task = f"{WEEKLY_TASK}\n\n{memory}" if memory else WEEKLY_TASK
     started_at = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
     t0 = time.perf_counter()
     result = runtime.run(
         system=COORDINATOR,
-        task=WEEKLY_TASK,
+        task=task,
         tools=tools,
         phase=phase,
         model=s.ai_model,
