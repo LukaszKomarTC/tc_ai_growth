@@ -16,7 +16,7 @@ from pathlib import Path
 
 from ..config import ENV_PATH, get_settings
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # One statement per table; CREATE ... IF NOT EXISTS makes init idempotent.
 _SCHEMA = """
@@ -29,9 +29,11 @@ CREATE TABLE IF NOT EXISTS cases (
     category    TEXT,                             -- incident | seo | tracking | ...
     status      TEXT NOT NULL DEFAULT 'open',     -- open | monitoring | resolved | closed
     priority    TEXT NOT NULL DEFAULT 'medium',   -- low | medium | high | critical
-    confidence  TEXT,                             -- calibrated confidence, if any
+    confidence  TEXT,                             -- calibrated: a 0-1 number or a label
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL,
+    opened_by   TEXT,                             -- agent | human (v2)
+    closed_by   TEXT,                             -- agent | human (v2)
     body        TEXT                              -- narrative markdown
 );
 
@@ -56,8 +58,9 @@ CREATE TABLE IF NOT EXISTS decisions (
     made_at    TEXT NOT NULL,
     title      TEXT NOT NULL,
     rationale  TEXT,
-    status     TEXT NOT NULL DEFAULT 'active',    -- active | superseded | reverted
+    status     TEXT NOT NULL DEFAULT 'active',    -- proposed | active | superseded | reverted
     outcome    TEXT,                              -- worked | failed | unknown (filled in later)
+    made_by    TEXT,                              -- agent | human (v2)
     case_id    INTEGER REFERENCES cases(id)
 );
 
@@ -93,9 +96,28 @@ def connect(path: str | Path | None = None) -> sqlite3.Connection:
 
 
 def init_db(conn: sqlite3.Connection) -> None:
-    """Create tables if absent and stamp the schema version (idempotent)."""
+    """Create tables if absent, migrate older schemas forward, stamp the version (idempotent)."""
     conn.executescript(_SCHEMA)
     row = conn.execute("SELECT version FROM schema_version LIMIT 1;").fetchone()
     if row is None:
         conn.execute("INSERT INTO schema_version (version) VALUES (?);", (SCHEMA_VERSION,))
+    elif row[0] < SCHEMA_VERSION:
+        _migrate(conn, from_version=row[0])
+        conn.execute("UPDATE schema_version SET version = ?;", (SCHEMA_VERSION,))
     conn.commit()
+
+
+def _migrate(conn: sqlite3.Connection, *, from_version: int) -> None:
+    """Forward-only, additive migrations. Existing rows keep NULL in the new columns."""
+    if from_version < 2:
+        # v1 -> v2: provenance columns (who opened/closed a case, who made a decision).
+        for stmt in (
+            "ALTER TABLE cases ADD COLUMN opened_by TEXT;",
+            "ALTER TABLE cases ADD COLUMN closed_by TEXT;",
+            "ALTER TABLE decisions ADD COLUMN made_by TEXT;",
+        ):
+            try:
+                conn.execute(stmt)
+            except sqlite3.OperationalError as exc:  # column already there (fresh-create race)
+                if "duplicate column" not in str(exc).lower():
+                    raise

@@ -30,6 +30,15 @@ TOOL_MIN_PHASE: dict[str, Phase] = {
     "wp_seo_audit": Phase.READ_ONLY,
     "woo_revenue_attribution": Phase.READ_ONLY,
     "budget_recommendations": Phase.READ_ONLY,  # dry-run analysis, changes nothing
+    # case memory — writes to the agent's OWN store, never to an external system, so the phase
+    # gate (which governs external side effects) admits them in READ_ONLY. Lifecycle transitions
+    # are the exception: case_set_status is in ALWAYS_ASK below.
+    "case_search": Phase.READ_ONLY,
+    "case_open": Phase.READ_ONLY,
+    "case_note": Phase.READ_ONLY,
+    "case_set_confidence": Phase.READ_ONLY,
+    "case_set_status": Phase.READ_ONLY,
+    "decision_log": Phase.READ_ONLY,  # records PROPOSED decisions only; humans activate them
     # draft writes — Phase 1-2
     "wp_create_seo_draft": Phase.DRAFTS,
     "wp_create_product_revision": Phase.DRAFTS,
@@ -48,6 +57,9 @@ TOOL_MIN_PHASE: dict[str, Phase] = {
 # when a human is in the loop to approve the specific call.
 ALWAYS_ASK = {
     "publish_seo_draft",
+    # case lifecycle transitions are consequential judgments — human approves each one; in a
+    # scheduled run the agent proposes the change in its report instead.
+    "case_set_status",
     # future Phase 3 execution tools:
     "ad_budget_change",
     "publish_post",

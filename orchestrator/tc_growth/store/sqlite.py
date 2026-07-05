@@ -39,6 +39,9 @@ class SqliteStore:
     def update_case(self, case_id: int, **fields) -> None:
         records.update_case(self._conn, case_id, **fields)
 
+    def append_observation(self, case_id: int, text: str, *, author: str = "agent") -> None:
+        records.append_observation(self._conn, case_id, text, author=author)
+
     # -- runs --
     def log_run(self, **kw) -> int:
         return records.log_run(self._conn, **kw)
