@@ -33,6 +33,9 @@ class SqliteStore:
     def list_cases(self, *, status: str | None = None, limit: int = 50) -> list[Case]:
         return records.list_cases(self._conn, status=status, limit=limit)
 
+    def find_cases(self, query: str, *, statuses: tuple[str, ...] | None = None, limit: int = 10) -> list[Case]:
+        return records.find_cases(self._conn, query, statuses=statuses, limit=limit)
+
     def find_open_cases(self, query: str, *, limit: int = 10) -> list[Case]:
         return records.find_open_cases(self._conn, query, limit=limit)
 

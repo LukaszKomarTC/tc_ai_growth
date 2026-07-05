@@ -48,8 +48,29 @@ def _resolve(s, ref: str):
 def _search(args: dict[str, Any]) -> Any:
     s = open_store()
     try:
-        hits = s.find_open_cases(str(args["query"]), limit=int(args.get("limit", 10)))
+        # ALL statuses on purpose: matching a RESOLVED case is the "possible recurrence" signal.
+        hits = s.find_cases(str(args["query"]), limit=int(args.get("limit", 10)))
         return [_case_dict(c) for c in hits]
+    finally:
+        s.close()
+
+
+def _read(args: dict[str, Any]) -> Any:
+    s = open_store()
+    try:
+        case = _resolve(s, str(args["ref"]))
+        decisions = s.list_decisions(case_id=case.id)
+        return {
+            **_case_dict(case),
+            "opened_by": case.opened_by,
+            "closed_by": case.closed_by,
+            "created_at": case.created_at,
+            "narrative": case.body or "",
+            "decisions": [
+                {"title": d.title, "status": d.status, "made_by": d.made_by, "made_at": d.made_at}
+                for d in decisions
+            ],
+        }
     finally:
         s.close()
 
@@ -58,15 +79,18 @@ def _open(args: dict[str, Any]) -> Any:
     s = open_store()
     try:
         title = str(args["title"]).strip()
-        # Search-before-create: refuse silently duplicating a known open case.
-        matches = s.find_open_cases(f"{title} {args.get('summary', '')}", limit=5)
+        # Search-before-create ACROSS ALL STATUSES: a match against a resolved case means
+        # "possible recurrence of a known incident", which must be surfaced, not duplicated.
+        matches = s.find_cases(f"{title} {args.get('summary', '')}", limit=5)
         if matches and not args.get("confirmed_new"):
             return {
                 "created": False,
                 "possible_duplicates": [_case_dict(c) for c in matches],
-                "instruction": "These open cases may already cover this. Update the matching case "
-                               "(case_note / case_set_confidence) instead — or, if this is genuinely "
-                               "distinct, call case_open again with confirmed_new=true.",
+                "instruction": "These cases (any status) may already cover this. FIRST call "
+                               "case_read on the closest match and compare its narrative/timeline "
+                               "with your data. If it is the same phenomenon: case_note the new "
+                               "evidence there (and propose reopening if it was resolved). Only if "
+                               "genuinely distinct, call case_open again with confirmed_new=true.",
             }
         category = args.get("category") or "case"
         prefix = _CATEGORY_PREFIX.get(category, "CASE")
@@ -147,7 +171,8 @@ def _decision(args: dict[str, Any]) -> Any:
 
 registry.register(Tool(
     name="case_search",
-    description="Search the agent's OPEN/MONITORING cases (institutional memory) by keywords. "
+    description="Search ALL cases (institutional memory) by keywords — including resolved/closed "
+                "ones, because matching a resolved case means possible recurrence, not novelty. "
                 "Call before treating any observation as new, and before case_open.",
     input_schema={
         "type": "object",
@@ -158,6 +183,22 @@ registry.register(Tool(
         "required": ["query"],
     },
     handler=_search,
+))
+
+registry.register(Tool(
+    name="case_read",
+    description="Read a case's FULL narrative (timeline, evidence, retracted hypotheses, prior "
+                "verification) plus its linked decisions. The one-line case summaries omit this "
+                "depth — ALWAYS read the closest matching case before judging whether an "
+                "observation is new or already covered.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "ref": {"type": "string", "description": "Case ref, e.g. INC-2026-02-01"},
+        },
+        "required": ["ref"],
+    },
+    handler=_read,
 ))
 
 registry.register(Tool(
