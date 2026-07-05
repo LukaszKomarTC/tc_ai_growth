@@ -12,6 +12,7 @@
     python -m tc_growth.cli decisions               # list the decision log
     python -m tc_growth.cli case-note <ref> "<text>"     # append a human observation to a case
     python -m tc_growth.cli case-status <ref> <status>   # human-approved lifecycle change
+    python -m tc_growth.cli dashboard [port]             # read-only web view (127.0.0.1 only)
 
 `smoke` exercises a single host-side tool WITHOUT the AI runtime — the fastest way to surface
 OAuth/vault/credential problems (the usual first failure point). `weekly-report` runs the full
@@ -241,6 +242,11 @@ def main(argv: list[str] | None = None) -> int:
             print("Usage: case-status <ref> <open|monitoring|resolved|closed>")
             return 1
         return cmd_case_status(rest[0], rest[1])
+    if cmd == "dashboard":
+        from .dashboard import serve
+
+        serve(port=int(rest[0]) if rest else 8383)
+        return 0
     print(__doc__)
     return 1
 
