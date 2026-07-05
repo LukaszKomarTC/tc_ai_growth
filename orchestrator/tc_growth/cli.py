@@ -4,6 +4,7 @@
     python -m tc_growth.cli smoke <tool_name> '<json args>'
     python -m tc_growth.cli weekly-report
     python -m tc_growth.cli investigate "<question or anomaly>"
+    python -m tc_growth.cli test-email
 
 `smoke` exercises a single host-side tool WITHOUT the AI runtime — the fastest way to surface
 OAuth/vault/credential problems (the usual first failure point). `weekly-report` runs the full
@@ -61,6 +62,23 @@ def cmd_weekly_report(kind: str = "messages") -> int:
     return 0
 
 
+def cmd_test_email() -> int:
+    """Send a tiny test email to verify SMTP (e.g. Brevo) works — no AI tokens spent."""
+    from .report import send_email
+
+    body = (
+        "This is a delivery test from the TC Growth agent.\n\n"
+        "If you can read this, SMTP is configured correctly and the weekly digest will arrive.\n"
+    )
+    try:
+        ok = send_email("Tossa Cycling — Email delivery test", body, raise_on_error=True)
+    except Exception as exc:
+        print(f"Email test FAILED: {exc}")
+        return 1
+    print("Email test sent — check the inbox." if ok else "Email not configured.")
+    return 0 if ok else 1
+
+
 def cmd_investigate(question: str) -> int:
     from .investigate import build_investigation
 
@@ -88,6 +106,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_weekly_report(rest[0] if rest else "messages")
     if cmd == "investigate":
         return cmd_investigate(rest[0] if rest else "")
+    if cmd == "test-email":
+        return cmd_test_email()
     print(__doc__)
     return 1
 
