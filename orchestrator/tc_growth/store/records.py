@@ -184,6 +184,32 @@ def record_run(
     return int(cur.lastrowid)
 
 
+def log_run(
+    conn: sqlite3.Connection,
+    *,
+    kind: str,
+    model: str | None = None,
+    prompt_tokens: int | None = None,
+    completion_tokens: int | None = None,
+    duration_s: float | None = None,
+    status: str = "ok",
+    summary: str | None = None,
+    detail: str | None = None,
+    case_id: int | None = None,
+    started_at: str | None = None,
+) -> int:
+    """record_run + cost estimation in one call. The convenience entry point for the app layer."""
+    from ..core.cost import estimate_cost
+
+    return record_run(
+        conn, kind=kind, status=status, model=model,
+        prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+        cost_usd=estimate_cost(model, prompt_tokens, completion_tokens),
+        duration_s=duration_s, summary=summary, detail=detail, case_id=case_id,
+        started_at=started_at,
+    )
+
+
 def list_runs(conn: sqlite3.Connection, *, kind: str | None = None, limit: int = 20) -> list[Run]:
     if kind:
         rows = conn.execute(

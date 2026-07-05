@@ -23,9 +23,11 @@ ProtectHome=true
 ProtectControlGroups=true
 ProtectKernelTunables=true
 RestrictSUIDSGID=true
-# The report is delivered by email and writes nothing to disk; keep the FS read-only.
-# If a future step needs to write (e.g. the SQLite persistence layer), add its path here.
-ReadOnlyPaths=/opt/tc_ai_growth/app
+# The whole FS is read-only under ProtectSystem=strict EXCEPT the persistence store's data dir,
+# where the run logs itself (tokens/cost) to SQLite. Create it first:
+#   mkdir -p /opt/tc_ai_growth/app/orchestrator/data
+#   chown tcgrowth:tcgrowth /opt/tc_ai_growth/app/orchestrator/data
+ReadWritePaths=/opt/tc_ai_growth/app/orchestrator/data
 
 [Install]
 WantedBy=multi-user.target

@@ -73,6 +73,23 @@ def test_decision_links_to_case():
     assert len(ds) == 1 and ds[0].id == did and ds[0].case_id == cid
 
 
+def test_estimate_cost_known_unknown_and_missing_tokens():
+    from tc_growth.core.cost import estimate_cost
+
+    # opus 4.8 = $5 in / $25 out per 1M → 1M+1M = $30
+    assert estimate_cost("claude-opus-4-8", 1_000_000, 1_000_000) == pytest.approx(30.0)
+    assert estimate_cost("claude-sonnet-4-6", 1_000_000, 0) == pytest.approx(3.0)
+    assert estimate_cost("some-other-model", 100, 100) is None      # unknown → None, not a guess
+    assert estimate_cost("claude-opus-4-8", None, 5) is None         # missing tokens → None
+
+
+def test_log_run_stamps_cost():
+    conn = _db()
+    store.log_run(conn, kind="investigate", model="claude-sonnet-4-6",
+                  prompt_tokens=1_000_000, completion_tokens=0, duration_s=1.0)
+    assert store.list_runs(conn)[0].cost_usd == pytest.approx(3.0)
+
+
 def test_seed_incident_is_idempotent():
     conn = _db()
     a = store.seed_incident_case(conn)

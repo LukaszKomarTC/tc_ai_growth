@@ -17,6 +17,12 @@ chmod 600 /opt/tc_ai_growth/app/orchestrator/.env          # secrets: owner-only
 # If Google service-account creds are used:
 # chmod 600 /opt/tc_ai_growth/app/orchestrator/secrets/*.json
 
+# Persistence store: create the writable data dir (the unit keeps everything else read-only)
+# and seed Case #1 (the Merchant Center incident).
+mkdir -p /opt/tc_ai_growth/app/orchestrator/data
+chown tcgrowth:tcgrowth /opt/tc_ai_growth/app/orchestrator/data
+sudo -u tcgrowth /opt/tc_ai_growth/app/.venv/bin/python -m tc_growth.cli db-init
+
 # 2. Install the units.
 cp /opt/tc_ai_growth/app/orchestrator/deployments/systemd/tc-weekly-report.service /etc/systemd/system/
 cp /opt/tc_ai_growth/app/orchestrator/deployments/systemd/tc-weekly-report.timer   /etc/systemd/system/

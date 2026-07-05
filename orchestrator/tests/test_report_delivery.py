@@ -57,6 +57,23 @@ def test_send_email_raise_on_error_surfaces_misconfig(monkeypatch):
         report.send_email("subj", "body", raise_on_error=True)
 
 
+def test_persist_run_swallows_store_errors(monkeypatch, capsys):
+    # Run-logging must never break a report: a broken/read-only store is caught and noted.
+    from tc_growth.runtime.base import RuntimeResult
+
+    def boom(*a, **k):
+        raise RuntimeError("no db")
+
+    monkeypatch.setattr("tc_growth.store.connect", boom)
+    report.persist_run(
+        "weekly-report",
+        RuntimeResult(text="Line one\nmore", model="claude-opus-4-8", prompt_tokens=10, completion_tokens=5),
+        started_at="2026-07-05T00:00:00+00:00",
+        duration_s=1.0,
+    )  # must not raise
+    assert "run not logged" in capsys.readouterr().out
+
+
 def test_send_email_success_returns_true(monkeypatch):
     # A working SMTP path returns True (fake transport, no network).
     monkeypatch.setattr(
