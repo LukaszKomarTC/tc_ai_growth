@@ -46,8 +46,12 @@ class Settings(BaseSettings):
 
     # --- AI runtime (only used by runtime/) ---
     ai_provider: str = Field(default="anthropic", description="anthropic | openai | gemini")
-    ai_model: str = Field(default="claude-opus-4-8")
-    ai_model_cheap: str = Field(default="claude-haiku-4-5")
+    ai_model: str = Field(default="claude-opus-4-8", description="Strong tier: strategy, investigations")
+    ai_model_mid: str = Field(default="claude-sonnet-4-6", description="Mid tier: routine reporting")
+    ai_model_cheap: str = Field(default="claude-haiku-4-5", description="Cheap tier: monitoring, bulk")
+    # Task-kind -> model overrides, as JSON (e.g. TC_MODEL_POLICY='{"weekly-report":"claude-opus-4-8"}').
+    # Unknown kinds fall back to ai_model. See model_for().
+    model_policy: dict[str, str] = Field(default_factory=dict)
 
     # --- Persistence (Phase 2) ---
     db_path: str = Field(default="", description="SQLite path; blank = orchestrator/data/tc_growth.db")
@@ -80,3 +84,24 @@ KPIS = {
 
 def get_settings() -> Settings:
     return Settings()
+
+
+# Which tier each task kind uses by default. Investigations and strategy stay on the strong
+# tier deliberately (forensics is where wrong conclusions are most expensive); routine weekly
+# reporting runs on the mid tier. Nothing is on the cheap tier by default — per ROADMAP,
+# measure before trusting it ("cheap is only cheap if it's good enough").
+_DEFAULT_TIER_FOR_KIND = {
+    "weekly-report": "mid",
+    "investigate": "strong",
+    "monitoring": "cheap",   # future scheduled checks; opt-in kind, nothing uses it yet
+}
+
+
+def model_for(kind: str, settings: Settings | None = None) -> str:
+    """Resolve the model for a task kind: explicit TC_MODEL_POLICY entry wins, then the default
+    tier map, then the strong tier. Keeps model choice a config concern, not code scattered."""
+    s = settings or get_settings()
+    if kind in s.model_policy:
+        return s.model_policy[kind]
+    tier = _DEFAULT_TIER_FOR_KIND.get(kind, "strong")
+    return {"strong": s.ai_model, "mid": s.ai_model_mid, "cheap": s.ai_model_cheap}[tier]

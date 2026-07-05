@@ -10,7 +10,7 @@ from __future__ import annotations
 import datetime as dt
 import time
 
-from .config import get_settings
+from .config import model_for
 from .core.approval import Phase
 from .memory import known_cases_block
 from .prompts import INVESTIGATION
@@ -22,7 +22,6 @@ from .tools.load import load_all
 def build_investigation(runtime: AgentRuntime, question: str, *, phase: Phase = Phase.READ_ONLY, persist: bool = True) -> str:
     """Run a forensic investigation for `question` and return the findings report."""
     tools = load_all()
-    s = get_settings()
     task = (
         f"Investigate the following, in FORENSIC mode (read-only, evidence-graded):\n\n{question}\n\n"
         "Build a timeline from Search Console (use page_filter + dimensions=['date'] over a long "
@@ -41,7 +40,7 @@ def build_investigation(runtime: AgentRuntime, question: str, *, phase: Phase = 
         task=task,
         tools=tools,
         phase=phase,
-        model=s.ai_model,
+        model=model_for("investigate"),
     )
     if persist:
         persist_run("investigate", result, started_at=started_at, duration_s=round(time.perf_counter() - t0, 2))
