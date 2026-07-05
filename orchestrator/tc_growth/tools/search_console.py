@@ -51,13 +51,17 @@ def _service():
 
     # Credentials resolution is intentionally host-side. See docs/SETUP.md for the options
     # (Application Default Credentials, a mounted service-account file, or stored OAuth tokens).
+    # The path is anchored to orchestrator/ (not the CWD) so commands work from any directory.
+    from ..config import secrets_path
+
+    sa_file = secrets_path("google-service-account.json")
     try:
         creds = service_account.Credentials.from_service_account_file(
-            "secrets/google-service-account.json",
+            str(sa_file),
             scopes=["https://www.googleapis.com/auth/webmasters.readonly"],
         )
     except FileNotFoundError as exc:
-        raise ToolError("Google service account file not found (secrets/google-service-account.json).") from exc
+        raise ToolError(f"Google service account file not found ({sa_file}).") from exc
     return build("searchconsole", "v1", credentials=creds, cache_discovery=False)
 
 

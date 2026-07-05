@@ -17,13 +17,16 @@ def _client():
         from google.oauth2 import service_account  # type: ignore
     except ImportError as exc:  # pragma: no cover
         raise ToolError("google-analytics-data not installed. Install the 'google' extra.") from exc
+    from ..config import secrets_path
+
+    sa_file = secrets_path("google-service-account.json")  # anchored to orchestrator/, not the CWD
     try:
         creds = service_account.Credentials.from_service_account_file(
-            "secrets/google-service-account.json",
+            str(sa_file),
             scopes=["https://www.googleapis.com/auth/analytics.readonly"],
         )
     except FileNotFoundError as exc:
-        raise ToolError("Google service account file not found (secrets/google-service-account.json).") from exc
+        raise ToolError(f"Google service account file not found ({sa_file}).") from exc
     return BetaAnalyticsDataClient(credentials=creds)
 
 
