@@ -8,13 +8,24 @@ phases land (it is also the seed of the "Operating Strategy" the coordinator wil
 
 - **Phase 1 — autonomous loop: DONE.** read → reason → investigate → report → deliver, running on
   the VPS as a hardened non-root systemd timer (Mon 07:00 Europe/Madrid) via IONOS SMTP.
-- **Phase 2 — persistence: core DONE (slices 1–3).**
-  - SQLite store: `runs`, `cases`, `decisions` (+ `schema_version`). Structure in columns, narrative
-    in a `body` text field.
-  - Case #1 seeded = `INC-2026-02-01` (Merchant Center tobacco spam), resolved.
-  - Token/cost captured per run (can't be backfilled).
-  - **Memory-aware coordinator**: known cases injected into the task; the agent references a resolved
-    case instead of re-raising it.
+- **Phase 2 — persistence & operating system: built (slices 1–5, 7, 8).**
+  - SQLite store (schema v2): `runs`, `cases` (opened_by/closed_by), `decisions` (made_by).
+    Structure in columns, narrative in an append-only `body` journal.
+  - Case #1 seeded = `INC-2026-02-01` (Merchant Center tobacco spam).
+  - Token/cost captured and logged per run.
+  - **Memory-aware coordinator** (reads known cases) + **memory-writing agent** (case_search /
+    case_open with duplicate refusal / case_note / case_set_confidence / decision_log as proposals;
+    case_set_status is ALWAYS_ASK — lifecycle changes need a human).
+  - **Store repository interface**: callers depend on the `Store` protocol; SQLite is an
+    implementation detail behind `open_store()`.
+  - **Model policy**: task-kind → tier (weekly-report → Sonnet, investigate → Opus,
+    monitoring → Haiku opt-in), overridable via `TC_MODEL_POLICY` JSON.
+  - **Read-only dashboard v1**: GET-only stdlib server on 127.0.0.1 (SSH-tunnel access),
+    overview + case pages. No write path by construction.
+  - *Remaining to activate on the VPS:* pull main, `db-init`, updated systemd unit (data dir).
+- **Slice 6 — act on live findings: OPEN (operational).** Spam re-verification `investigate` run,
+  SEO draft text for the ES rental page + home canonicals, and the human WP task: fix the
+  conversion-tracking gap (GA4 purchase event + Woo attribution) — the ROI blocker.
 
 ## Operating principles (the sequence that keeps risk down while value compounds)
 
@@ -46,23 +57,21 @@ The store is the source of truth for the operating system — hold two disciplin
 
 ## Next steps (sequenced)
 
-- **Slice 4 — Store repository interface.** Wrap the SQLite implementation as `SqliteStore` behind a
-  `Store` protocol; callers hold a store object. Locks the seam above. Pure refactor, tests unchanged.
-- **Slice 5 — the agent writes to memory.** Case-write tools (draft/propose only, human-confirmed for
-  status changes): open a new case, append observations, update status/confidence, record a decision.
-  Adds `opened_by`/`closed_by` and numeric confidence *with* this feature. Target behavior: a Monday
-  line like *"INC-2026-02-01 · monitoring · no recurrence · confidence 0.82→0.96 · no action."*
-- **Slice 6 — act on the live findings (read/draft-only).** Production-safe **SEO draft text** for the
-  Spanish `/alquiler_bicicletas/` page + home canonical fix; **spam re-verification** `investigate`
-  (day-by-day 90-day timeline to confirm decay). Fix the **conversion-tracking gap** (human task in WP)
-  — the blocker for all ROI measurement.
-- **Slice 7 — model policy.** Config map task-type → model (monitoring→Haiku, weekly→Sonnet,
-  strategy→Opus); measure cost/quality before trusting the cheap tier.
-- **Slice 8 — private web dashboard.** Thin, read-first view over the store (reports, cases, decisions,
-  runs/costs, health). Isolated hosting + its own auth; approvals added only after the read side is
-  trusted. Never a new write path into the booking system.
+- ~~**Slice 4 — Store repository interface.**~~ DONE (PR #11).
+- ~~**Slice 5 — the agent writes to memory.**~~ DONE (PR #12). Target Monday behavior now reachable:
+  *"INC-2026-02-01 · monitoring · no recurrence · confidence 0.82→0.96 · no action."*
+- **Slice 6 — act on the live findings (read/draft-only). ← CURRENT.** On the VPS: activate the
+  store (`db-init`), run the **spam re-verification** `investigate` (day-by-day 90-day timeline to
+  confirm decay), generate production-safe **SEO draft text** for the Spanish `/alquiler_bicicletas/`
+  page + home canonical fix. Human task in WP: fix the **conversion-tracking gap** (GA4 purchase
+  event + Woo Order Attribution) — the blocker for all ROI measurement.
+- ~~**Slice 7 — model policy.**~~ DONE (PR #13). Weekly→Sonnet, investigate→Opus, monitoring→Haiku
+  (opt-in); per-run cost logging makes tier choices verifiable.
+- ~~**Slice 8 — private web dashboard (v1).**~~ DONE (PR #14) as read-only loopback + SSH tunnel.
+  v2 (later): approvals/actions — only after the read side is trusted in daily use.
 - **Slice 9 — new specialists.** Pricing, advanced SEO, reservations, workshop, inventory, forecasting —
-  each inheriting memory, strategy, and prior decisions rather than starting cold.
+  each inheriting memory, strategy, and prior decisions rather than starting cold. Gated on the
+  long-lead credentials below.
 
 ## Longest-lead external items (start early)
 
