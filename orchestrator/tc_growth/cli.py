@@ -3,10 +3,12 @@
     python -m tc_growth.cli list-tools
     python -m tc_growth.cli smoke <tool_name> '<json args>'
     python -m tc_growth.cli weekly-report
+    python -m tc_growth.cli investigate "<question or anomaly>"
 
 `smoke` exercises a single host-side tool WITHOUT the AI runtime — the fastest way to surface
 OAuth/vault/credential problems (the usual first failure point). `weekly-report` runs the full
-coordinator via the configured provider runtime.
+growth coordinator. `investigate` runs a read-only FORENSIC analysis (timelines, evidence-graded
+findings) for a specific question — e.g. an SEO-spam pattern or a traffic anomaly.
 """
 
 from __future__ import annotations
@@ -59,6 +61,17 @@ def cmd_weekly_report(kind: str = "messages") -> int:
     return 0
 
 
+def cmd_investigate(question: str) -> int:
+    from .investigate import build_investigation
+
+    if not question:
+        print('Usage: investigate "<question or anomaly to investigate>"')
+        return 1
+    runtime = _build_runtime()
+    print(build_investigation(runtime, question, phase=Phase.READ_ONLY))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     load_env()  # export .env into the process environment (Anthropic SDK, Meta/Telegram tokens)
     argv = argv if argv is not None else sys.argv[1:]
@@ -73,6 +86,8 @@ def main(argv: list[str] | None = None) -> int:
     if cmd == "weekly-report":
         # Optional: `weekly-report managed` to use the hosted Managed Agents runtime.
         return cmd_weekly_report(rest[0] if rest else "messages")
+    if cmd == "investigate":
+        return cmd_investigate(rest[0] if rest else "")
     print(__doc__)
     return 1
 
