@@ -2,14 +2,32 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from dotenv import load_dotenv
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Canonical .env location: orchestrator/.env (next to pyproject.toml), resolved independently of
+# the current working directory so it also works under systemd.
+ENV_PATH = Path(__file__).resolve().parents[1] / ".env"
+
+
+def load_env() -> None:
+    """Load orchestrator/.env into the PROCESS environment.
+
+    Our Settings read `.env` directly via pydantic, but third-party SDKs (the Anthropic client)
+    and a few os.environ lookups (Meta / Telegram tokens) read the OS environment. pydantic does
+    NOT export to os.environ, so without this those keys are invisible. `override=False` keeps any
+    real environment variables (e.g. injected by systemd) authoritative over the file.
+    """
+    load_dotenv(ENV_PATH, override=False)
 
 
 class Settings(BaseSettings):
     """Environment-driven settings. Secrets come from the environment / a vault, never code."""
 
-    model_config = SettingsConfigDict(env_prefix="TC_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="TC_", env_file=str(ENV_PATH), extra="ignore")
 
     # --- WordPress connector ---
     wp_base_url: str = Field(default="", description="e.g. https://tossacycling.com")

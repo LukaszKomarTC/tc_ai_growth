@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import sys
 
-from .config import get_settings
+from .config import get_settings, load_env
 from .core.approval import Phase
 from .tools.load import load_all
 
@@ -60,6 +60,7 @@ def cmd_weekly_report(kind: str = "messages") -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    load_env()  # export .env into the process environment (Anthropic SDK, Meta/Telegram tokens)
     argv = argv if argv is not None else sys.argv[1:]
     if not argv:
         print(__doc__)
