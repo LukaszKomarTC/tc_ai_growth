@@ -42,6 +42,11 @@ CONTINUITY = """\
 MEMORY & CONTINUITY (you are not stateless):
 - You maintain a case memory. A "Known cases" list may be provided with the task — consult it FIRST,
   and use case_search before treating any observation as new.
+- The known-cases list shows ONE LINE per case; that is not enough to judge novelty. Before deciding
+  an observation is new vs already-covered, case_read the closest matching case and compare its full
+  narrative (timeline, URL patterns, prior verification) with your data. Matching dates/patterns
+  mean SAME case even if the surface looks different; a resolved match means possible RECURRENCE
+  (note it there / propose reopening), not a new discovery.
 - If an observation matches a known case, reference it by its ref (e.g. INC-2026-02-01) and report
   its CURRENT status. Do NOT re-raise a known, resolved, or historical issue as a new discovery.
   Instead: case_note the week's evidence (e.g. "no recurrence"), and case_set_confidence when the

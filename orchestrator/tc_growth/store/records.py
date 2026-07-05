@@ -113,12 +113,20 @@ def list_cases(conn: sqlite3.Connection, *, status: str | None = None, limit: in
     return [Case(**r) for r in rows]
 
 
-def find_open_cases(conn: sqlite3.Connection, query: str, *, limit: int = 10) -> list[Case]:
-    """Keyword search over OPEN cases (title + body) — call this before opening a new case.
+def find_cases(
+    conn: sqlite3.Connection,
+    query: str,
+    *,
+    statuses: tuple[str, ...] | None = None,
+    limit: int = 10,
+) -> list[Case]:
+    """Keyword search over cases (title + body), optionally filtered by status.
 
-    Splits the query into words and returns open/monitoring cases matching ANY word, most-recently
-    updated first. Intentionally simple substring matching; a future semantic layer can replace it
-    without changing callers.
+    statuses=None searches ALL cases — resolved ones included, deliberately: an observation that
+    matches a RESOLVED case is the "possible recurrence, consider reopening" signal, and hiding
+    closed history from duplicate checks is how the agent re-discovers old incidents as new.
+    Splits the query into words and matches ANY word, most-recently updated first. Intentionally
+    simple substring matching; a future semantic layer can replace it without changing callers.
     """
     words = [w for w in query.replace("/", " ").split() if len(w) > 2]
     if not words:
@@ -128,13 +136,22 @@ def find_open_cases(conn: sqlite3.Connection, query: str, *, limit: int = 10) ->
     for w in words:
         like = f"%{w}%"
         params.extend([like, like])
-    state_ph = ",".join("?" * len(_OPEN_STATES))
+    status_clause = ""
+    status_params: tuple[str, ...] = ()
+    if statuses:
+        status_clause = f"status IN ({','.join('?' * len(statuses))}) AND "
+        status_params = statuses
     rows = conn.execute(
-        f"SELECT * FROM cases WHERE status IN ({state_ph}) AND ({placeholders}) "
+        f"SELECT * FROM cases WHERE {status_clause}({placeholders}) "
         f"ORDER BY updated_at DESC LIMIT ?;",
-        (*_OPEN_STATES, *params, limit),
+        (*status_params, *params, limit),
     ).fetchall()
     return [Case(**r) for r in rows]
+
+
+def find_open_cases(conn: sqlite3.Connection, query: str, *, limit: int = 10) -> list[Case]:
+    """find_cases restricted to open/monitoring — the 'what is live right now' view."""
+    return find_cases(conn, query, statuses=_OPEN_STATES, limit=limit)
 
 
 _CASE_UPDATABLE = {"title", "category", "status", "priority", "confidence", "body", "closed_by"}

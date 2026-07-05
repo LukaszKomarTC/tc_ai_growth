@@ -34,6 +34,7 @@ TOOL_MIN_PHASE: dict[str, Phase] = {
     # gate (which governs external side effects) admits them in READ_ONLY. Lifecycle transitions
     # are the exception: case_set_status is in ALWAYS_ASK below.
     "case_search": Phase.READ_ONLY,
+    "case_read": Phase.READ_ONLY,
     "case_open": Phase.READ_ONLY,
     "case_note": Phase.READ_ONLY,
     "case_set_confidence": Phase.READ_ONLY,

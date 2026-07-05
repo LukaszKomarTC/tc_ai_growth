@@ -140,3 +140,41 @@ def test_decision_log_records_proposal_linked_to_case(tool_db):
 def test_unknown_ref_is_a_clean_tool_error(tool_db):
     out = load_all().dispatch("case_note", {"ref": "NOPE-1", "observation": "x"})
     assert out["ok"] is False and "No case matching" in out["error"]
+
+
+def test_case_open_surfaces_resolved_matches_as_possible_recurrence(tool_db):
+    # The seeded incident is RESOLVED. Opening a case about the same phenomenon must surface it —
+    # a resolved match means "possible recurrence, read it first", not an invisible duplicate.
+    # (This is the exact failure of the 2026-07-05 investigate run, encoded as a regression test.)
+    out = load_all().dispatch("case_open", {
+        "title": "Tobacco doorway pages in organic search",
+        "summary": "tobacco spam URLs on tossacycling.com Merchant Center pattern",
+    })
+    assert out["ok"] and out["result"]["created"] is False
+    refs = [d["ref"] for d in out["result"]["possible_duplicates"]]
+    assert store.INCIDENT_REF in refs
+    assert "case_read" in out["result"]["instruction"]
+
+
+def test_case_read_returns_full_narrative_and_decisions(tool_db):
+    reg = load_all()
+    reg.dispatch("decision_log", {"title": "Keep 410", "case_ref": store.INCIDENT_REF})
+    out = reg.dispatch("case_read", {"ref": store.INCIDENT_REF})
+    assert out["ok"]
+    r = out["result"]
+    assert r["ref"] == store.INCIDENT_REF
+    assert "Merchant Center" in r["narrative"]          # the full body, not a one-liner
+    assert "Timeline" in r["narrative"]                 # depth the summary line omits
+    assert r["decisions"] and r["decisions"][0]["title"] == "Keep 410"
+    assert is_tool_allowed("case_read", Phase.READ_ONLY)
+
+
+def test_find_cases_statuses_filter_and_default_all():
+    s = store.open_store(":memory:")
+    s.create_case(ref="R-9", title="tobacco resolved thing", status="resolved")
+    s.create_case(ref="O-9", title="tobacco open thing", status="open")
+    all_hits = {c.ref for c in s.find_cases("tobacco")}
+    assert all_hits == {"R-9", "O-9"}                   # default: every status
+    open_hits = {c.ref for c in s.find_open_cases("tobacco")}
+    assert open_hits == {"O-9"}                         # restricted view still available
+    s.close()
