@@ -51,3 +51,55 @@ systemctl disable --now tc-weekly-report.timer     # stop all future runs
 ```
 
 Revoking the API key / SMTP password in the provider consoles is the credential-level kill switch.
+
+---
+
+# Dashboard — always-on service + Plesk-fronted access
+
+The dashboard itself binds **127.0.0.1:8383 only** and serves GET requests exclusively; the public
+face is a Plesk-managed subdomain (TLS via Let's Encrypt + HTTP basic auth) that reverse-proxies to
+that loopback port. Compromising the password exposes a read-only view, nothing more.
+
+## 1. Install the service (as root)
+
+```bash
+cp /opt/tc_ai_growth/app/orchestrator/deployments/systemd/tc-dashboard.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now tc-dashboard.service
+systemctl status tc-dashboard.service --no-pager   # expect: active (running)
+```
+
+## 2. Create the password file (as root)
+
+```bash
+apt-get install -y apache2-utils
+htpasswd -c /etc/nginx/tcgrowth.htpasswd <your-username>     # prompts for the password, hidden
+chmod 640 /etc/nginx/tcgrowth.htpasswd && chgrp nginx /etc/nginx/tcgrowth.htpasswd
+```
+
+## 3. Plesk (clicks)
+
+1. **Websites & Domains → Add Subdomain** — name `dashboard`, under `tourdegirona.com`.
+2. On the new subdomain: **SSL/TLS Certificates → Install** a free Let's Encrypt certificate
+   (tick "Secure the subdomain").
+3. **Apache & nginx Settings → Additional nginx directives**, paste:
+
+   ```nginx
+   location / {
+       auth_basic "TC Growth";
+       auth_basic_user_file /etc/nginx/tcgrowth.htpasswd;
+       proxy_pass http://127.0.0.1:8383;
+       proxy_set_header Host $host;
+       proxy_set_header X-Forwarded-Proto $scheme;
+   }
+   ```
+
+4. Apply. Open `https://dashboard.tourdegirona.com`, enter the username/password → dashboard.
+
+## Notes
+
+- **Hosting Settings** for the subdomain: enable "Permanent SEO-safe 301 redirect from HTTP to HTTPS"
+  so the password never travels over plain HTTP.
+- The subdomain serves a read-only console; there is nothing to index — optionally add
+  `add_header X-Robots-Tag "noindex, nofollow";` inside the location block.
+- Kill switch: `systemctl disable --now tc-dashboard.service` (the subdomain then returns 502).

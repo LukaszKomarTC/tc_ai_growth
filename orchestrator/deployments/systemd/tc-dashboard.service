@@ -1,0 +1,28 @@
+[Unit]
+Description=TC Growth — read-only dashboard (loopback; fronted by Plesk nginx reverse proxy)
+After=network.target
+
+[Service]
+Type=simple
+User=tcgrowth
+Group=tcgrowth
+WorkingDirectory=/opt/tc_ai_growth/app/orchestrator
+# Binds 127.0.0.1:8383 only. Public access is via the Plesk-managed subdomain (TLS + basic auth)
+# which reverse-proxies to this loopback port — the dashboard itself is never exposed directly.
+ExecStart=/opt/tc_ai_growth/app/.venv/bin/python -m tc_growth.cli dashboard 8383
+Restart=always
+RestartSec=5
+
+# --- Hardening: same posture as the report job; needs only the app dir + the SQLite data dir ---
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectControlGroups=true
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+# SQLite needs to create journal files next to the DB even for reads.
+ReadWritePaths=/opt/tc_ai_growth/app/orchestrator/data
+
+[Install]
+WantedBy=multi-user.target
