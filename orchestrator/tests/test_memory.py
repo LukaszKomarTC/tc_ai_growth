@@ -9,9 +9,9 @@ from tc_growth.runtime.base import RuntimeResult
 
 
 def test_known_cases_block_lists_cases_with_ref_and_status():
-    conn = store.connect(":memory:")
-    store.seed_incident_case(conn)
-    block = known_cases_block(conn)
+    s = store.open_store(":memory:")
+    s.seed_incident_case()
+    block = known_cases_block(s)
     assert "Known cases" in block
     assert store.INCIDENT_REF in block          # INC-2026-02-01 is referenceable
     assert "resolved" in block
@@ -19,21 +19,20 @@ def test_known_cases_block_lists_cases_with_ref_and_status():
 
 
 def test_known_cases_block_empty_when_no_cases():
-    conn = store.connect(":memory:")
-    assert known_cases_block(conn) == ""
+    assert known_cases_block(store.open_store(":memory:")) == ""
 
 
 def test_known_cases_block_orders_open_before_resolved():
-    conn = store.connect(":memory:")
-    store.create_case(conn, ref="R-1", title="resolved one", status="resolved")
-    store.create_case(conn, ref="O-1", title="open one", status="open")
-    block = known_cases_block(conn)
+    s = store.open_store(":memory:")
+    s.create_case(ref="R-1", title="resolved one", status="resolved")
+    s.create_case(ref="O-1", title="open one", status="open")
+    block = known_cases_block(s)
     assert block.index("O-1") < block.index("R-1")
 
 
 def test_known_cases_block_is_resilient_when_store_unavailable(monkeypatch):
     # If the store can't be opened, memory degrades to empty — never raises.
-    monkeypatch.setattr("tc_growth.store.connect", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no db")))
+    monkeypatch.setattr("tc_growth.store.open_store", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no db")))
     assert known_cases_block() == ""
 
 

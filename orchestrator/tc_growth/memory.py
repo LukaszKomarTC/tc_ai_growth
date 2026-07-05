@@ -22,19 +22,22 @@ def _case_line(case) -> str:
     return f"- {ref} — [{' · '.join(bits)}] {case.title}"
 
 
-def known_cases_block(conn=None, *, limit: int = 25) -> str:
-    """A markdown 'Known cases' block for task injection, or '' when there are none / no store."""
-    try:
-        from .store import connect, list_cases
+def known_cases_block(store=None, *, limit: int = 25) -> str:
+    """A markdown 'Known cases' block for task injection, or '' when there are none / no store.
 
-        own = conn is None
+    `store` is any Store implementation (see store/base.py); None opens the configured backend.
+    """
+    try:
+        from .store import open_store
+
+        own = store is None
         if own:
-            conn = connect()
+            store = open_store()
         try:
-            cases = list_cases(conn, limit=limit)
+            cases = store.list_cases(limit=limit)
         finally:
             if own:
-                conn.close()
+                store.close()
     except Exception:  # noqa: BLE001 - memory is an enhancement, never a hard dependency
         return ""
 
