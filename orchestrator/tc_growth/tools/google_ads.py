@@ -29,10 +29,13 @@ def _client():
         raise ToolError("google-ads not installed. Install the 'google' extra and configure a "
                         "developer token (see docs/SETUP.md).") from exc
     # GoogleAdsClient.load_from_storage reads google-ads.yaml (developer token, OAuth creds).
+    from ..config import secrets_path
+
+    yaml_file = secrets_path("google-ads.yaml")  # anchored to orchestrator/, not the CWD
     try:
-        return GoogleAdsClient.load_from_storage("secrets/google-ads.yaml")
+        return GoogleAdsClient.load_from_storage(str(yaml_file))
     except FileNotFoundError as exc:
-        raise ToolError("secrets/google-ads.yaml not found. Provision the Google Ads developer "
+        raise ToolError(f"{yaml_file} not found. Provision the Google Ads developer "
                         "token and OAuth credentials first (Phase 0 critical path).") from exc
 
 

@@ -56,6 +56,9 @@ class Settings(BaseSettings):
     # --- Persistence (Phase 2) ---
     db_path: str = Field(default="", description="SQLite path; blank = orchestrator/data/tc_growth.db")
 
+    # --- Credentials ---
+    secrets_dir: str = Field(default="", description="Credential dir; blank = orchestrator/secrets")
+
     # --- Reporting ---
     report_channel: str = Field(default="email", description="email | telegram")
     report_recipient: str = Field(default="lukaszkomar@gmail.com")
@@ -84,6 +87,15 @@ KPIS = {
 
 def get_settings() -> Settings:
     return Settings()
+
+
+def secrets_path(filename: str) -> Path:
+    """Absolute path of a credential file under orchestrator/secrets/, independent of the
+    current working directory (same anchoring as ENV_PATH — a CWD-relative secrets path broke
+    the Google tools whenever a command was run from outside orchestrator/). TC_SECRETS_DIR
+    overrides the directory."""
+    base = get_settings().secrets_dir
+    return (Path(base).expanduser() if base else ENV_PATH.parent / "secrets") / filename
 
 
 # Which tier each task kind uses by default. Investigations and strategy stay on the strong
