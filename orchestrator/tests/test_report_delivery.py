@@ -46,3 +46,44 @@ def test_email_send_failure_does_not_raise(monkeypatch, capsys):
     monkeypatch.setattr(smtplib, "SMTP", boom)
     report._deliver_email("the report")  # must not raise
     assert "delivery failed" in capsys.readouterr().out
+
+
+def test_send_email_raise_on_error_surfaces_misconfig(monkeypatch):
+    # The test-email path must fail loudly, not silently fall back to stdout.
+    import pytest
+
+    monkeypatch.setattr(report, "get_settings", lambda: Settings(smtp_host="", report_recipient="x@y.z"))
+    with pytest.raises(RuntimeError):
+        report.send_email("subj", "body", raise_on_error=True)
+
+
+def test_send_email_success_returns_true(monkeypatch):
+    # A working SMTP path returns True (fake transport, no network).
+    monkeypatch.setattr(
+        report, "get_settings",
+        lambda: Settings(smtp_host="smtp.example.com", report_recipient="x@y.z", smtp_starttls=False),
+    )
+
+    class _FakeSMTP:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def starttls(self):
+            pass
+
+        def login(self, *a):
+            pass
+
+        def send_message(self, msg):
+            pass
+
+    import smtplib
+
+    monkeypatch.setattr(smtplib, "SMTP", _FakeSMTP)
+    assert report.send_email("subj", "body", raise_on_error=True) is True

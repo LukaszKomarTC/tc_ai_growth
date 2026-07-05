@@ -61,22 +61,30 @@ def deliver(report: str) -> None:
         _deliver_email(report)
 
 
-def _deliver_email(report: str) -> None:
-    """Send via SMTP. Falls back to stdout (and never raises) when SMTP is not configured or a
-    send fails, so a scheduled run is never broken by a delivery problem."""
+def send_email(subject: str, body: str, *, raise_on_error: bool = False) -> bool:
+    """Send one email via SMTP. Returns True on success, False otherwise.
+
+    Scheduled runs call this with raise_on_error=False so a delivery problem prints and is
+    swallowed (a broken SMTP must never break the report pipeline). The `test-email` command
+    passes raise_on_error=True so a misconfiguration surfaces loudly instead of silently
+    falling back to stdout.
+    """
     import smtplib
     from email.message import EmailMessage
 
     s = get_settings()
     if not s.smtp_host or not s.report_recipient:
-        print(f"[email not configured -> {s.report_recipient}]\n{report}")
-        return
+        msg = f"[email not configured -> {s.report_recipient}]\n{body}"
+        if raise_on_error:
+            raise RuntimeError("SMTP not configured (set TC_SMTP_HOST and TC_REPORT_RECIPIENT).")
+        print(msg)
+        return False
 
     msg = EmailMessage()
-    msg["Subject"] = "Tossa Cycling — Growth Report"
+    msg["Subject"] = subject
     msg["From"] = s.report_sender or s.smtp_user or s.report_recipient
     msg["To"] = s.report_recipient
-    msg.set_content(report)
+    msg.set_content(body)
 
     try:
         with smtplib.SMTP(s.smtp_host, s.smtp_port, timeout=30) as smtp:
@@ -85,8 +93,17 @@ def _deliver_email(report: str) -> None:
             if s.smtp_user:
                 smtp.login(s.smtp_user, s.smtp_password)
             smtp.send_message(msg)
-    except Exception as exc:  # pragma: no cover - delivery must never break a scheduled run
-        print(f"[email delivery failed: {exc}]\n{report}")
+        return True
+    except Exception as exc:  # delivery must never break a scheduled run
+        if raise_on_error:
+            raise
+        print(f"[email delivery failed: {exc}]\n{body}")
+        return False
+
+
+def _deliver_email(report: str) -> None:
+    """Send the weekly report via SMTP; falls back to stdout and never raises (scheduled path)."""
+    send_email("Tossa Cycling — Growth Report", report, raise_on_error=False)
 
 
 def _deliver_telegram(report: str) -> None:
