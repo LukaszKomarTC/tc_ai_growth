@@ -1,0 +1,13 @@
+[Unit]
+Description=TC Growth — run the weekly report every Monday morning
+
+[Timer]
+# Monday 07:00 Europe/Madrid (handles CET/CEST DST automatically).
+# Adjust the time/day to taste; `systemd-analyze calendar "Mon *-*-* 07:00 Europe/Madrid"`
+# prints the next few firings so you can sanity-check.
+OnCalendar=Mon *-*-* 07:00 Europe/Madrid
+# If the box was off at the scheduled time, run once on next boot.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

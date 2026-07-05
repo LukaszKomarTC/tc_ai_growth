@@ -8,15 +8,17 @@ conclusions. Same read-only tools, same phase gate — different prompt and outp
 from __future__ import annotations
 
 import datetime as dt
+import time
 
 from .config import get_settings
 from .core.approval import Phase
 from .prompts import INVESTIGATION
+from .report import persist_run
 from .runtime.base import AgentRuntime
 from .tools.load import load_all
 
 
-def build_investigation(runtime: AgentRuntime, question: str, *, phase: Phase = Phase.READ_ONLY) -> str:
+def build_investigation(runtime: AgentRuntime, question: str, *, phase: Phase = Phase.READ_ONLY, persist: bool = True) -> str:
     """Run a forensic investigation for `question` and return the findings report."""
     tools = load_all()
     s = get_settings()
@@ -28,6 +30,8 @@ def build_investigation(runtime: AgentRuntime, question: str, *, phase: Phase = 
         "human must run before locking a conclusion; then give a calibrated Conclusion with a "
         "confidence level. Do not assert an active compromise without supporting verification."
     )
+    started_at = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
+    t0 = time.perf_counter()
     result = runtime.run(
         system=INVESTIGATION,
         task=task,
@@ -35,6 +39,8 @@ def build_investigation(runtime: AgentRuntime, question: str, *, phase: Phase = 
         phase=phase,
         model=s.ai_model,
     )
+    if persist:
+        persist_run("investigate", result, started_at=started_at, duration_s=round(time.perf_counter() - t0, 2))
     header = f"# Forensic Investigation ({dt.date.today().isoformat()})\n\n_Question: {question}_\n\n"
     footer = ""
     if result.blocked_calls:

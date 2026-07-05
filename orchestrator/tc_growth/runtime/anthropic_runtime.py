@@ -48,6 +48,8 @@ class AnthropicRuntime:
         messages: list[dict] = [{"role": "user", "content": task}]
         tool_calls: list[dict] = []
         blocked: list[dict] = []
+        prompt_tokens = 0
+        completion_tokens = 0
 
         for _ in range(max_iterations):
             response = self._client.messages.create(
@@ -59,10 +61,17 @@ class AnthropicRuntime:
                 tools=tool_specs,
                 messages=messages,
             )
+            usage = getattr(response, "usage", None)
+            if usage is not None:
+                prompt_tokens += getattr(usage, "input_tokens", 0) or 0
+                completion_tokens += getattr(usage, "output_tokens", 0) or 0
 
             if response.stop_reason != "tool_use":
                 text = "".join(b.text for b in response.content if b.type == "text")
-                return RuntimeResult(text=text, tool_calls=tool_calls, blocked_calls=blocked)
+                return RuntimeResult(
+                    text=text, tool_calls=tool_calls, blocked_calls=blocked,
+                    model=model, prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+                )
 
             messages.append({"role": "assistant", "content": response.content})
 
@@ -108,6 +117,9 @@ class AnthropicRuntime:
             text="(stopped: reached max iterations)",
             tool_calls=tool_calls,
             blocked_calls=blocked,
+            model=model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
         )
 
 

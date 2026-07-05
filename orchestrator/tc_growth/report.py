@@ -7,12 +7,42 @@ recommended actions, and delivers it via email or Telegram.
 from __future__ import annotations
 
 import datetime as dt
+import time
 
 from .config import get_settings
 from .core.approval import Phase
 from .prompts import COORDINATOR
-from .runtime.base import AgentRuntime
+from .runtime.base import AgentRuntime, RuntimeResult
 from .tools.load import load_all
+
+
+def _first_line(text: str, limit: int = 200) -> str:
+    for line in text.splitlines():
+        s = line.strip().lstrip("# ").strip()
+        if s:
+            return s[:limit]
+    return ""
+
+
+def persist_run(kind: str, result: RuntimeResult, *, started_at: str, duration_s: float) -> None:
+    """Log a completed agent run to the store. Best-effort: a persistence problem (missing/RO DB)
+    must NEVER break the report or investigation, so every failure is swallowed with a note."""
+    try:
+        from . import store
+
+        conn = store.connect()
+        store.log_run(
+            conn,
+            kind=kind,
+            model=result.model,
+            prompt_tokens=result.prompt_tokens,
+            completion_tokens=result.completion_tokens,
+            duration_s=duration_s,
+            summary=_first_line(result.text),
+            started_at=started_at,
+        )
+    except Exception as exc:  # noqa: BLE001 - logging must never break the run
+        print(f"[run not logged: {exc}]")
 
 WEEKLY_TASK = """\
 Produce this week's growth report for Tossa Cycling. Steps:
@@ -33,9 +63,11 @@ Actions (prioritised). For tools that are blocked or not yet provisioned, note t
 """
 
 
-def build_weekly_report(runtime: AgentRuntime, *, phase: Phase = Phase.READ_ONLY) -> str:
+def build_weekly_report(runtime: AgentRuntime, *, phase: Phase = Phase.READ_ONLY, persist: bool = True) -> str:
     tools = load_all()
     s = get_settings()
+    started_at = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
+    t0 = time.perf_counter()
     result = runtime.run(
         system=COORDINATOR,
         task=WEEKLY_TASK,
@@ -43,6 +75,8 @@ def build_weekly_report(runtime: AgentRuntime, *, phase: Phase = Phase.READ_ONLY
         phase=phase,
         model=s.ai_model,
     )
+    if persist:
+        persist_run("weekly-report", result, started_at=started_at, duration_s=round(time.perf_counter() - t0, 2))
     header = f"# Tossa Cycling — Growth Report ({dt.date.today().isoformat()})\n\n"
     footer = ""
     if result.blocked_calls:

@@ -19,6 +19,10 @@ class RuntimeResult:
     text: str
     tool_calls: list[dict] = field(default_factory=list)
     blocked_calls: list[dict] = field(default_factory=list)
+    # Usage — provider-neutral token counts for cost logging (None if the runtime can't report it).
+    model: str | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
 
 
 class AgentRuntime(Protocol):
