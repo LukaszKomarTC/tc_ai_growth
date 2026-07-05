@@ -10,6 +10,8 @@
     python -m tc_growth.cli case <id-or-ref>        # show one case (with narrative)
     python -m tc_growth.cli runs                    # list recent runs
     python -m tc_growth.cli decisions               # list the decision log
+    python -m tc_growth.cli case-note <ref> "<text>"     # append a human observation to a case
+    python -m tc_growth.cli case-status <ref> <status>   # human-approved lifecycle change
 
 `smoke` exercises a single host-side tool WITHOUT the AI runtime — the fastest way to surface
 OAuth/vault/credential problems (the usual first failure point). `weekly-report` runs the full
@@ -148,6 +150,43 @@ def cmd_runs() -> int:
     return 0
 
 
+def _resolve_case(s, key: str):
+    case = s.get_case_by_ref(key)
+    if case is None and key.lstrip("#").isdigit():
+        case = s.get_case(int(key.lstrip("#")))
+    return case
+
+
+def cmd_case_note(key: str, text: str) -> int:
+    from . import store
+
+    s = store.open_store()
+    case = _resolve_case(s, key)
+    if case is None:
+        print(f"No case matching {key!r}")
+        return 1
+    s.append_observation(case.id, text, author="human")
+    print(f"Noted on {case.ref or case.id}")
+    return 0
+
+
+def cmd_case_status(key: str, status: str) -> int:
+    from . import store
+
+    s = store.open_store()
+    case = _resolve_case(s, key)
+    if case is None:
+        print(f"No case matching {key!r}")
+        return 1
+    fields: dict = {"status": status}
+    if status in ("resolved", "closed"):
+        fields["closed_by"] = "human"
+    s.update_case(case.id, **fields)
+    s.append_observation(case.id, f"Status {case.status} -> {status} (human, via CLI).", author="human")
+    print(f"{case.ref or case.id}: {case.status} -> {status}")
+    return 0
+
+
 def cmd_decisions() -> int:
     from . import store
 
@@ -192,6 +231,16 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_runs()
     if cmd == "decisions":
         return cmd_decisions()
+    if cmd == "case-note":
+        if len(rest) < 2:
+            print('Usage: case-note <ref> "<text>"')
+            return 1
+        return cmd_case_note(rest[0], rest[1])
+    if cmd == "case-status":
+        if len(rest) < 2:
+            print("Usage: case-status <ref> <open|monitoring|resolved|closed>")
+            return 1
+        return cmd_case_status(rest[0], rest[1])
     print(__doc__)
     return 1
 

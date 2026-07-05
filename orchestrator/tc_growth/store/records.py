@@ -28,6 +28,8 @@ class Case:
     confidence: str | None
     created_at: str
     updated_at: str
+    opened_by: str | None
+    closed_by: str | None
     body: str | None
 
 
@@ -56,6 +58,7 @@ class Decision:
     rationale: str | None
     status: str
     outcome: str | None
+    made_by: str | None
     case_id: int | None
 
 
@@ -73,14 +76,15 @@ def create_case(
     status: str = "open",
     priority: str = "medium",
     confidence: str | None = None,
+    opened_by: str | None = None,
     body: str | None = None,
 ) -> int:
     """Insert a case; returns its id. Raises sqlite3.IntegrityError on a duplicate `ref`."""
     now = _now()
     cur = conn.execute(
         "INSERT INTO cases (ref, title, category, status, priority, confidence, created_at, "
-        "updated_at, body) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);",
-        (ref, title, category, status, priority, confidence, now, now, body),
+        "updated_at, opened_by, body) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);",
+        (ref, title, category, status, priority, confidence, now, now, opened_by, body),
     )
     conn.commit()
     return int(cur.lastrowid)
@@ -133,7 +137,7 @@ def find_open_cases(conn: sqlite3.Connection, query: str, *, limit: int = 10) ->
     return [Case(**r) for r in rows]
 
 
-_CASE_UPDATABLE = {"title", "category", "status", "priority", "confidence", "body"}
+_CASE_UPDATABLE = {"title", "category", "status", "priority", "confidence", "body", "closed_by"}
 
 
 def update_case(conn: sqlite3.Connection, case_id: int, **fields: object) -> None:
@@ -147,6 +151,25 @@ def update_case(conn: sqlite3.Connection, case_id: int, **fields: object) -> Non
     conn.execute(
         f"UPDATE cases SET {assignments}, updated_at = ? WHERE id = ?;",
         (*fields.values(), _now(), case_id),
+    )
+    conn.commit()
+
+
+def append_observation(
+    conn: sqlite3.Connection, case_id: int, text: str, *, author: str = "agent"
+) -> None:
+    """Append a timestamped observation to the case narrative and bump updated_at.
+
+    Cases evolve as an append-only journal — prior narrative is never rewritten, so the
+    reasoning trail (including wrong turns) is preserved.
+    """
+    row = conn.execute("SELECT body FROM cases WHERE id = ?;", (case_id,)).fetchone()
+    if row is None:
+        raise ValueError(f"No case with id {case_id}")
+    entry = f"\n\n---\n**{_now()} ({author}):** {text.strip()}"
+    conn.execute(
+        "UPDATE cases SET body = COALESCE(body, '') || ?, updated_at = ? WHERE id = ?;",
+        (entry, _now(), case_id),
     )
     conn.commit()
 
@@ -230,13 +253,14 @@ def record_decision(
     rationale: str | None = None,
     status: str = "active",
     outcome: str | None = None,
+    made_by: str | None = None,
     case_id: int | None = None,
     made_at: str | None = None,
 ) -> int:
     cur = conn.execute(
-        "INSERT INTO decisions (made_at, title, rationale, status, outcome, case_id) "
-        "VALUES (?, ?, ?, ?, ?, ?);",
-        (made_at or _now(), title, rationale, status, outcome, case_id),
+        "INSERT INTO decisions (made_at, title, rationale, status, outcome, made_by, case_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?);",
+        (made_at or _now(), title, rationale, status, outcome, made_by, case_id),
     )
     conn.commit()
     return int(cur.lastrowid)

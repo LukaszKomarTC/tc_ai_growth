@@ -42,6 +42,8 @@ class Store(Protocol):
 
     def update_case(self, case_id: int, **fields: object) -> None: ...
 
+    def append_observation(self, case_id: int, text: str, *, author: str = "agent") -> None: ...
+
     # -- runs --
     def log_run(
         self,
