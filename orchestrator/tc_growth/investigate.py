@@ -12,6 +12,7 @@ import time
 
 from .config import get_settings
 from .core.approval import Phase
+from .memory import known_cases_block
 from .prompts import INVESTIGATION
 from .report import persist_run
 from .runtime.base import AgentRuntime
@@ -30,6 +31,9 @@ def build_investigation(runtime: AgentRuntime, question: str, *, phase: Phase = 
         "human must run before locking a conclusion; then give a calibrated Conclusion with a "
         "confidence level. Do not assert an active compromise without supporting verification."
     )
+    memory = known_cases_block()
+    if memory:
+        task = f"{task}\n\n{memory}"
     started_at = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
     t0 = time.perf_counter()
     result = runtime.run(
