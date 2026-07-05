@@ -61,19 +61,32 @@ def _service():
     return build("searchconsole", "v1", credentials=creds, cache_discovery=False)
 
 
+def _build_body(args: dict[str, Any]) -> dict[str, Any]:
+    """Build the searchAnalytics request body (pure function — unit-tested without the API).
+
+    Supports a forensic `page_filter` (URL 'contains' substring) via dimensionFilterGroups, plus
+    the 'date' dimension and a long lookback for timeline analysis.
+    """
+    body: dict[str, Any] = {
+        "startDate": _resolve_date(args["start_date"]),
+        "endDate": _resolve_date(args["end_date"]),
+        "dimensions": args.get("dimensions", ["query"]),
+        "rowLimit": int(args.get("row_limit", 25)),
+    }
+    page_filter = args.get("page_filter")
+    if page_filter:
+        body["dimensionFilterGroups"] = [{
+            "filters": [{"dimension": "page", "operator": "contains", "expression": str(page_filter)}]
+        }]
+    return body
+
+
 def _query(args: dict[str, Any]) -> Any:
     s = get_settings()
     if not s.gsc_site_url:
         raise ToolError("Search Console site URL is not configured (TC_GSC_SITE_URL).")
 
-    dimensions = args.get("dimensions", ["query"])
-    row_limit = int(args.get("row_limit", 25))
-    request_body = {
-        "startDate": _resolve_date(args["start_date"]),
-        "endDate": _resolve_date(args["end_date"]),
-        "dimensions": dimensions,
-        "rowLimit": row_limit,
-    }
+    request_body = _build_body(args)
     service = _service()
     resp = service.searchanalytics().query(siteUrl=s.gsc_site_url, body=request_body).execute()
     rows = resp.get("rows", [])
@@ -92,19 +105,22 @@ def _query(args: dict[str, Any]) -> Any:
 registry.register(Tool(
     name="gsc_search_analytics",
     description="Query Google Search Console performance: clicks, impressions, CTR, average "
-                "position. Group by 'query', 'page', 'country', or 'device'. Use this to find "
-                "high-impression/low-CTR pages and position 5-20 ranking opportunities.",
+                "position. Group by 'query', 'page', 'country', 'device', or 'date'. Find "
+                "high-impression/low-CTR pages and position 5-20 opportunities. For forensic "
+                "timelines, set page_filter (URL contains) + dimensions=['date'] over a long "
+                "lookback (e.g. start '480daysAgo') to see when a URL pattern first/last appeared.",
     input_schema={
         "type": "object",
         "properties": {
-            "start_date": {"type": "string", "description": "YYYY-MM-DD, or relative: '28daysAgo' / 'today' / 'yesterday'"},
+            "start_date": {"type": "string", "description": "YYYY-MM-DD, or relative: '28daysAgo' / 'today' / 'yesterday' (GSC max lookback ~16 months)"},
             "end_date": {"type": "string", "description": "YYYY-MM-DD, or relative: '28daysAgo' / 'today' / 'yesterday'"},
             "dimensions": {
                 "type": "array",
                 "items": {"type": "string", "enum": ["query", "page", "country", "device", "date"]},
                 "default": ["query"],
             },
-            "row_limit": {"type": "integer", "default": 25, "maximum": 100},
+            "page_filter": {"type": "string", "description": "Only rows whose page URL CONTAINS this substring (forensics, e.g. 'Marlboro')"},
+            "row_limit": {"type": "integer", "default": 25, "maximum": 1000},
         },
         "required": ["start_date", "end_date"],
     },
