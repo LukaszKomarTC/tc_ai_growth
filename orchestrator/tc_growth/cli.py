@@ -5,6 +5,11 @@
     python -m tc_growth.cli weekly-report
     python -m tc_growth.cli investigate "<question or anomaly>"
     python -m tc_growth.cli test-email
+    python -m tc_growth.cli db-init                 # create the SQLite store + seed Case #1
+    python -m tc_growth.cli cases [open|resolved]   # list cases
+    python -m tc_growth.cli case <id-or-ref>        # show one case (with narrative)
+    python -m tc_growth.cli runs                    # list recent runs
+    python -m tc_growth.cli decisions               # list the decision log
 
 `smoke` exercises a single host-side tool WITHOUT the AI runtime — the fastest way to surface
 OAuth/vault/credential problems (the usual first failure point). `weekly-report` runs the full
@@ -90,6 +95,75 @@ def cmd_investigate(question: str) -> int:
     return 0
 
 
+def cmd_db_init() -> int:
+    from . import store
+
+    conn = store.connect()
+    case_id = store.seed_incident_case(conn)
+    print(f"Store ready at {store.resolved_db_path()}")
+    print(f"Seeded {store.INCIDENT_REF} as case #{case_id}")
+    return 0
+
+
+def cmd_cases(status: str | None = None) -> int:
+    from . import store
+
+    conn = store.connect()
+    rows = store.list_cases(conn, status=status)
+    if not rows:
+        print("(no cases)")
+        return 0
+    for c in rows:
+        ref = c.ref or f"#{c.id}"
+        print(f"{ref:16} [{c.status:10}] {c.priority:8} {c.title}")
+    return 0
+
+
+def cmd_case_show(key: str) -> int:
+    from . import store
+
+    conn = store.connect()
+    case = store.get_case_by_ref(conn, key)
+    if case is None and key.isdigit():
+        case = store.get_case(conn, int(key))
+    if case is None:
+        print(f"No case matching {key!r}")
+        return 1
+    print(f"# {case.ref or ('#' + str(case.id))} — {case.title}")
+    print(f"status={case.status}  priority={case.priority}  confidence={case.confidence}")
+    print(f"category={case.category}  created={case.created_at}  updated={case.updated_at}\n")
+    print(case.body or "(no narrative)")
+    return 0
+
+
+def cmd_runs() -> int:
+    from . import store
+
+    conn = store.connect()
+    rows = store.list_runs(conn)
+    if not rows:
+        print("(no runs logged yet)")
+        return 0
+    for r in rows:
+        cost = f"${r.cost_usd:.4f}" if r.cost_usd is not None else "—"
+        print(f"#{r.id:<4} {r.started_at}  {r.kind:16} {r.status:6} {r.model or '—':20} {cost}")
+    return 0
+
+
+def cmd_decisions() -> int:
+    from . import store
+
+    conn = store.connect()
+    rows = store.list_decisions(conn)
+    if not rows:
+        print("(no decisions logged yet)")
+        return 0
+    for d in rows:
+        link = f" (case #{d.case_id})" if d.case_id else ""
+        print(f"#{d.id:<4} {d.made_at}  [{d.status:10}] {d.title}{link}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     load_env()  # export .env into the process environment (Anthropic SDK, Meta/Telegram tokens)
     argv = argv if argv is not None else sys.argv[1:]
@@ -108,6 +182,19 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_investigate(rest[0] if rest else "")
     if cmd == "test-email":
         return cmd_test_email()
+    if cmd == "db-init":
+        return cmd_db_init()
+    if cmd == "cases":
+        return cmd_cases(rest[0] if rest else None)
+    if cmd == "case":
+        if not rest:
+            print("Usage: case <id-or-ref>")
+            return 1
+        return cmd_case_show(rest[0])
+    if cmd == "runs":
+        return cmd_runs()
+    if cmd == "decisions":
+        return cmd_decisions()
     print(__doc__)
     return 1
 

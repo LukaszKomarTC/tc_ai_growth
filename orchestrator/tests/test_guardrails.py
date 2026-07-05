@@ -53,7 +53,8 @@ def test_tools_and_core_do_not_import_an_ai_sdk():
     root = pathlib.Path(__file__).resolve().parents[1] / "tc_growth"
     banned = ("import anthropic", "from anthropic", "import openai", "from openai", "google.generativeai")
     offenders = []
-    for path in list((root / "tools").rglob("*.py")) + list((root / "core").rglob("*.py")):
+    scanned = (root / "tools", root / "core", root / "store")
+    for path in [p for d in scanned for p in d.rglob("*.py")]:
         text = path.read_text(encoding="utf-8")
         if any(token in text for token in banned):
             offenders.append(str(path))

@@ -49,6 +49,9 @@ class Settings(BaseSettings):
     ai_model: str = Field(default="claude-opus-4-8")
     ai_model_cheap: str = Field(default="claude-haiku-4-5")
 
+    # --- Persistence (Phase 2) ---
+    db_path: str = Field(default="", description="SQLite path; blank = orchestrator/data/tc_growth.db")
+
     # --- Reporting ---
     report_channel: str = Field(default="email", description="email | telegram")
     report_recipient: str = Field(default="lukaszkomar@gmail.com")
