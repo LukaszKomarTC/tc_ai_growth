@@ -9,7 +9,7 @@ from __future__ import annotations
 import datetime as dt
 import time
 
-from .config import get_settings
+from .config import get_settings, model_for
 from .core.approval import Phase
 from .memory import known_cases_block
 from .prompts import COORDINATOR
@@ -64,7 +64,6 @@ Actions (prioritised). For tools that are blocked or not yet provisioned, note t
 
 def build_weekly_report(runtime: AgentRuntime, *, phase: Phase = Phase.READ_ONLY, persist: bool = True) -> str:
     tools = load_all()
-    s = get_settings()
     memory = known_cases_block()
     task = f"{WEEKLY_TASK}\n\n{memory}" if memory else WEEKLY_TASK
     started_at = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
@@ -74,7 +73,7 @@ def build_weekly_report(runtime: AgentRuntime, *, phase: Phase = Phase.READ_ONLY
         task=task,
         tools=tools,
         phase=phase,
-        model=s.ai_model,
+        model=model_for("weekly-report"),
     )
     if persist:
         persist_run("weekly-report", result, started_at=started_at, duration_s=round(time.perf_counter() - t0, 2))
