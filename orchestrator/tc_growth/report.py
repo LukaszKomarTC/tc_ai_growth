@@ -29,11 +29,9 @@ def persist_run(kind: str, result: RuntimeResult, *, started_at: str, duration_s
     """Log a completed agent run to the store. Best-effort: a persistence problem (missing/RO DB)
     must NEVER break the report or investigation, so every failure is swallowed with a note."""
     try:
-        from . import store
+        from .store import open_store
 
-        conn = store.connect()
-        store.log_run(
-            conn,
+        open_store().log_run(
             kind=kind,
             model=result.model,
             prompt_tokens=result.prompt_tokens,

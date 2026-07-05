@@ -64,7 +64,7 @@ def test_persist_run_swallows_store_errors(monkeypatch, capsys):
     def boom(*a, **k):
         raise RuntimeError("no db")
 
-    monkeypatch.setattr("tc_growth.store.connect", boom)
+    monkeypatch.setattr("tc_growth.store.open_store", boom)
     report.persist_run(
         "weekly-report",
         RuntimeResult(text="Line one\nmore", model="claude-opus-4-8", prompt_tokens=10, completion_tokens=5),

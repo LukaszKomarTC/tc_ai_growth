@@ -98,8 +98,8 @@ def cmd_investigate(question: str) -> int:
 def cmd_db_init() -> int:
     from . import store
 
-    conn = store.connect()
-    case_id = store.seed_incident_case(conn)
+    s = store.open_store()
+    case_id = s.seed_incident_case()
     print(f"Store ready at {store.resolved_db_path()}")
     print(f"Seeded {store.INCIDENT_REF} as case #{case_id}")
     return 0
@@ -108,8 +108,7 @@ def cmd_db_init() -> int:
 def cmd_cases(status: str | None = None) -> int:
     from . import store
 
-    conn = store.connect()
-    rows = store.list_cases(conn, status=status)
+    rows = store.open_store().list_cases(status=status)
     if not rows:
         print("(no cases)")
         return 0
@@ -122,10 +121,10 @@ def cmd_cases(status: str | None = None) -> int:
 def cmd_case_show(key: str) -> int:
     from . import store
 
-    conn = store.connect()
-    case = store.get_case_by_ref(conn, key)
+    s = store.open_store()
+    case = s.get_case_by_ref(key)
     if case is None and key.isdigit():
-        case = store.get_case(conn, int(key))
+        case = s.get_case(int(key))
     if case is None:
         print(f"No case matching {key!r}")
         return 1
@@ -139,8 +138,7 @@ def cmd_case_show(key: str) -> int:
 def cmd_runs() -> int:
     from . import store
 
-    conn = store.connect()
-    rows = store.list_runs(conn)
+    rows = store.open_store().list_runs()
     if not rows:
         print("(no runs logged yet)")
         return 0
@@ -153,8 +151,7 @@ def cmd_runs() -> int:
 def cmd_decisions() -> int:
     from . import store
 
-    conn = store.connect()
-    rows = store.list_decisions(conn)
+    rows = store.open_store().list_decisions()
     if not rows:
         print("(no decisions logged yet)")
         return 0

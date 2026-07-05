@@ -90,6 +90,34 @@ def test_log_run_stamps_cost():
     assert store.list_runs(conn)[0].cost_usd == pytest.approx(3.0)
 
 
+def test_sqlite_store_conforms_to_store_protocol():
+    # The repository seam: SqliteStore satisfies Store; a future PostgresStore must pass this same
+    # check to be a drop-in. runtime_checkable verifies the full method surface exists.
+    from tc_growth.store import SqliteStore, Store
+
+    s = SqliteStore(":memory:")
+    assert isinstance(s, Store)
+    # And the object surface round-trips end to end (no conn ever handled by the caller).
+    cid = s.create_case(title="via store object", ref="OBJ-1")
+    s.update_case(cid, status="monitoring")
+    assert s.get_case_by_ref("OBJ-1").status == "monitoring"
+    s.record_decision(title="d", case_id=cid)
+    assert s.list_decisions(case_id=cid)[0].title == "d"
+    s.log_run(kind="investigate", model="claude-haiku-4-5", prompt_tokens=1000, completion_tokens=100)
+    assert s.list_runs(kind="investigate")[0].cost_usd is not None
+    assert s.find_open_cases("store object")[0].id == cid
+    s.close()
+
+
+def test_open_store_returns_working_store(tmp_path):
+    from tc_growth.store import open_store
+
+    s = open_store(tmp_path / "t.db")
+    s.seed_incident_case()
+    assert s.get_case_by_ref(store.INCIDENT_REF) is not None
+    s.close()
+
+
 def test_seed_incident_is_idempotent():
     conn = _db()
     a = store.seed_incident_case(conn)
