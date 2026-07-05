@@ -1,0 +1,31 @@
+[Unit]
+Description=TC Growth — weekly opportunity report (read -> reason -> report -> email)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Runs as a dedicated non-root system user, never root (see the README for setup).
+User=tcgrowth
+Group=tcgrowth
+# WorkingDirectory must be the orchestrator dir: the app resolves .env and
+# secrets/google-service-account.json relative to it.
+WorkingDirectory=/opt/tc_ai_growth/app/orchestrator
+ExecStart=/opt/tc_ai_growth/app/.venv/bin/python -m tc_growth.cli weekly-report
+# Delivery must never wedge the box; give it a generous ceiling then give up.
+TimeoutStartSec=1800
+
+# --- Hardening: this job only needs to read its own dir + reach the network ---
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectControlGroups=true
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+# The report is delivered by email and writes nothing to disk; keep the FS read-only.
+# If a future step needs to write (e.g. the SQLite persistence layer), add its path here.
+ReadOnlyPaths=/opt/tc_ai_growth/app
+
+[Install]
+WantedBy=multi-user.target
