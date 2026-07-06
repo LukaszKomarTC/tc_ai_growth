@@ -18,8 +18,17 @@ from .tools.load import load_all
 
 
 def _first_line(text: str, limit: int = 200) -> str:
-    for line in text.splitlines():
-        s = line.strip().lstrip("# ").strip()
+    """Summary line for the run ledger. Models often emit preamble ("All data gathered...")
+    before the actual report, so prefer the first markdown HEADING; fall back to first text."""
+    lines = text.splitlines()
+    for line in lines:
+        s = line.strip()
+        if s.startswith("#"):
+            heading = s.lstrip("# ").strip()
+            if heading:
+                return heading[:limit]
+    for line in lines:
+        s = line.strip()
         if s:
             return s[:limit]
     return ""

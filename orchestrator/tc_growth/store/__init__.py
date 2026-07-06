@@ -29,6 +29,7 @@ from .records import (
     find_open_cases,
     get_case,
     get_case_by_ref,
+    get_decision,
     list_cases,
     list_decisions,
     list_runs,
@@ -36,6 +37,7 @@ from .records import (
     record_decision,
     record_run,
     update_case,
+    update_decision,
 )
 from .seed import INCIDENT_REF, seed_incident_case
 from .sqlite import SqliteStore
@@ -69,6 +71,8 @@ __all__ = [
     "log_run",
     "list_runs",
     "record_decision",
+    "get_decision",
+    "update_decision",
     "list_decisions",
     "seed_incident_case",
     "INCIDENT_REF",
