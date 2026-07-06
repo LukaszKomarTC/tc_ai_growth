@@ -42,7 +42,12 @@ reaches staging. Review each result in staging wp-admin.
 - [ ] **Draft appears correctly** in wp-admin (right post, right type).
 - [ ] **Revision formatting preserved** (no mangled HTML/blocks).
 - [ ] **Images/metadata untouched** by the revision.
-- [ ] **Approval meta box** behaves (only publish_posts-capable users can approve).
+- [ ] **Approval meta box** behaves (only publish_posts-capable users can approve) and shows the
+      full proposal (meta description + rationale) so the reviewer sees what they approve.
+- [ ] **qTranslate x Yoast at apply time**: after the first approved apply, view BOTH language
+      URLs' page source — the meta description tag must render per-language, never the raw
+      `[:es]…[:en]…[:]` string. (Requires the qTranslate-XT Yoast integration module if raw
+      tags appear.)
 - [ ] **Nothing published automatically** — post status unchanged by every test above.
 
 ## Sign-off (Release 0.3 → 1.0 gate; see docs/STATUS.md for the full criteria)
