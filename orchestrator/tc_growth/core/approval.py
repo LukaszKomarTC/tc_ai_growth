@@ -83,11 +83,23 @@ FORBIDDEN_CAPABILITIES = {
 
 
 def is_tool_allowed(tool_name: str, phase: Phase) -> bool:
-    """True if `tool_name` may be dispatched in the given phase."""
+    """True if `tool_name` may be dispatched in the given phase.
+
+    Two layers, both enforced here (the single choke point both runtimes call):
+    1. The phase gate — the tool's minimum phase vs. the run's requested phase.
+    2. The SITE-PROFILE write cap — a profile with allow_writes=false (production default)
+       blocks every above-READ_ONLY tool regardless of the requested phase, so no command,
+       config mistake, or prompt can produce a write against a read-only site.
+    """
     required = TOOL_MIN_PHASE.get(tool_name)
     if required is None:
         # Unknown tool -> deny by default.
         return False
+    if required > Phase.READ_ONLY:
+        from ..config import writes_allowed  # local import: core stays cycle-free
+
+        if not writes_allowed():
+            return False
     return phase >= required
 
 

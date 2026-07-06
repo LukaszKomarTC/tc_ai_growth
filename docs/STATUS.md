@@ -16,9 +16,11 @@ BUILD → VALIDATE → SHADOW → ASSIST → OPERATE and what each allows/forbid
 Core engine (tools · runtimes · phase gate)   ██████████ 100%
 Memory (store · cases · decisions · context)  ██████████ 100%
 Dashboard (read-only console)                 ██████████ 100%
-Approval workflow (CLI; buttons deferred)     ████████░░  80%
-Validation (Release 0.3 checklist)            ██░░░░░░░░  ~15%
-Production readiness                          ██░░░░░░░░  ~20%
+Approval workflow (CLI: approve/reject/
+  outcome; buttons deferred)                  █████████░  90%
+Validation (Release 0.3 checklist)            █████░░░░░  52%
+Production readiness (profiles: read-only-
+  by-construction · GitOps · portability)     █████░░░░░  50%
 ```
 
 ## Releases

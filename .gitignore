@@ -14,6 +14,8 @@ build/
 
 # Secrets / local config — NEVER commit
 secrets/
+# Site profiles carry credentials; only the .example templates ship.
+orchestrator/profiles/*.env
 *.local.yaml
 *.local.json
 service-account*.json

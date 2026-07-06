@@ -20,14 +20,14 @@ import re
 import time
 from pathlib import Path
 
-from .config import ENV_PATH, model_for
+from .config import BASE_DIR, model_for, site_label
 from .core.approval import Phase
 from .memory import known_cases_block
 from .prompts import COORDINATOR
 from .runtime.base import AgentRuntime
 from .tools.load import load_all
 
-VALIDATION_DOC = ENV_PATH.parents[1] / "docs" / "VALIDATION.md"
+VALIDATION_DOC = BASE_DIR.parent / "docs" / "VALIDATION.md"
 
 _DRAFT_TASK = """\
 VALIDATION DRAFT TEST (staging only). Perform exactly this drafting task:
@@ -72,7 +72,8 @@ def run_draft_test(runtime: AgentRuntime, instruction: str, *, phase: Phase = Ph
     if persist:
         persist_run("draft-test", result, started_at=started_at,
                     duration_s=round(time.perf_counter() - t0, 2))
-    header = f"# Draft Test ({dt.date.today().isoformat()})\n\n_Task: {instruction}_\n\n"
+    header = (f"# Draft Test ({dt.date.today().isoformat()}) — {site_label()}\n\n"
+              f"_Task: {instruction}_\n\n")
     footer = ""
     if result.blocked_calls:
         names = sorted({c["tool"] for c in result.blocked_calls})

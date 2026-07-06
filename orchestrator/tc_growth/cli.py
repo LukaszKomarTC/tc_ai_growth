@@ -1,5 +1,7 @@
 """Command-line entrypoints.
 
+    python -m tc_growth.cli [--site <profile>] <command>   # e.g. --site production report
+
     python -m tc_growth.cli list-tools
     python -m tc_growth.cli smoke <tool_name> '<json args>'
     python -m tc_growth.cli weekly-report
@@ -302,8 +304,22 @@ def cmd_decisions() -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    load_env()  # export .env into the process environment (Anthropic SDK, Meta/Telegram tokens)
-    argv = argv if argv is not None else sys.argv[1:]
+    argv = list(argv) if argv is not None else sys.argv[1:]
+    # Site profile selection: `--site <name>` / `--site=<name>` (or the TC_SITE env var).
+    # Must be resolved BEFORE load_env so the right profile file is exported.
+    if argv and argv[0].startswith("--site"):
+        import os
+
+        if "=" in argv[0]:
+            os.environ["TC_SITE"] = argv[0].split("=", 1)[1].strip()
+            argv = argv[1:]
+        elif len(argv) > 1:
+            os.environ["TC_SITE"] = argv[1].strip()
+            argv = argv[2:]
+        else:
+            print("Usage: --site <name> <command> ...")
+            return 1
+    load_env()  # export the resolved env file (profile or .env) into the process environment
     if not argv:
         print(__doc__)
         return 0

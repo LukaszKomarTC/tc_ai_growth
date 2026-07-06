@@ -19,6 +19,7 @@ import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote
 
+from .config import BASE_DIR, get_settings, site_label
 from .store import Store, open_store, resolved_db_path
 
 # Matches the journal lines case_set_confidence writes:
@@ -61,11 +62,40 @@ def _e(value) -> str:
     return html.escape(str(value if value is not None else "—"))
 
 
+def _site_banner() -> str:
+    """Unmistakable STAGING/PRODUCTION marker on every page — profiles must never be confused."""
+    s = get_settings()
+    kind = (s.env_kind or "staging").strip().lower()
+    color = "#b32d2e" if kind == "production" else "#996b00"
+    return (f"<div style='background:{color};color:#fff;padding:.4rem .8rem;border-radius:6px;"
+            f"font-weight:600;margin-bottom:1rem'>{_e(site_label(s))}"
+            f"{' · READ-ONLY PROFILE' if not s.allow_writes else ''}</div>")
+
+
 def _page(title: str, body: str) -> str:
     return (f"<!doctype html><html><head><meta charset='utf-8'><title>{_e(title)}</title>"
-            f"<style>{_STYLE}</style></head><body><h1>{_e(title)}</h1>{body}"
+            f"<style>{_STYLE}</style></head><body><h1>{_e(title)}</h1>{_site_banner()}{body}"
             f"<footer>TC Growth — read-only dashboard · store: {_e(resolved_db_path())}</footer>"
             "</body></html>")
+
+
+def deployment_info() -> dict:
+    """Current commit + recent auto-deploy log lines (GitOps observability, read-only)."""
+    root = BASE_DIR.parent
+    sha = ""
+    try:
+        head = (root / ".git" / "HEAD").read_text().strip()
+        if head.startswith("ref:"):
+            sha = (root / ".git" / head.split(" ", 1)[1].strip()).read_text().strip()[:9]
+        else:
+            sha = head[:9]
+    except OSError:
+        pass
+    try:
+        log_lines = (BASE_DIR / "data" / "autodeploy.log").read_text().splitlines()[-4:]
+    except OSError:
+        log_lines = []
+    return {"commit": sha or "—", "log": log_lines}
 
 
 def render_overview(s: Store) -> str:
@@ -108,8 +138,16 @@ def render_overview(s: Store) -> str:
         "<h2>Decision log <span class='muted'>(approve/reject via CLI: decision-approve &lt;id&gt;)</span></h2>"
         "<table><tr><th>id</th><th>made</th><th>status</th><th>by</th><th>title</th>"
         f"<th>case</th></tr>{dec_rows}</table>"
+        f"{_deployment_section()}"
     )
     return _page("TC Growth — operations", body)
+
+
+def _deployment_section() -> str:
+    info = deployment_info()
+    log_html = "".join(f"<div class='muted'>{_e(line)}</div>" for line in info["log"]) or \
+               "<div class='muted'>(no auto-deploy log yet)</div>"
+    return (f"<h2>Deployment</h2><p>Current commit: <b>{_e(info['commit'])}</b></p>{log_html}")
 
 
 def render_validation() -> str:
