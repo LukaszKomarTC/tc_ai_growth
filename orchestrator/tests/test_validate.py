@@ -68,7 +68,8 @@ def test_run_draft_test_runs_at_drafts_phase_and_frames_the_task():
     assert "Draft Test" in out and "revision 123" in out
     # Validation findings from the first live draft test (2026-07-06), encoded as rules:
     assert "Do NOT change the slug" in rt.task         # scope discipline (slug change was unasked)
-    assert "MULTILINGUAL" in rt.task                   # ES/EN twins are one asset
+    assert "qTranslate" in rt.task                     # one post, tagged fields — NOT twin posts
+    assert "[:es]" in rt.task and "[:en]" in rt.task   # the exact tag syntax to preserve
 
 
 def test_drafting_discipline_is_in_the_always_injected_safety_prompt():
@@ -76,7 +77,12 @@ def test_drafting_discipline_is_in_the_always_injected_safety_prompt():
 
     for text in (prompts.COORDINATOR, prompts.SEO_ROLE):
         assert "Change ONLY what the task asks" in text
-        assert "language twin" in text
+        # qTranslate XT model: same-post tagged fields; untagged writes are the corruption mode.
+        assert "qTranslate XT" in text
+        assert "[:es]" in text
+        assert "untagged" in text
+        # The wrong (separate-posts) model must NOT be taught:
+        assert "separate per-language draft" in text  # ...only as an explicit prohibition
 
 
 def test_decision_add_records_human_policy_and_enters_memory(tmp_path, monkeypatch, capsys):

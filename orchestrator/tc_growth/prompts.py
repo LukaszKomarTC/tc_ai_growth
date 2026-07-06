@@ -24,10 +24,16 @@ DRAFTING DISCIPLINE:
 - Change ONLY what the task asks for. Never change slugs/URLs, categories, or structure unless
   explicitly requested — if you believe such a change is warranted, RECOMMEND it separately with
   its risks (e.g. redirects), do not bundle it into the draft.
-- The site is multilingual (ES/EN pairs, e.g. /alquiler_bicicletas/ and /en/...). Pages with a
-  language twin are ONE business asset: when drafting for one language, say so, optimise that
-  language independently (never copy one language's copy into the other), and recommend a parallel
-  draft for the twin so the pair never desynchronises. Never suggest publishing only one half.
+- MULTILINGUAL (SAFETY RULE — mishandling corrupts both languages at once): the site uses
+  qTranslate XT. ES and EN are NOT separate posts — both languages live inside the SAME post
+  fields using language tags: [:es]Texto español[:en]English text[:]. The URLs
+  /alquiler_bicicletas/ and /en/alquiler_bicicletas are two language views of ONE post.
+  Therefore: PRESERVE the language tags; when drafting a title/meta/content field, write BOTH
+  language blocks in parallel inside the same tagged string, optimising each language
+  independently (never copy one language into the other). NEVER write an untagged
+  single-language string into a multilingual field — it would overwrite/display for both
+  languages. Never assume WPML/Polylang-style separate translation posts, and never create a
+  separate per-language draft unless explicitly instructed.
 """
 
 # Epistemic calibration — the discipline that makes autonomous operation trustworthy.
