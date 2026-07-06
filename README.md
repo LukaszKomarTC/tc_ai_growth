@@ -1,15 +1,23 @@
-# TC AI Growth Agent
+# TC AI Operations Platform
 
-A multi-agent growth system for **Tossa Cycling** — bike rentals, guided tours, eMTB/road
-hire (Costa Brava / Tour de Girona). It elevates SEO, analyses Google & Meta ads, and ties
-everything back to real WooCommerce bookings and revenue.
+> **The checklist decides, not enthusiasm.**
+
+An **AI Operations Platform** for **Tossa Cycling** — bike rentals, guided tours, eMTB/road
+hire (Costa Brava / Tour de Girona). Growth (SEO, ads, analytics tied to real WooCommerce
+bookings and revenue) is the platform's first specialist module; the platform itself is
+governance, memory, confidence, validation, and observability. The model is a component.
 
 The website stays thin: a small WordPress connector plugin exposes controlled data and accepts
-**drafts only**. The "brain" runs externally on **Claude Opus 4.8 + Anthropic Managed Agents**.
+**drafts only**. The "brain" runs externally, provider-neutral (Claude-first).
 
-> ⚠️ **Safety first.** In Phase 1–2 the system never publishes, never spends ad budget, and
-> never touches prices, availability, the booking plugin, or checkout. It produces drafts and
-> reports for human approval. See [`docs/RUNBOOK.md`](docs/RUNBOOK.md).
+> ⚠️ **Safety first.** The system never publishes, never spends ad budget, and never touches
+> prices, availability, the booking plugin, or checkout — those capabilities do not exist as
+> tools. It produces drafts and reports for human approval. See [`docs/RUNBOOK.md`](docs/RUNBOOK.md).
+
+**Governance documents:** [`docs/VISION.md`](docs/VISION.md) (why — the constitution) ·
+[`docs/ROADMAP.md`](docs/ROADMAP.md) (what) · [`docs/STATUS.md`](docs/STATUS.md) (where) ·
+[`docs/VALIDATION.md`](docs/VALIDATION.md) (may we proceed). **Current mode: VALIDATE**
+(Release 0.3 — no new capabilities).
 
 ## Architecture at a glance
 
