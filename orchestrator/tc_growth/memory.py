@@ -22,8 +22,18 @@ def _case_line(case) -> str:
     return f"- {ref} — [{' · '.join(bits)}] {case.title}"
 
 
+def _decision_line(decision, case_ref_by_id) -> str:
+    link = f" (case {case_ref_by_id.get(decision.case_id, f'#{decision.case_id}')})" if decision.case_id else ""
+    return f"- D#{decision.id} [{decision.status}] {decision.title}{link}"
+
+
 def known_cases_block(store=None, *, limit: int = 25) -> str:
-    """A markdown 'Known cases' block for task injection, or '' when there are none / no store.
+    """A markdown memory block for task injection — known cases + the decision queue — or ''
+    when there is nothing / no store.
+
+    The decision queue is what keeps decided things decided: approved decisions are in force,
+    rejected ones are settled, proposed ones await the human — the agent must not re-propose any
+    of them as if they were new ideas.
 
     `store` is any Store implementation (see store/base.py); None opens the configured backend.
     """
@@ -35,6 +45,7 @@ def known_cases_block(store=None, *, limit: int = 25) -> str:
             store = open_store()
         try:
             cases = store.list_cases(limit=limit)
+            decisions = store.list_decisions(limit=15)
         finally:
             if own:
                 store.close()
@@ -46,8 +57,18 @@ def known_cases_block(store=None, *, limit: int = 25) -> str:
     # Open/monitoring first, then resolved/closed; stable, so each group stays most-recent-first.
     ordered = sorted(cases, key=lambda c: c.status in ("resolved", "closed"))
     lines = "\n".join(_case_line(c) for c in ordered)
-    return (
+    block = (
         '## Known cases (your memory — consult before flagging anything as "new")\n'
         "Match each observation against these. If it matches, reference it by ref and its status "
         "instead of re-raising it as new; escalate ONLY on genuinely new evidence.\n\n" + lines
     )
+    if decisions:
+        case_ref_by_id = {c.id: (c.ref or f"#{c.id}") for c in cases}
+        dlines = "\n".join(_decision_line(d, case_ref_by_id) for d in decisions)
+        block += (
+            "\n\n## Decision queue (statuses are authoritative — do not re-propose decided items)\n"
+            "approved = in force, act consistently with it · rejected = settled, do not re-propose "
+            "without NEW evidence · proposed = awaiting human review, reference it instead of "
+            "duplicating it.\n\n" + dlines
+        )
+    return block

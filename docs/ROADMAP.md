@@ -55,6 +55,48 @@ The store is the source of truth for the operating system — hold two disciplin
   build the approval queue; add numeric `confidence` when the agent starts updating it. Dead columns
   are a cost, not a head start.
 
+## Phase 3 — VALIDATION MODE (current)
+
+The build is done; the objective changes. We are no longer adding capabilities — we are
+validating that the architecture behaves correctly. Every change from here must answer YES to
+at least one of:
+
+1. **Does it increase trust?**
+2. **Does it reduce operational risk?**
+3. **Does it make production deployment safer?**
+
+Anything answering "no" to all three is parked until after production is working.
+
+Structure:
+- **3A Polish** (done): run summaries, decision queue in memory context, confidence-evolution
+  display, CLI approvals. No new intelligence.
+- **3B Staging validation** — work through `docs/VALIDATION.md` until every box is green:
+  content drafts at DRAFTS phase against staging, memory behaviors, approval round-trips,
+  WordPress draft fidelity. Gate: ALL green + **two consecutive clean Mondays** (no calibration
+  failures, no duplicate cases, no re-proposed decided items).
+- **3C Approvals**: CLI only (`decision-approve` / `decision-reject`) — zero web attack surface,
+  authenticated, audited. Dashboard buttons are a separate, deliberate decision LATER, because
+  they turn a GET-only dashboard into a write path.
+
+## Phase 4 — Production shadow mode, then drafts
+
+Shadow mode is already implemented by the phase gate: point the connector at production and keep
+runs at READ_ONLY — the agent documents what it *would* do (drafts as text, cases, proposals) and
+nothing executes. Gate to leave shadow mode: **N consecutive clean cycles of judgment** (reports +
+investigations on production data with zero calibration failures and drafts the human would have
+approved) — cycles, not raw recommendation counts. Then: resync staging↔production → production
+DRAFTS phase → publishing stays human-approved permanently.
+
+## Phase 5 — Business Operating System (parked until the action loop is boring)
+
+Memory grows from three objects (cases, decisions, runs) toward five: + **Knowledge** (persistent
+facts: "the Scott Addict 50 is the standard rental road bike") and **Strategy** (business policy
+the coordinator consults: "never publish automatically", "never overbook"), and eventually
+**Assets** (an index of pages/products/tours so the agent knows what exists instead of
+rediscovering it). Discipline unchanged: each object gets its table when the feature that READS
+it is built — the agent should end up with a business model, not just a memory, but not by
+speculative schema.
+
 ## Next steps (sequenced)
 
 - ~~**Slice 4 — Store repository interface.**~~ DONE (PR #11).

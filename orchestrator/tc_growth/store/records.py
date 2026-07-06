@@ -283,6 +283,28 @@ def record_decision(
     return int(cur.lastrowid)
 
 
+def get_decision(conn: sqlite3.Connection, decision_id: int) -> Decision | None:
+    row = conn.execute("SELECT * FROM decisions WHERE id = ?;", (decision_id,)).fetchone()
+    return Decision(**row) if row else None
+
+
+_DECISION_UPDATABLE = {"status", "outcome", "rationale"}
+
+
+def update_decision(conn: sqlite3.Connection, decision_id: int, **fields: object) -> None:
+    """Update a decision's status/outcome/rationale (the approve/reject path)."""
+    bad = set(fields) - _DECISION_UPDATABLE
+    if bad:
+        raise ValueError(f"Not updatable: {sorted(bad)}")
+    if not fields:
+        return
+    assignments = ", ".join(f"{k} = ?" for k in fields)
+    conn.execute(
+        f"UPDATE decisions SET {assignments} WHERE id = ?;", (*fields.values(), decision_id)
+    )
+    conn.commit()
+
+
 def list_decisions(
     conn: sqlite3.Connection, *, case_id: int | None = None, limit: int = 50
 ) -> list[Decision]:

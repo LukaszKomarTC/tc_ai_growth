@@ -12,6 +12,8 @@
     python -m tc_growth.cli decisions               # list the decision log
     python -m tc_growth.cli case-note <ref> "<text>"     # append a human observation to a case
     python -m tc_growth.cli case-status <ref> <status>   # human-approved lifecycle change
+    python -m tc_growth.cli decision-approve <id> ["note"]   # approve a proposed decision
+    python -m tc_growth.cli decision-reject <id> ["note"]    # reject a proposed decision
     python -m tc_growth.cli dashboard [port]             # read-only web view (127.0.0.1 only)
 
 `smoke` exercises a single host-side tool WITHOUT the AI runtime — the fastest way to surface
@@ -188,6 +190,26 @@ def cmd_case_status(key: str, status: str) -> int:
     return 0
 
 
+def cmd_decision_set(decision_id: str, status: str, note: str = "") -> int:
+    """Human approves/rejects a proposed decision — the whole approval trail lands in the store:
+    the decision's status flips, and the linked case (if any) gets a human journal entry."""
+    from . import store
+
+    s = store.open_store()
+    d = s.get_decision(int(decision_id))
+    if d is None:
+        print(f"No decision with id {decision_id}")
+        return 1
+    s.update_decision(d.id, status=status)
+    if d.case_id:
+        entry = f"Decision D#{d.id} ('{d.title}') {status} by human."
+        if note:
+            entry += f" Note: {note}"
+        s.append_observation(d.case_id, entry, author="human")
+    print(f"Decision D#{d.id} ('{d.title}'): {d.status} -> {status}")
+    return 0
+
+
 def cmd_decisions() -> int:
     from . import store
 
@@ -242,6 +264,12 @@ def main(argv: list[str] | None = None) -> int:
             print("Usage: case-status <ref> <open|monitoring|resolved|closed>")
             return 1
         return cmd_case_status(rest[0], rest[1])
+    if cmd in ("decision-approve", "decision-reject"):
+        if not rest:
+            print(f"Usage: {cmd} <decision-id> [\"note\"]")
+            return 1
+        status = "approved" if cmd == "decision-approve" else "rejected"
+        return cmd_decision_set(rest[0], status, rest[1] if len(rest) > 1 else "")
     if cmd == "dashboard":
         from .dashboard import serve
 

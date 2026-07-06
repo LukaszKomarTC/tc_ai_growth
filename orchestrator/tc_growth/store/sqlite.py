@@ -56,6 +56,12 @@ class SqliteStore:
     def record_decision(self, **kw) -> int:
         return records.record_decision(self._conn, **kw)
 
+    def get_decision(self, decision_id: int) -> Decision | None:
+        return records.get_decision(self._conn, decision_id)
+
+    def update_decision(self, decision_id: int, **fields) -> None:
+        records.update_decision(self._conn, decision_id, **fields)
+
     def list_decisions(self, *, case_id: int | None = None, limit: int = 50) -> list[Decision]:
         return records.list_decisions(self._conn, case_id=case_id, limit=limit)
 
