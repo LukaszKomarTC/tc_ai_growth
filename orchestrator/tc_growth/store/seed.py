@@ -10,11 +10,11 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from ..config import ENV_PATH
+from ..config import BASE_DIR
 from .records import create_case, get_case_by_ref
 
 INCIDENT_REF = "INC-2026-02-01"
-_INCIDENT_DOC = ENV_PATH.parents[1] / "docs" / "incidents" / "2026-02-merchant-center-tobacco-spam.md"
+_INCIDENT_DOC = BASE_DIR.parent / "docs" / "incidents" / "2026-02-merchant-center-tobacco-spam.md"
 
 # Fallback body if the markdown isn't present (e.g. a partial checkout).
 _FALLBACK_BODY = (

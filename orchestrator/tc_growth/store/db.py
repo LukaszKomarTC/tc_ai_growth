@@ -14,7 +14,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from ..config import ENV_PATH, get_settings
+from ..config import BASE_DIR, active_site, get_settings
 
 SCHEMA_VERSION = 2
 
@@ -71,11 +71,15 @@ CREATE INDEX IF NOT EXISTS idx_decisions_case  ON decisions(case_id);
 
 
 def resolved_db_path() -> Path:
-    """Where the SQLite file lives. TC_DB_PATH overrides; default orchestrator/data/tc_growth.db."""
+    """Where the SQLite file lives. TC_DB_PATH overrides; otherwise each site profile gets its
+    OWN store (memory is per-business — sites must never share cases/decisions):
+    data/tc_growth.db classic, data/tc_growth-<site>.db when TC_SITE is set."""
     configured = get_settings().db_path
     if configured:
         return Path(configured).expanduser()
-    return ENV_PATH.parent / "data" / "tc_growth.db"
+    site = active_site()
+    name = f"tc_growth-{site}.db" if site else "tc_growth.db"
+    return BASE_DIR / "data" / name
 
 
 def connect(path: str | Path | None = None) -> sqlite3.Connection:

@@ -1,33 +1,70 @@
-"""Central configuration and KPI definitions (provider-neutral)."""
+"""Central configuration, site profiles, and KPI definitions (provider-neutral).
+
+Multi-site profiles: the same codebase runs against staging, production, or any other WordPress
+site. `TC_SITE` (env var or `--site` CLI flag) selects `orchestrator/profiles/<site>.env`; unset
+falls back to the classic `orchestrator/.env` — existing deployments keep working unchanged.
+Profiles are COMPLETE per site (separate credentials, signing keys, store) — never shared across
+sites — and one process serves exactly one site (TC_SITE is read at load time).
+"""
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from dotenv import load_dotenv
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Canonical .env location: orchestrator/.env (next to pyproject.toml), resolved independently of
-# the current working directory so it also works under systemd.
-ENV_PATH = Path(__file__).resolve().parents[1] / ".env"
+# Anchor: the orchestrator/ directory (next to pyproject.toml), independent of the CWD so
+# everything also works under systemd.
+BASE_DIR = Path(__file__).resolve().parents[1]
+# Classic single-site env file — the fallback when no TC_SITE profile is selected.
+ENV_PATH = BASE_DIR / ".env"
+
+
+def active_site() -> str:
+    """The selected site profile name ('' = classic single-site .env mode)."""
+    return os.environ.get("TC_SITE", "").strip()
+
+
+def resolved_env_path() -> Path:
+    """Which env file this process runs against: profiles/<site>.env, or .env when no site set."""
+    site = active_site()
+    if site:
+        return BASE_DIR / "profiles" / f"{site}.env"
+    return ENV_PATH
 
 
 def load_env() -> None:
-    """Load orchestrator/.env into the PROCESS environment.
+    """Load the resolved env file into the PROCESS environment.
 
-    Our Settings read `.env` directly via pydantic, but third-party SDKs (the Anthropic client)
-    and a few os.environ lookups (Meta / Telegram tokens) read the OS environment. pydantic does
-    NOT export to os.environ, so without this those keys are invisible. `override=False` keeps any
-    real environment variables (e.g. injected by systemd) authoritative over the file.
+    Third-party SDKs (the Anthropic client) and os.environ lookups read the process environment,
+    and pydantic does NOT export to it — so this must run before anything else. `override=False`
+    keeps real environment variables (e.g. injected by systemd) authoritative over the file.
+    An unknown TC_SITE fails LOUDLY — silently falling back to another site's credentials is the
+    one mistake this system must never make.
     """
-    load_dotenv(ENV_PATH, override=False)
+    path = resolved_env_path()
+    if active_site() and not path.exists():
+        raise SystemExit(f"Unknown site profile '{active_site()}': {path} not found. "
+                         f"Create it (see profiles/*.env.example) or unset TC_SITE.")
+    load_dotenv(path, override=False)
 
 
 class Settings(BaseSettings):
-    """Environment-driven settings. Secrets come from the environment / a vault, never code."""
+    """Environment-driven settings. Secrets come from the environment / a vault, never code.
 
-    model_config = SettingsConfigDict(env_prefix="TC_", env_file=str(ENV_PATH), extra="ignore")
+    Reads the PROCESS environment only — get_settings() runs load_env() first, which exports the
+    resolved env file (profile or classic .env). This keeps profile selection in exactly one place.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="TC_", extra="ignore")
+
+    # --- Site identity (multi-site profiles) ---
+    site_name: str = Field(default="", description="Human label, e.g. 'Tossa Cycling Staging'")
+    env_kind: str = Field(default="staging", description="staging | production — shown on every surface")
+    allow_writes: bool = Field(default=True, description="False = profile-level cap: every run is clamped read-only regardless of requested phase (production default)")
 
     # --- WordPress connector ---
     wp_base_url: str = Field(default="", description="e.g. https://tossacycling.com")
@@ -86,7 +123,24 @@ KPIS = {
 
 
 def get_settings() -> Settings:
+    load_env()  # idempotent; ensures the resolved profile is in the environment first
     return Settings()
+
+
+def writes_allowed() -> bool:
+    """Profile-level write cap, read straight from the environment (fast, import-cycle-free).
+
+    core.approval consults this beneath the phase gate: a read-only profile (production default)
+    blocks every write tool no matter what phase a run requests.
+    """
+    return os.environ.get("TC_ALLOW_WRITES", "true").strip().lower() not in ("false", "0", "no")
+
+
+def site_label(s: Settings | None = None) -> str:
+    """Unmistakable site marker for reports, headers, and the dashboard."""
+    s = s or get_settings()
+    name = s.site_name or (active_site() or "default")
+    return f"{name} · {s.env_kind.strip().upper() or 'STAGING'}"
 
 
 def secrets_path(filename: str) -> Path:
@@ -95,7 +149,7 @@ def secrets_path(filename: str) -> Path:
     the Google tools whenever a command was run from outside orchestrator/). TC_SECRETS_DIR
     overrides the directory."""
     base = get_settings().secrets_dir
-    return (Path(base).expanduser() if base else ENV_PATH.parent / "secrets") / filename
+    return (Path(base).expanduser() if base else BASE_DIR / "secrets") / filename
 
 
 # Which tier each task kind uses by default. Investigations and strategy stay on the strong

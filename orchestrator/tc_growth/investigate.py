@@ -10,7 +10,7 @@ from __future__ import annotations
 import datetime as dt
 import time
 
-from .config import model_for
+from .config import model_for, site_label
 from .core.approval import Phase
 from .memory import known_cases_block
 from .prompts import INVESTIGATION
@@ -44,7 +44,8 @@ def build_investigation(runtime: AgentRuntime, question: str, *, phase: Phase = 
     )
     if persist:
         persist_run("investigate", result, started_at=started_at, duration_s=round(time.perf_counter() - t0, 2))
-    header = f"# Forensic Investigation ({dt.date.today().isoformat()})\n\n_Question: {question}_\n\n"
+    header = (f"# Forensic Investigation ({dt.date.today().isoformat()}) — {site_label()}\n\n"
+              f"_Question: {question}_\n\n")
     footer = ""
     if result.blocked_calls:
         names = sorted({c["tool"] for c in result.blocked_calls})

@@ -118,9 +118,9 @@ speculative schema.
   each inheriting memory, strategy, and prior decisions rather than starting cold. Gated on the
   long-lead credentials below.
 
-## Next structural slice (admitted under the 0.3 filters — awaiting explicit go)
+## Next structural slice (admitted under the 0.3 filters) — DONE 2026-07-06
 
-**Multi-site profiles (portability + safe production gateway).** Passes filters 2 and 3
+**Multi-site profiles (portability + safe production gateway).** Passed filters 2 and 3
 (reduces operational risk; makes production deployment safer): today Phase 4 would mean
 hand-editing `.env` in place — the exact "wrote to production thinking it was staging" hazard.
 Requirements (agreed 2026-07-06):
@@ -147,6 +147,10 @@ Good ideas that fail the Release 0.3 filters; recorded so they aren't lost and a
   (GA4/GSC/Woo), case lifecycle timeline (detected → investigated → proposed → approved →
   executed → verified → closed).
 - Notifications for high-priority cases (email exists; push channel later).
+- **Execution API / task queue (instead of SSH, ever):** the agent requests NAMED operations
+  (run validation, refresh site profile, smoke test, generate report); the orchestrator executes
+  only whitelisted commands locally and returns structured results. The agent never holds shell
+  credentials. Complements GitOps auto-deploy for operational (non-deploy) actions.
 - **Site Inspector (Type A — strong 0.4/1.0 candidate):** read-only connector endpoint
   `tc_site_inspect` returning curated, structured JSON (WP version, theme, active plugins,
   detected SEO/multilingual/builder stack, CPTs, taxonomies, languages, permalink structure,

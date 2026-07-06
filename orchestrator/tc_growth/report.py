@@ -9,7 +9,7 @@ from __future__ import annotations
 import datetime as dt
 import time
 
-from .config import get_settings, model_for
+from .config import get_settings, model_for, site_label
 from .core.approval import Phase
 from .memory import known_cases_block
 from .prompts import COORDINATOR
@@ -86,7 +86,8 @@ def build_weekly_report(runtime: AgentRuntime, *, phase: Phase = Phase.READ_ONLY
     )
     if persist:
         persist_run("weekly-report", result, started_at=started_at, duration_s=round(time.perf_counter() - t0, 2))
-    header = f"# Tossa Cycling — Growth Report ({dt.date.today().isoformat()})\n\n"
+    header = (f"# Tossa Cycling — Growth Report ({dt.date.today().isoformat()})\n"
+              f"**Site:** {site_label()}\n\n")
     footer = ""
     if result.blocked_calls:
         names = sorted({c["tool"] for c in result.blocked_calls})
