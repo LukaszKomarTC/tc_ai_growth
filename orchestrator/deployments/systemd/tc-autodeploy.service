@@ -1,0 +1,18 @@
+[Unit]
+Description=TC Growth — pull-based auto-deploy (GitOps: pull main, test, restart or roll back)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=tcgrowth
+Group=tcgrowth
+WorkingDirectory=/opt/tc_ai_growth/app
+ExecStart=/bin/bash /opt/tc_ai_growth/app/orchestrator/scripts/autodeploy.sh
+# git pull writes across the whole app tree, so this unit is NOT sandboxed like the others;
+# it runs as the unprivileged owner of that tree, and its only root capability is the single
+# sudoers line allowing `systemctl restart tc-dashboard.service`.
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target

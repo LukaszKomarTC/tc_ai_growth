@@ -1,0 +1,10 @@
+[Unit]
+Description=TC Growth — check origin/main for new merges every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Persistent=false
+
+[Install]
+WantedBy=timers.target

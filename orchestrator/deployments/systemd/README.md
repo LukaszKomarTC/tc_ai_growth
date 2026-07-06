@@ -132,6 +132,39 @@ Header always set X-Robots-Tag "noindex, nofollow"
 Do NOT flip the whole server to nginx (`plesk sbin nginxmng --enable`) just for this — that
 changes the serving stack of every site on the box to solve a one-vhost problem.
 
+---
+
+# Auto-deploy — pull-based GitOps (no shell access for anyone)
+
+Merges to `main` deploy themselves: every 5 minutes the timer checks `origin/main`; on new
+commits it pulls, reinstalls, runs the FULL test suite, and only then restarts the dashboard.
+**If tests fail it rolls back to the previous commit** — the box never serves a broken main.
+Log: `orchestrator/data/autodeploy.log`.
+
+## One-time setup (as root)
+
+```bash
+# 1. The single privilege the deploy user needs: restarting the dashboard. Nothing else.
+cat > /etc/sudoers.d/tcgrowth-deploy <<'SUDO'
+tcgrowth ALL=(root) NOPASSWD: /usr/bin/systemctl restart tc-dashboard.service
+SUDO
+chmod 440 /etc/sudoers.d/tcgrowth-deploy
+
+# 2. Install the units.
+chmod +x /opt/tc_ai_growth/app/orchestrator/scripts/autodeploy.sh
+cp /opt/tc_ai_growth/app/orchestrator/deployments/systemd/tc-autodeploy.service /etc/systemd/system/
+cp /opt/tc_ai_growth/app/orchestrator/deployments/systemd/tc-autodeploy.timer   /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now tc-autodeploy.timer
+
+# 3. Verify (fires within 2 min of boot / 5 min cycle):
+systemctl list-timers tc-autodeploy.timer
+tail -f /opt/tc_ai_growth/app/orchestrator/data/autodeploy.log
+```
+
+Requirements: the repo remote must be pullable by the `tcgrowth` user (public repo or
+credentials readable by tcgrowth). Kill switch: `systemctl disable --now tc-autodeploy.timer`.
+
 ## Notes
 
 - **Hosting Settings** for the subdomain: enable "Permanent SEO-safe 301 redirect from HTTP to HTTPS"
