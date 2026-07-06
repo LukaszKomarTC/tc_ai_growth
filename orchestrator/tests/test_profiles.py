@@ -107,6 +107,30 @@ def test_dashboard_banner_shows_environment(monkeypatch):
     s.close()
 
 
+def test_deployment_report_renders_on_dashboard(tmp_path, monkeypatch):
+    import json
+
+    import tc_growth.dashboard as dash
+    from tc_growth import store
+
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "last_deploy.json").write_text(json.dumps({
+        "result": "deployed", "commit": "5b39e8153abc", "time": "2026-07-06T20:00:00Z",
+        "tests": "95 passed in 1.62s", "rollback_to": "f385946aaaa",
+    }))
+    (tmp_path / "data" / "autodeploy.log").write_text("line1\ndeployed 5b39e8153abc OK\n")
+    monkeypatch.setattr(dash, "BASE_DIR", tmp_path)
+
+    s = store.open_store(":memory:")
+    page = dash.render_overview(s)
+    assert "Release" in page and "0.3" in page
+    assert "5b39e815" in page                       # deployed commit
+    assert "95 passed" in page                      # test evidence
+    assert "rollback to f385946" in page            # rollback traceability
+    assert "deployed 5b39e8153abc OK" in page       # log tail
+    s.close()
+
+
 def test_cli_site_flag_sets_env(tmp_path, monkeypatch, capsys):
     from tc_growth.cli import main
 

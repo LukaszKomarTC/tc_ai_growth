@@ -16,6 +16,9 @@ from dotenv import load_dotenv
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Release identity — matches the ladder in docs/STATUS.md; shown with the commit on the dashboard.
+RELEASE = "0.3"
+
 # Anchor: the orchestrator/ directory (next to pyproject.toml), independent of the CWD so
 # everything also works under systemd.
 BASE_DIR = Path(__file__).resolve().parents[1]

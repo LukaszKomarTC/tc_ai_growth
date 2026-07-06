@@ -83,6 +83,13 @@ Structure:
 
 ## Phase 4 — Production shadow mode, then drafts
 
+**Standing requirement (agreed 2026-07-06):** even when a future production profile enables
+writes (1.1+), write-capable operations against production require an EXPLICIT per-run human
+confirmation on top of the profile cap, the phase gate, and ALWAYS_ASK — production writes are
+never a default, only an answered question. Auto-deploy scope stays the orchestrator only:
+DB migrations beyond additive ones, connector/plugin updates, and infra changes remain
+intentional human deployments.
+
 Shadow mode is already implemented by the phase gate: point the connector at production and keep
 runs at READ_ONLY — the agent documents what it *would* do (drafts as text, cases, proposals) and
 nothing executes. Gate to leave shadow mode: **N consecutive clean cycles of judgment** (reports +
