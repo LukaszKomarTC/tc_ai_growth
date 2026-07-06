@@ -118,6 +118,22 @@ speculative schema.
   each inheriting memory, strategy, and prior decisions rather than starting cold. Gated on the
   long-lead credentials below.
 
+## Next structural slice (admitted under the 0.3 filters — awaiting explicit go)
+
+**Multi-site profiles (portability + safe production gateway).** Passes filters 2 and 3
+(reduces operational risk; makes production deployment safer): today Phase 4 would mean
+hand-editing `.env` in place — the exact "wrote to production thinking it was staging" hazard.
+Requirements (agreed 2026-07-06):
+- No hardcoded URLs (already true — audit confirmed all site facts come from Settings).
+- Every command resolves a site profile: `--site staging|production|<name>` or `TC_SITE`,
+  loading `profiles/<name>.env`.
+- Profiles define: base/connector URL, environment name, credentials/signing key, language/SEO/
+  builder plugins, db_path, and **allowed capabilities** — a profile-level `allow_writes=false`
+  blocks draft tools in code BENEATH the phase gate (production defaults read-only).
+- Separate credentials, signing keys, and logs per profile; dashboard and every report/log line
+  display the active profile (STAGING / PRODUCTION) unmistakably.
+- Same codebase runs against dev, production, or any other WordPress site by adding a profile.
+
 ## Post-1.0 backlog (captured, deliberately NOT now)
 
 Good ideas that fail the Release 0.3 filters; recorded so they aren't lost and aren't built early:
