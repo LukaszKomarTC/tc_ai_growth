@@ -11,44 +11,60 @@ reaches staging. Review each result in staging wp-admin.
 
 ## Content (drafts at DRAFTS phase, staging connector)
 
-- [ ] **SEO draft — Spanish rental page** (`/alquiler_bicicletas/`, post 13699): title/meta/H1
-      draft created as a revision, never published.
+- [x] **SEO draft — Spanish rental page** (`/alquiler_bicicletas/`, post 13699) — 2026-07-06,
+      draft 50457: qTranslate-tagged bilingual title+meta, slug untouched, status draft; verified
+      in staging wp-admin (ES/EN tabs correct). Supersedes draft 50455 (untagged — the finding
+      that produced policy D#4).
 - [ ] **Product revision — Scott Addict 50**: description draft stored as a revision.
 - [ ] **Landing/tour draft — Tour de Girona event page**: CTR-focused title/meta draft.
 - [ ] **Homepage title draft** ("Home" → brand+location).
 
 ## Memory
 
-- [ ] **Opens the correct case** for a genuinely new finding (right category prefix, numeric
-      confidence, evidence in body).
-- [ ] **Does not reopen a resolved case** — references it by ref with current status instead.
+- [x] **Opens the correct case** for a genuinely new finding — 2026-07-06: TRK-20260706-050158
+      (TRK prefix, confidence 0.85, order-ID evidence in body), opened by the Monday 05:00 run.
+- [x] **Does not reopen a resolved case** — 2026-07-06 mid-week report: Active Case Dashboard
+      references INC-2026-02-01 (monitoring) and the closed duplicate as "merged, no separate
+      action"; zero new cases opened for known topics.
 - [ ] **case_read consulted** before judging new-vs-known (visible in run tool calls).
-- [ ] **Links decisions to cases** (decision_log carries the case ref).
+- [x] **Links decisions to cases** — 2026-07-06: D#6 (noindex order pages) logged as proposed,
+      linked to TRK-20260706-050158.
 - [ ] **Updates confidence with a basis** — visible in the case journal and the dashboard
       confidence-evolution ladder.
-- [ ] **References a previous investigation** when the same topic recurs.
+- [x] **References a previous investigation** — 2026-07-06 mid-week report cites the 2026-07-05
+      human Googlebot-404 verification from the case journal in its spam assessment.
 
 ## Workflow (approval round-trip)
 
-- [ ] **Draft generated → human reviews** in staging wp-admin.
-- [ ] **decision-approve** flips the proposal's status; case journal records the human action.
-- [ ] **decision-reject** settles a proposal; the NEXT run does not re-propose it.
+- [x] **Draft generated → human reviews** in staging wp-admin — 2026-07-06, draft 50457 reviewed
+      (language tabs, slug, status, meta box).
+- [x] **decision-approve** flips status + journals the human action — 2026-07-06: D#2, D#3, D#6
+      approved; case journals carry the entries.
+- [x] **decision-reject** settles; the NEXT run does not re-propose — 2026-07-06: D#1 rejected as
+      duplicate; absent from the same-day mid-week report.
 - [ ] **Case update after manual action**: human applies a change, notes it via case-note; the
-      next report acknowledges it instead of re-recommending it.
-- [ ] **Dashboard reflects all of the above** (statuses, journal, decision queue).
+      next report acknowledges it instead of re-recommending it. (Scheduled: Work Package #1
+      execution will produce this evidence.)
+- [x] **Dashboard reflects all of the above** — 2026-07-06 screenshots: cases, run costs,
+      decision statuses, confidence, validation report page.
 
 ## WordPress (draft fidelity, staging)
 
-- [ ] **Draft appears correctly** in wp-admin (right post, right type).
-- [ ] **Revision formatting preserved** (no mangled HTML/blocks).
-- [ ] **Images/metadata untouched** by the revision.
-- [ ] **Approval meta box** behaves (only publish_posts-capable users can approve) and shows the
-      full proposal (meta description + rationale) so the reviewer sees what they approve.
+- [x] **Draft appears correctly** in wp-admin — 2026-07-06, draft 50457: right source post
+      (#13699), draft status, tc-agent author, correct parent.
+- [x] **Revision formatting preserved** — 2026-07-06 screenshots: WPBakery builder content intact
+      in both language views.
+- [ ] **Images/metadata untouched** by the revision. (Test page had no featured image — verify on
+      the product-revision test.)
+- [x] **Approval meta box** behaves and shows the full proposal — 2026-07-06 screenshot after
+      PR #26: bilingual meta description + agent rationale + source link + capability-guarded
+      checkbox.
 - [ ] **qTranslate x Yoast at apply time**: after the first approved apply, view BOTH language
       URLs' page source — the meta description tag must render per-language, never the raw
       `[:es]…[:en]…[:]` string. (Requires the qTranslate-XT Yoast integration module if raw
       tags appear.)
-- [ ] **Nothing published automatically** — post status unchanged by every test above.
+- [x] **Nothing published automatically** — 2026-07-06: every artifact (50455, 50457) remained
+      status=draft; live post 13699 untouched; zero production writes.
 
 ## Sign-off (Release 0.3 → 1.0 gate; see docs/STATUS.md for the full criteria)
 

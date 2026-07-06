@@ -150,6 +150,10 @@ Good ideas that fail the Release 0.3 filters; recorded so they aren't lost and a
 - Business-operations tiles (unanswered inquiries, bike utilization, failed payments, review
   responses, workshop delays) — this is Release 2.0 territory: it requires the Assets/Knowledge
   objects and new read integrations.
+- **Execution / Work-Package object (2.0, part of Tasks):** first-class tracking of
+  case → decision → approved → executed → verified → closed. v1 covers this today with existing
+  pieces: decisions.outcome (`decision-outcome` CLI) + case journal entries + docs/workpackages/
+  checklists — build the table when the workflow outgrows them.
 
 ## Longest-lead external items (start early)
 

@@ -24,7 +24,10 @@ def _case_line(case) -> str:
 
 def _decision_line(decision, case_ref_by_id) -> str:
     link = f" (case {case_ref_by_id.get(decision.case_id, f'#{decision.case_id}')})" if decision.case_id else ""
-    return f"- D#{decision.id} [{decision.status}] {decision.title}{link}"
+    state = decision.status
+    if decision.outcome:  # execution result recorded — "approved · executed: worked"
+        state += f" · executed: {decision.outcome}"
+    return f"- D#{decision.id} [{state}] {decision.title}{link}"
 
 
 def known_cases_block(store=None, *, limit: int = 25) -> str:
