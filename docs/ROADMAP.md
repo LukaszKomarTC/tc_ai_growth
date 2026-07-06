@@ -118,6 +118,23 @@ speculative schema.
   each inheriting memory, strategy, and prior decisions rather than starting cold. Gated on the
   long-lead credentials below.
 
+## Post-1.0 backlog (captured, deliberately NOT now)
+
+Good ideas that fail the Release 0.3 filters; recorded so they aren't lost and aren't built early:
+
+- **Reliability metrics as a first-class feature (build FIRST post-0.3, before new capabilities):**
+  false-positive rate, duplicate-case rate, missed detections, average investigation cost,
+  decision-reuse rate. The runs/cases/decisions tables already carry the raw data. Trust comes
+  from being predictably correct over months, not from features.
+- Dashboard: approve/reject buttons (turns GET-only console into a write path — deliberate
+  security decision), case impact scores (revenue at risk / SEO / urgency), evidence deep-links
+  (GA4/GSC/Woo), case lifecycle timeline (detected → investigated → proposed → approved →
+  executed → verified → closed).
+- Notifications for high-priority cases (email exists; push channel later).
+- Business-operations tiles (unanswered inquiries, bike utilization, failed payments, review
+  responses, workshop delays) — this is Release 2.0 territory: it requires the Assets/Knowledge
+  objects and new read integrations.
+
 ## Longest-lead external items (start early)
 
 - Google Ads developer token + Meta app review (needed before Ads analysis is real).

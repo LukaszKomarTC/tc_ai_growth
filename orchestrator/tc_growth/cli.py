@@ -14,6 +14,8 @@
     python -m tc_growth.cli case-status <ref> <status>   # human-approved lifecycle change
     python -m tc_growth.cli decision-approve <id> ["note"]   # approve a proposed decision
     python -m tc_growth.cli decision-reject <id> ["note"]    # reject a proposed decision
+    python -m tc_growth.cli draft-test "<task>"          # supervised DRAFTS-phase run (staging)
+    python -m tc_growth.cli validation                   # Release 0.3 validation report (from docs/VALIDATION.md)
     python -m tc_growth.cli dashboard [port]             # read-only web view (127.0.0.1 only)
 
 `smoke` exercises a single host-side tool WITHOUT the AI runtime — the fastest way to surface
@@ -210,6 +212,35 @@ def cmd_decision_set(decision_id: str, status: str, note: str = "") -> int:
     return 0
 
 
+def cmd_draft_test(instruction: str) -> int:
+    """Supervised validation run at DRAFTS phase (staging connector). Human launches, human
+    reviews the result in staging wp-admin — see docs/VALIDATION.md Content section."""
+    from .core.approval import Phase
+    from .validate import run_draft_test
+
+    if not instruction:
+        print('Usage: draft-test "<drafting task, e.g. SEO title/meta draft for post 13699>"')
+        return 1
+    runtime = _build_runtime()
+    print(run_draft_test(runtime, instruction, phase=Phase.DRAFTS))
+    return 0
+
+
+def cmd_validation() -> int:
+    """Print the Release 0.3 validation report parsed from docs/VALIDATION.md."""
+    from .validate import validation_status
+
+    st = validation_status()
+    if not st["total"]:
+        print("No checklist items found (docs/VALIDATION.md missing?)")
+        return 1
+    for s in st["sections"]:
+        mark = "PASS" if s["pass"] else f"{s['done']}/{s['total']}"
+        print(f"{s['name']:<40} {mark}")
+    print(f"\nOverall: {st['done']}/{st['total']} ({st['percent']}%)")
+    return 0
+
+
 def cmd_decisions() -> int:
     from . import store
 
@@ -264,6 +295,10 @@ def main(argv: list[str] | None = None) -> int:
             print("Usage: case-status <ref> <open|monitoring|resolved|closed>")
             return 1
         return cmd_case_status(rest[0], rest[1])
+    if cmd == "draft-test":
+        return cmd_draft_test(rest[0] if rest else "")
+    if cmd == "validation":
+        return cmd_validation()
     if cmd in ("decision-approve", "decision-reject"):
         if not rest:
             print(f"Usage: {cmd} <decision-id> [\"note\"]")

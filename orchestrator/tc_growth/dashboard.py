@@ -99,6 +99,7 @@ def render_overview(s: Store) -> str:
     ) or "<tr><td colspan='6' class='muted'>no decisions logged</td></tr>"
 
     body = (
+        "<p><a href='/validation'>Release 0.3 Validation Report</a></p>"
         "<h2>Cases</h2><table><tr><th>ref</th><th>status</th><th>priority</th><th>confidence</th>"
         f"<th>title</th><th>updated</th></tr>{case_rows}</table>"
         f"<h2>Recent runs <span class='muted'>(shown: ${total_cost:.4f})</span></h2>"
@@ -109,6 +110,33 @@ def render_overview(s: Store) -> str:
         f"<th>case</th></tr>{dec_rows}</table>"
     )
     return _page("TC Growth — operations", body)
+
+
+def render_validation() -> str:
+    """Release 0.3 Validation Report — the acceptance record, rendered from docs/VALIDATION.md
+    (the single source of truth; humans tick boxes there with dated evidence)."""
+    from .validate import validation_status
+
+    st = validation_status()
+    if not st["total"]:
+        return _page("Validation Report", "<p class='muted'>docs/VALIDATION.md not found.</p>")
+    section_html = ""
+    for s in st["sections"]:
+        badge = ("<span class='badge approved'>PASS</span>" if s["pass"]
+                 else f"<span class='badge proposed'>{s['done']}/{s['total']}</span>")
+        items = "".join(
+            f"<tr><td>{'✔' if i['done'] else '·'}</td><td>{_e(i['text'])}</td></tr>"
+            for i in s["items"]
+        )
+        section_html += (f"<h2>{_e(s['name'])} {badge}</h2>"
+                         f"<table><tr><th></th><th>item · evidence</th></tr>{items}</table>")
+    body = (
+        f"<p><a href='/'>&larr; overview</a></p>"
+        f"<p class='trail'>Overall: <b>{st['done']}/{st['total']}</b> ({st['percent']}%) · "
+        "production writes: <b>NOT ENABLED</b> · the checklist decides, not enthusiasm.</p>"
+        + section_html
+    )
+    return _page("Release 0.3 — Validation Report", body)
 
 
 def render_case(s: Store, key: str) -> str | None:
@@ -162,6 +190,8 @@ class _Handler(BaseHTTPRequestHandler):
             path = unquote(self.path.split("?", 1)[0])
             if path == "/" or path == "":
                 doc = render_overview(s)
+            elif path == "/validation":
+                doc = render_validation()
             elif path.startswith("/case/"):
                 doc = render_case(s, path[len("/case/"):].strip("/"))
             else:
