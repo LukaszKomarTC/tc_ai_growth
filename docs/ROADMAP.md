@@ -131,6 +131,10 @@ Good ideas that fail the Release 0.3 filters; recorded so they aren't lost and a
   (GA4/GSC/Woo), case lifecycle timeline (detected → investigated → proposed → approved →
   executed → verified → closed).
 - Notifications for high-priority cases (email exists; push channel later).
+- **Multilingual paired drafting (Type A):** connector exposes translation links (WPML/Polylang)
+  so the agent can detect a page's language twin and generate BOTH drafts together for one
+  approval. Until then the prompt-level policy holds: stay in scope, flag the twin, recommend the
+  parallel draft, never desynchronise the pair (validation finding, 2026-07-06 draft test).
 - Business-operations tiles (unanswered inquiries, bike utilization, failed payments, review
   responses, workshop delays) — this is Release 2.0 territory: it requires the Assets/Knowledge
   objects and new read integrations.

@@ -14,6 +14,7 @@
     python -m tc_growth.cli case-status <ref> <status>   # human-approved lifecycle change
     python -m tc_growth.cli decision-approve <id> ["note"]   # approve a proposed decision
     python -m tc_growth.cli decision-reject <id> ["note"]    # reject a proposed decision
+    python -m tc_growth.cli decision-add "<title>" ["rationale"] [case-ref]  # human policy decision (enters agent memory as approved)
     python -m tc_growth.cli draft-test "<task>"          # supervised DRAFTS-phase run (staging)
     python -m tc_growth.cli validation                   # Release 0.3 validation report (from docs/VALIDATION.md)
     python -m tc_growth.cli dashboard [port]             # read-only web view (127.0.0.1 only)
@@ -212,6 +213,28 @@ def cmd_decision_set(decision_id: str, status: str, note: str = "") -> int:
     return 0
 
 
+def cmd_decision_add(title: str, rationale: str = "", case_ref: str = "") -> int:
+    """Record a HUMAN decision (business policy) directly as approved. It enters the decision
+    queue injected into every run, so the agent treats it as in-force — the decision log doubles
+    as early policy memory without any new schema."""
+    from . import store
+
+    s = store.open_store()
+    case_id = None
+    if case_ref:
+        case = _resolve_case(s, case_ref)
+        if case is None:
+            print(f"No case matching {case_ref!r}")
+            return 1
+        case_id = case.id
+    did = s.record_decision(title=title, rationale=rationale or None, status="approved",
+                            made_by="human", case_id=case_id)
+    if case_id:
+        s.append_observation(case_id, f"Decision D#{did} recorded by human: {title}", author="human")
+    print(f"Decision D#{did} recorded (approved, human): {title}")
+    return 0
+
+
 def cmd_draft_test(instruction: str) -> int:
     """Supervised validation run at DRAFTS phase (staging connector). Human launches, human
     reviews the result in staging wp-admin — see docs/VALIDATION.md Content section."""
@@ -299,6 +322,12 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_draft_test(rest[0] if rest else "")
     if cmd == "validation":
         return cmd_validation()
+    if cmd == "decision-add":
+        if not rest:
+            print('Usage: decision-add "<title>" ["rationale"] [case-ref]')
+            return 1
+        return cmd_decision_add(rest[0], rest[1] if len(rest) > 1 else "",
+                                rest[2] if len(rest) > 2 else "")
     if cmd in ("decision-approve", "decision-reject"):
         if not rest:
             print(f"Usage: {cmd} <decision-id> [\"note\"]")

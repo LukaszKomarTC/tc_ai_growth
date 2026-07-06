@@ -38,6 +38,10 @@ Rules:
 - First read what you need (wp_seo_audit / wp_list) to ground the draft in the current page.
 - Create the draft with the appropriate draft tool (wp_create_seo_draft for titles/meta,
   wp_create_product_revision for product copy). NEVER publish; drafts/revisions only.
+- SCOPE: change only what the task above asks. Do NOT change the slug/URL or anything structural
+  unless the task explicitly says so — recommend such changes separately, with risks, instead.
+- MULTILINGUAL: if this page has a language twin (ES/EN), state which twin you found, and
+  recommend the parallel draft for it — the pair must never desynchronise.
 - Then report: the tool result (draft/revision id), the exact copy you wrote, and anything a
   human reviewer should check in staging wp-admin.
 """
