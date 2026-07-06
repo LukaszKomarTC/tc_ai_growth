@@ -15,6 +15,7 @@
     python -m tc_growth.cli decision-approve <id> ["note"]   # approve a proposed decision
     python -m tc_growth.cli decision-reject <id> ["note"]    # reject a proposed decision
     python -m tc_growth.cli decision-add "<title>" ["rationale"] [case-ref]  # human policy decision (enters agent memory as approved)
+    python -m tc_growth.cli decision-outcome <id> <worked|failed> ["evidence"]  # record execution result after verification
     python -m tc_growth.cli draft-test "<task>"          # supervised DRAFTS-phase run (staging)
     python -m tc_growth.cli validation                   # Release 0.3 validation report (from docs/VALIDATION.md)
     python -m tc_growth.cli dashboard [port]             # read-only web view (127.0.0.1 only)
@@ -235,6 +236,29 @@ def cmd_decision_add(title: str, rationale: str = "", case_ref: str = "") -> int
     return 0
 
 
+def cmd_decision_outcome(decision_id: str, outcome: str, evidence: str = "") -> int:
+    """Record the RESULT of executing an approved decision — after human verification, never
+    before. Closes the loop: proposed -> approved -> executed -> verified (outcome)."""
+    from . import store
+
+    if outcome not in ("worked", "failed"):
+        print("Outcome must be 'worked' or 'failed'")
+        return 1
+    s = store.open_store()
+    d = s.get_decision(int(decision_id))
+    if d is None:
+        print(f"No decision with id {decision_id}")
+        return 1
+    s.update_decision(d.id, outcome=outcome)
+    if d.case_id:
+        entry = f"Decision D#{d.id} ('{d.title}') executed and verified: {outcome}."
+        if evidence:
+            entry += f" Evidence: {evidence}"
+        s.append_observation(d.case_id, entry, author="human")
+    print(f"Decision D#{d.id}: outcome = {outcome}")
+    return 0
+
+
 def cmd_draft_test(instruction: str) -> int:
     """Supervised validation run at DRAFTS phase (staging connector). Human launches, human
     reviews the result in staging wp-admin — see docs/VALIDATION.md Content section."""
@@ -322,6 +346,11 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_draft_test(rest[0] if rest else "")
     if cmd == "validation":
         return cmd_validation()
+    if cmd == "decision-outcome":
+        if len(rest) < 2:
+            print("Usage: decision-outcome <id> <worked|failed> [\"evidence\"]")
+            return 1
+        return cmd_decision_outcome(rest[0], rest[1], rest[2] if len(rest) > 2 else "")
     if cmd == "decision-add":
         if not rest:
             print('Usage: decision-add "<title>" ["rationale"] [case-ref]')

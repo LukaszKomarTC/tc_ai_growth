@@ -88,3 +88,26 @@ def test_confidence_trail_parses_journal_and_renders():
 def test_confidence_trail_empty_when_no_journal_lines():
     assert confidence_trail(None) == []
     assert confidence_trail("no confidence lines here") == []
+
+
+def test_decision_outcome_records_execution_and_journals_case(tmp_path, monkeypatch, capsys):
+    from tc_growth.cli import cmd_decision_outcome
+
+    monkeypatch.setenv("TC_DB_PATH", str(tmp_path / "o.db"))
+    s = store.open_store(tmp_path / "o.db")
+    cid = s.create_case(title="tracking gap", ref="TRK-X")
+    did = s.record_decision(title="Fix GA4", status="approved", made_by="agent", case_id=cid)
+    s.close()
+
+    assert cmd_decision_outcome(str(did), "banana") == 1          # only worked|failed
+    assert cmd_decision_outcome(str(did), "worked", "GA4 DebugView shows purchase") == 0
+    assert "outcome = worked" in capsys.readouterr().out
+
+    s = store.open_store(tmp_path / "o.db")
+    d = s.get_decision(did)
+    assert d.outcome == "worked" and d.status == "approved"       # status untouched
+    assert "executed and verified: worked" in s.get_case(cid).body
+    assert "GA4 DebugView" in s.get_case(cid).body
+    # The memory block now tells future runs it was executed, not merely approved.
+    assert "[approved · executed: worked] Fix GA4 (case TRK-X)" in known_cases_block(s)
+    s.close()
