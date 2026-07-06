@@ -96,10 +96,46 @@ chmod 640 /etc/nginx/tcgrowth.htpasswd && chgrp nginx /etc/nginx/tcgrowth.htpass
 
 4. Apply. Open `https://dashboard.tourdegirona.com`, enter the username/password → dashboard.
 
+## 3-alt. Plesk WITHOUT nginx directives (Apache-only setups)
+
+If "Apache & nginx Settings" shows no "Additional nginx directives" box, the Plesk nginx
+reverse-proxy component is disabled and Apache serves directly. Use the Apache equivalent
+(functionally identical; survives Plesk reloads because it lives in Plesk's per-vhost config):
+
+```bash
+# Password file readable by Apache (www-data), and the proxy modules:
+htpasswd -c /etc/apache2/tcgrowth.htpasswd <your-username>
+chown root:www-data /etc/apache2/tcgrowth.htpasswd && chmod 640 /etc/apache2/tcgrowth.htpasswd
+a2enmod proxy proxy_http headers && systemctl restart apache2
+```
+
+Then paste into **Additional Apache directives for HTTPS** (leave the HTTP box empty; the
+301-to-HTTPS redirect covers it):
+
+```apache
+ProxyRequests Off
+ProxyPreserveHost On
+
+<Location "/">
+    AuthType Basic
+    AuthName "TC Growth"
+    AuthUserFile /etc/apache2/tcgrowth.htpasswd
+    Require valid-user
+</Location>
+
+ProxyPass / http://127.0.0.1:8383/
+ProxyPassReverse / http://127.0.0.1:8383/
+
+Header always set X-Robots-Tag "noindex, nofollow"
+```
+
+Do NOT flip the whole server to nginx (`plesk sbin nginxmng --enable`) just for this — that
+changes the serving stack of every site on the box to solve a one-vhost problem.
+
 ## Notes
 
 - **Hosting Settings** for the subdomain: enable "Permanent SEO-safe 301 redirect from HTTP to HTTPS"
   so the password never travels over plain HTTP.
-- The subdomain serves a read-only console; there is nothing to index — optionally add
-  `add_header X-Robots-Tag "noindex, nofollow";` inside the location block.
+- The subdomain serves a read-only console; there is nothing to index — the noindex header is
+  included in both variants above.
 - Kill switch: `systemctl disable --now tc-dashboard.service` (the subdomain then returns 502).
