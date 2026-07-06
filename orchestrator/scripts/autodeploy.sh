@@ -31,16 +31,30 @@ git pull --ff-only origin main --quiet 2>>"$LOG" || { log "pull failed (non-ff?)
 
 install() { "$PIP" install -q -e "$APP/orchestrator[anthropic,google,dev]" >>"$LOG" 2>&1; }
 
-install || { log "install failed — rolling back"; git checkout -q "$LOCAL"; install; exit 1; }
+install || { log "install failed — rolling back"; git checkout -q "$LOCAL"; install; report "install-failed" "$LOCAL" "n/a"; exit 1; }
 
-if (cd "$APP/orchestrator" && "$PY" -m pytest -q >>"$LOG" 2>&1); then
-    log "tests green — restarting dashboard"
+# Deployment Report — one JSON record per deployment attempt (dashboard renders it).
+report() { # result, commit, tests-summary
+    printf '{"result":"%s","commit":"%s","time":"%s","tests":"%s","rollback_to":"%s"}\n' \
+        "$1" "$2" "$(date -u +%FT%TZ)" "$3" "$LOCAL" > "$APP/orchestrator/data/last_deploy.json"
+}
+
+PYTEST_OUT=$(mktemp)
+if (cd "$APP/orchestrator" && "$PY" -m pytest -q >"$PYTEST_OUT" 2>&1); then
+    cat "$PYTEST_OUT" >> "$LOG"
+    SUMMARY=$(tail -n1 "$PYTEST_OUT" | tr -d '"')
+    log "tests green ($SUMMARY) — restarting dashboard"
     # Needs the one-line sudoers rule from deployments/systemd/README.md (restart only, no shell).
     sudo -n systemctl restart tc-dashboard.service 2>>"$LOG" || log "dashboard restart failed (sudoers rule missing?)"
+    report "deployed" "$REMOTE" "$SUMMARY"
     log "deployed $REMOTE OK"
 else
+    cat "$PYTEST_OUT" >> "$LOG"
+    SUMMARY=$(tail -n1 "$PYTEST_OUT" | tr -d '"')
     log "TESTS FAILED on $REMOTE — ROLLING BACK to $LOCAL"
     git checkout -q "$LOCAL"
     install
+    report "rolled-back" "$REMOTE" "$SUMMARY"
     log "rollback complete; main is broken and needs a fix commit"
 fi
+rm -f "$PYTEST_OUT"

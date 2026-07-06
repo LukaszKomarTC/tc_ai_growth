@@ -19,7 +19,7 @@ import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote
 
-from .config import BASE_DIR, get_settings, site_label
+from .config import BASE_DIR, RELEASE, get_settings, site_label
 from .store import Store, open_store, resolved_db_path
 
 # Matches the journal lines case_set_confidence writes:
@@ -80,7 +80,10 @@ def _page(title: str, body: str) -> str:
 
 
 def deployment_info() -> dict:
-    """Current commit + recent auto-deploy log lines (GitOps observability, read-only)."""
+    """Deployment Report: release, current commit, last auto-deploy record, recent log lines.
+    Every screenshot of the dashboard tells you exactly what you're looking at."""
+    import json
+
     root = BASE_DIR.parent
     sha = ""
     try:
@@ -91,11 +94,16 @@ def deployment_info() -> dict:
             sha = head[:9]
     except OSError:
         pass
+    last = {}
+    try:
+        last = json.loads((BASE_DIR / "data" / "last_deploy.json").read_text())
+    except (OSError, ValueError):
+        pass
     try:
         log_lines = (BASE_DIR / "data" / "autodeploy.log").read_text().splitlines()[-4:]
     except OSError:
         log_lines = []
-    return {"commit": sha or "—", "log": log_lines}
+    return {"release": RELEASE, "commit": sha or "—", "last": last, "log": log_lines}
 
 
 def render_overview(s: Store) -> str:
@@ -145,9 +153,19 @@ def render_overview(s: Store) -> str:
 
 def _deployment_section() -> str:
     info = deployment_info()
-    log_html = "".join(f"<div class='muted'>{_e(line)}</div>" for line in info["log"]) or \
-               "<div class='muted'>(no auto-deploy log yet)</div>"
-    return (f"<h2>Deployment</h2><p>Current commit: <b>{_e(info['commit'])}</b></p>{log_html}")
+    last = info["last"]
+    if last:
+        result = last.get("result", "—")
+        badge_cls = "approved" if result == "deployed" else "rejected"
+        last_html = (f"<p><span class='badge {badge_cls}'>{_e(result)}</span> "
+                     f"commit <b>{_e(str(last.get('commit', ''))[:9])}</b> · {_e(last.get('time'))} · "
+                     f"tests: {_e(last.get('tests'))} · rollback to {_e(str(last.get('rollback_to', ''))[:9])} available</p>")
+    else:
+        last_html = "<p class='muted'>(no auto-deploy record yet — manual deploys so far)</p>"
+    log_html = "".join(f"<div class='muted'>{_e(line)}</div>" for line in info["log"])
+    return (f"<h2>Deployment</h2>"
+            f"<p>Release <b>{_e(info['release'])}</b> · running commit <b>{_e(info['commit'])}</b></p>"
+            f"{last_html}{log_html}")
 
 
 def render_validation() -> str:
