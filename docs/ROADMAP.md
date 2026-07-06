@@ -131,10 +131,13 @@ Good ideas that fail the Release 0.3 filters; recorded so they aren't lost and a
   (GA4/GSC/Woo), case lifecycle timeline (detected → investigated → proposed → approved →
   executed → verified → closed).
 - Notifications for high-priority cases (email exists; push channel later).
-- **Multilingual paired drafting (Type A):** connector exposes translation links (WPML/Polylang)
-  so the agent can detect a page's language twin and generate BOTH drafts together for one
-  approval. Until then the prompt-level policy holds: stay in scope, flag the twin, recommend the
-  parallel draft, never desynchronise the pair (validation finding, 2026-07-06 draft test).
+- **qTranslate-aware connector fields (Type A):** the site uses qTranslate XT — both languages
+  live inside the same post fields as `[:es]…[:en]…[:]` tagged strings (NOT WPML/Polylang
+  separate posts). The connector should expose and accept per-language values (or validated raw
+  tagged strings) for title/meta/content so a draft can never ambiguously overwrite both
+  languages. Until then the prompt-level safety rule holds: preserve tags, write both language
+  blocks, never untagged single-language strings (validation findings, 2026-07-06 draft test —
+  draft 50455 wrote untagged fields).
 - Business-operations tiles (unanswered inquiries, bike utilization, failed payments, review
   responses, workshop delays) — this is Release 2.0 territory: it requires the Assets/Knowledge
   objects and new read integrations.

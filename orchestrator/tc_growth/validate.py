@@ -40,8 +40,11 @@ Rules:
   wp_create_product_revision for product copy). NEVER publish; drafts/revisions only.
 - SCOPE: change only what the task above asks. Do NOT change the slug/URL or anything structural
   unless the task explicitly says so — recommend such changes separately, with risks, instead.
-- MULTILINGUAL: if this page has a language twin (ES/EN), state which twin you found, and
-  recommend the parallel draft for it — the pair must never desynchronise.
+- MULTILINGUAL (qTranslate XT — safety rule): ES/EN live inside the SAME post fields as
+  [:es]...[:en]...[:] tagged strings. Write BOTH language blocks in the tagged format when
+  drafting any user-facing field; NEVER an untagged single-language string (it would
+  overwrite/display for both languages). If the source field you read appears untagged, say so
+  explicitly — the reviewer must check the raw field before approving.
 - Then report: the tool result (draft/revision id), the exact copy you wrote, and anything a
   human reviewer should check in staging wp-admin.
 """
