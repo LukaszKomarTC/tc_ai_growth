@@ -36,7 +36,7 @@ transitions happen only through the gates in `docs/VALIDATION.md` / `docs/STATUS
 | Mode | Allowed | Forbidden |
 |---|---|---|
 | **BUILD** | New code, refactoring | — |
-| **VALIDATE** ← current | Bug fixes, documentation, testing | New capabilities, structural refactoring |
+| **VALIDATE** ← current | Bug fixes, documentation, testing, **validation tooling** (test harnesses like `draft-test` that exercise existing gates without changing product behavior — "Type B" code) | New capabilities, new integrations, schema/workflow changes, structural refactoring ("Type A" code) |
 | **SHADOW** | Recommendations, comparisons, reporting against production | Execution of any kind |
 | **ASSIST** | Drafts, human-approved actions | Autonomous publishing |
 | **OPERATE** | Approved, bounded, audited actions | See "Permanent limits" |

@@ -105,6 +105,7 @@ def secrets_path(filename: str) -> Path:
 _DEFAULT_TIER_FOR_KIND = {
     "weekly-report": "mid",
     "investigate": "strong",
+    "draft-test": "mid",     # supervised validation drafts (content work, human-reviewed)
     "monitoring": "cheap",   # future scheduled checks; opt-in kind, nothing uses it yet
 }
 
