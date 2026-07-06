@@ -45,8 +45,13 @@ reaches staging. Review each result in staging wp-admin.
 - [ ] **Approval meta box** behaves (only publish_posts-capable users can approve).
 - [ ] **Nothing published automatically** — post status unchanged by every test above.
 
-## Sign-off
+## Sign-off (Release 0.3 → 1.0 gate; see docs/STATUS.md for the full criteria)
 
 - [ ] All boxes green (dates + evidence above).
-- [ ] Two consecutive clean Mondays: ____-__-__ and ____-__-__.
-- [ ] Decision logged: "Phase 3B validation complete — proceed to Phase 4 shadow mode."
+- [ ] THREE consecutive clean Mondays: ____-__-__ · ____-__-__ · ____-__-__
+      (clean = no calibration failure, no duplicate case, no false critical, no re-proposed
+      decided item).
+- [ ] Zero production writes during the entire release.
+- [ ] Decision logged: "Release 0.3 validation complete — proceed to 1.0 production shadow mode."
+
+The checklist decides the transition — not enthusiasm, not schedule.
