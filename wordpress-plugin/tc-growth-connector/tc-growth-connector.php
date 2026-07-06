@@ -95,10 +95,40 @@ function tc_growth_render_approval_metabox( $post ) {
 		return;
 	}
 	wp_nonce_field( 'tc_growth_approval', 'tc_growth_approval_nonce' );
+
+	// Show the reviewer EVERYTHING they are approving. The proposed meta description lives in a
+	// hidden custom field (it is only written to the SEO plugin's field on approved apply), so
+	// without this block it is invisible in wp-admin — a review-usability gap found in the
+	// 2026-07-06 validation draft test.
+	$meta_desc = get_post_meta( $post->ID, '_tc_growth_proposed_meta_description', true );
+	$rationale = get_post_meta( $post->ID, '_tc_growth_rationale', true );
+
+	$source_link = get_edit_post_link( (int) $source );
+	echo '<p class="description">' . esc_html__( 'Source page: ', 'tc-growth-connector' );
+	if ( $source_link ) {
+		echo '<a href="' . esc_url( $source_link ) . '">#' . (int) $source . '</a>';
+	} else {
+		echo '#' . (int) $source;
+	}
+	echo '</p>';
+
+	echo '<p><strong>' . esc_html__( 'Proposed meta description', 'tc-growth-connector' ) . '</strong>';
+	echo '<br /><em>' . esc_html__( '(applied to the SEO plugin field on the live page only after approval; the empty Yoast box on this draft is expected)', 'tc-growth-connector' ) . '</em></p>';
+	if ( $meta_desc ) {
+		// qTranslate-tagged strings are shown raw on purpose so the reviewer sees both languages.
+		echo '<blockquote style="margin:0 0 8px;padding:6px 8px;background:#f6f7f7;border-left:3px solid #2271b1;white-space:pre-wrap;">' . esc_html( $meta_desc ) . '</blockquote>';
+	} else {
+		echo '<p class="description">' . esc_html__( '(none proposed)', 'tc-growth-connector' ) . '</p>';
+	}
+
+	if ( $rationale ) {
+		echo '<p><strong>' . esc_html__( 'Agent rationale', 'tc-growth-connector' ) . '</strong></p>';
+		echo '<blockquote style="margin:0 0 8px;padding:6px 8px;background:#f6f7f7;border-left:3px solid #999;white-space:pre-wrap;">' . esc_html( $rationale ) . '</blockquote>';
+	}
+
 	$checked = '1' === (string) get_post_meta( $post->ID, '_tc_growth_approved', true );
-	echo '<label><input type="checkbox" name="tc_growth_approved" value="1" ' . checked( $checked, true, false ) . ' /> ';
+	echo '<hr /><label><input type="checkbox" name="tc_growth_approved" value="1" ' . checked( $checked, true, false ) . ' /> ';
 	echo esc_html__( 'Approve: allow the agent to apply this to the live page.', 'tc-growth-connector' ) . '</label>';
-	echo '<p class="description">' . esc_html__( 'Source page #', 'tc-growth-connector' ) . (int) $source . '</p>';
 }
 
 /**
