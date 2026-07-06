@@ -7,6 +7,9 @@ This is the primary progress document. Progress is measured in **system maturity
 gates**, not commits. (What was an "AI Growth Agent" is now an **AI Operations Platform**;
 growth is the first specialist module that plugs into the governed core.)
 
+**Current operating mode: VALIDATE** (see `VISION.md` for the mode ladder
+BUILD → VALIDATE → SHADOW → ASSIST → OPERATE and what each allows/forbids).
+
 ## Architecture maturity
 
 ```
