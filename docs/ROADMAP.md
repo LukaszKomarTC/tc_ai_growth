@@ -1,8 +1,11 @@
-# TC AI Growth — Roadmap & Operating Strategy
+# TC AI Operations Platform — Roadmap & Operating Strategy
 
-Living document. The agent is becoming a business operating system, not a bag of AI features. This
-file records where we are, the principles we build by, and the sequenced next steps. Update it as
-phases land (it is also the seed of the "Operating Strategy" the coordinator will eventually read).
+Living document. This is an **AI Operations Platform** (growth is its first specialist module),
+not a bag of AI features. This file records where we are, the principles we build by, and the
+sequenced next steps. **Progress and release gates live in `docs/STATUS.md`** — phases here map to
+releases there (Phase 3 ≈ Release 0.3, Phase 4 ≈ 1.0/1.1, Phase 5 ≈ 2.0). The architecture is
+FROZEN unless a fundamental flaw appears: every new capability strengthens the governance doors —
+the phase gate, the store, the approval path — or it waits.
 
 ## Where we are (2026-07)
 
