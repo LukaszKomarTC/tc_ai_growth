@@ -131,6 +131,15 @@ Good ideas that fail the Release 0.3 filters; recorded so they aren't lost and a
   (GA4/GSC/Woo), case lifecycle timeline (detected → investigated → proposed → approved →
   executed → verified → closed).
 - Notifications for high-priority cases (email exists; push channel later).
+- **Site Inspector (Type A — strong 0.4/1.0 candidate):** read-only connector endpoint
+  `tc_site_inspect` returning curated, structured JSON (WP version, theme, active plugins,
+  detected SEO/multilingual/builder stack, CPTs, taxonomies, languages, permalink structure,
+  Woo/Bookings status). Security constraints by construction: WHITELISTED fields only — never a
+  raw wp_options dump (options carry API keys/tokens), never customer PII; no writes, no
+  activation/deactivation. Agent refreshes docs/SITE_PROFILE.md from it; first run validated
+  against the human-written profile. Bonus: staging↔production profile DIFF is exactly the
+  resync verification Phase 4 needs. Principle: the agent may know everything about HOW the
+  business works; it does not automatically see everything the database CONTAINS.
 - **qTranslate-aware connector fields (Type A):** the site uses qTranslate XT — both languages
   live inside the same post fields as `[:es]…[:en]…[:]` tagged strings (NOT WPML/Polylang
   separate posts). The connector should expose and accept per-language values (or validated raw
