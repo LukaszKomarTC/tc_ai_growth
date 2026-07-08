@@ -34,7 +34,9 @@ class _FakeRuntime:
 
 def test_build_investigation_uses_forensic_prompt_and_read_only():
     rt = _FakeRuntime()
-    out = build_investigation(rt, "tobacco spam URLs — timeline and active-vs-historical")
+    # persist=False: this test checks prompt/phase wiring, not persistence — an unpersisted flag
+    # here is what wrote a fake run into the live VPS ledger on 2026-07-08 (see conftest.py).
+    out = build_investigation(rt, "tobacco spam URLs — timeline and active-vs-historical", persist=False)
     assert rt.system == prompts.INVESTIGATION      # forensic prompt, not the growth coordinator
     assert rt.phase == Phase.READ_ONLY             # read-only
     assert "Forensic Investigation" in out
