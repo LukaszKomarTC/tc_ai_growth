@@ -90,6 +90,17 @@ never a default, only an answered question. Auto-deploy scope stays the orchestr
 DB migrations beyond additive ones, connector/plugin updates, and infra changes remain
 intentional human deployments.
 
+**Memory review gate (agreed 2026-07-08):** memory can go stale — some policies are
+environment-dependent (e.g. "the connector reads staging" is false the day it points at
+production). Therefore every release/phase transition includes a MEMORY REVIEW before it
+completes: walk the decision log and every `approved` decision is explicitly re-affirmed for the
+new era or superseded; open/monitoring cases re-checked for still-true framing. The per-site
+store split makes the production cutover itself a curation moment: production either shares the
+business memory deliberately or starts from a reviewed subset — never inherits staging's memory
+by accident. Writing discipline: phrase policies as timeless where possible ("label every data
+source with its environment"), date-and-scope them otherwise. First-class Knowledge/Strategy
+objects with versioning and active flags remain the 2.0 answer.
+
 Shadow mode is already implemented by the phase gate: point the connector at production and keep
 runs at READ_ONLY — the agent documents what it *would* do (drafts as text, cases, proposals) and
 nothing executes. Gate to leave shadow mode: **N consecutive clean cycles of judgment** (reports +
