@@ -48,6 +48,13 @@ Production readiness (profiles: read-only-
 
 **Then and only then → Release 1.0 (production shadow mode).**
 
+## Deployment platform
+
+**GitOps live on the VPS since 2026-07-08 04:42 UTC** — merges to `main` self-deploy within
+5 minutes (pull → install → full test suite → restart; automatic rollback on red). This entry's
+own arrival on the dashboard was the pipeline's maiden voyage. Scope: orchestrator only —
+plugin/schema/infra changes remain intentional human deployments.
+
 ## Open business items (outside the code)
 
 - **GA4/Woo conversion tracking fix** (case `TRK-20260706-050158`) — blocks all ROI measurement.
