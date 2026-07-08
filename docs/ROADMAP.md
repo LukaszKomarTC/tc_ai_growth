@@ -108,6 +108,33 @@ investigations on production data with zero calibration failures and drafts the 
 approved) — cycles, not raw recommendation counts. Then: resync staging↔production → production
 DRAFTS phase → publishing stays human-approved permanently.
 
+## Memory 2.0 spec (agreed 2026-07-08 — build in Release 2.0, when its readers exist)
+
+Current memory (statuses + append-only journal + bounded recency injection + per-site stores +
+the human memory-review gate) is accepted for 0.x/1.x. Its known weakness: it relies on humans
+remembering to govern. Memory 2.0 makes staleness machine-readable:
+
+1. **Split operational facts from timeless principles.** Operational memory = keyed, typed facts
+   that change (`connector.target = staging`, plugin versions, migration status) with
+   environment metadata and review triggers. Principles = versioned Knowledge records that
+   rarely change ("label every evidence item with its source environment").
+2. **Environment metadata on every environment-specific item**, so applicability is computed
+   (`item.env == active profile env`), not remembered.
+3. **Review-on-event** (preferred over dates for this project): `review_after:
+   production-migration` — at injection time, past-due items are WARNED about, never silently
+   dropped.
+4. **Confidence on decisions** (cases already have it) so uncertainty is expressible.
+5. **Contradiction detection** — tractable BECAUSE of (1): two facts with the same key and
+   different values is a mechanical conflict, flagged before any human review. Free-text cannot
+   be reliably contradiction-checked; keyed facts can.
+
+**Memory hierarchy & graduation path (design principle):** code gates > constitution (VISION) >
+structured knowledge > journal narrative. Principles that prove permanent graduate UPWARD —
+e.g. "never corroborate production claims with staging data" lives today as a policy decision;
+its 2.0 destination is mechanical: every tool result carries an environment label and the
+runtime flags cross-environment inference itself. The strongest memories are the ones the model
+cannot forget because they are enforced, not recalled.
+
 ## Phase 5 — Business Operating System (parked until the action loop is boring)
 
 Memory grows from three objects (cases, decisions, runs) toward five: + **Knowledge** (persistent
