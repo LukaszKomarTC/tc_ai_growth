@@ -127,6 +127,21 @@ remembering to govern. Memory 2.0 makes staleness machine-readable:
 5. **Contradiction detection** — tractable BECAUSE of (1): two facts with the same key and
    different values is a mechanical conflict, flagged before any human review. Free-text cannot
    be reliably contradiction-checked; keyed facts can.
+6. **Knowledge provenance** — every knowledge item carries its derivation chain (source case,
+   evidence items with their environments, human reviewer, approval). "Why do we believe this?"
+   becomes a query, not archaeology. (The primitive form exists today — decision→case links,
+   basis/rationale text — 2.0 makes it structural.)
+
+**Promotion criteria (brake on the graduation path):** not every lesson deserves to become a
+hard rule — a system that encodes every mistake as a mechanical constraint calcifies. A
+principle graduates only through: observed independently ≥3 times → survived one release →
+no contradictions → human approval → constitution; and only after a further release →
+runtime enforcement.
+
+**North star for Memory 2.0 (verbatim, agreed 2026-07-08):** the goal is not to make the AI
+remember more — it is to make memory less necessary, by progressively moving verified
+operational rules into deterministic runtime enforcement. The model reasons; the platform
+guarantees the critical invariants.
 
 **Memory hierarchy & graduation path (design principle):** code gates > constitution (VISION) >
 structured knowledge > journal narrative. Principles that prove permanent graduate UPWARD —

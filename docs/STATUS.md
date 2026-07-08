@@ -23,6 +23,22 @@ Production readiness (profiles: read-only-
   by-construction · GitOps · portability)     █████░░░░░  50%
 ```
 
+## Honest capability scoreboard (guard against overstated claims — ours included)
+
+| Capability | State |
+|---|---|
+| Self-deploying (GitOps, tests-gated, rollback) | ✅ |
+| Self-testing (CI + on-box suite) | ✅ meaningful, not exhaustive |
+| Decision logging & human approval workflow | ✅ |
+| Memory governance | ✅ v1 — governed **by humans**; staleness review is a human gate |
+| Operational autonomy | ⚠️ limited by design (read + drafts + proposals) |
+| Self-correcting | ❌ not yet |
+| Mechanical provenance enforcement | ❌ not yet (Memory 2.0) |
+| Safe production writes | ❌ not yet (Release 1.1 gate) |
+
+The last three are significant unearned milestones. Language that blurs them creates false
+confidence — the exact failure the governance model exists to prevent.
+
 ## Releases
 
 | Release | Contents | Status |
