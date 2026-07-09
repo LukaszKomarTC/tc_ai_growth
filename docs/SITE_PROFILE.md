@@ -5,8 +5,8 @@ far (untagged multilingual fields, double-branded titles) all came from not know
 current. When the automated read-only Site Inspector ships (post-0.3 backlog), its output is
 validated AGAINST this file before it replaces it.
 
-_Last verified: 2026-07-06 (staging wp-admin observation + owner input). Items marked ❓ need
-owner confirmation._
+_Last verified: 2026-07-09 (production incident PERF-2026-07-09 + owner input). Items marked ❓
+need owner confirmation._
 
 ## Environments
 
@@ -51,6 +51,25 @@ owner confirmation._
    event currently not firing (case TRK-20260706-050158).
 5. **Permalinks** → ES pages at root (`/alquiler_bicicletas/`), EN under `/en/`. Slugs use
    underscores historically — do NOT "fix" slugs without an explicit task + redirect plan.
+6. **Shared hosting has a thin PHP-worker budget** → one misbehaving plugin can take every
+   uncacheable page (cart, checkout) to 20s+. WP Fastest Cache masks this on cached pages, so
+   slowness reports must always be checked against UNCACHED endpoints (`/wp-json/` is the probe).
+
+## Performance incident PERF-2026-07-09 (resolved)
+
+- **Symptom:** production front-end "very slow" — measured 8–29s TTFB on every uncached request
+  (`/wp-json/`, cart, product/category pages); cached pages 0.5s; static files ~1s.
+- **Ruled out by measurement:** GA4 tracking plugin (wp-json carries no tracking), Action
+  Scheduler bloat (purging 77,605 dead actions + 237,108 orphan log rows changed nothing),
+  autoload options (0.3 MB — healthy), Woo sessions (261 rows), PHP version (8.2.31).
+- **Root cause:** the **MailChimp for WooCommerce** plugin (broken install, recurring PHP fatals
+  visible in Action Scheduler failure logs) stalling every request. Deactivating it (together
+  with GF MailChimp) dropped bootstrap from 19–29s to **2.5–3.4s** instantly; cart 20s → 2.7s.
+- **State after fix:** both MailChimp plugins **deactivated (not deleted)** on production,
+  2026-07-09. ❓ owner decision pending: delete them, or reinstall the current MailChimp for
+  WooCommerce release if the mailing-list sync is actually wanted (re-measure after reconnect).
+- **Residual:** ~2.5–3s uncached TTFB is the shared-hosting baseline (staging VPS: ~2–4s);
+  acceptable, but an argument for the eventual production-on-VPS decision.
 
 ## Owner to-fill (❓ list)
 
