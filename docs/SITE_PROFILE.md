@@ -13,10 +13,16 @@ need owner confirmation._
 | | Production | Staging |
 |---|---|---|
 | URL | `tossacycling.com` | `dev.tourdegirona.com` |
-| Hosting | IONOS **shared hosting** | IONOS VPS (Plesk), same box as the orchestrator |
+| Hosting | **IONOS VPS (Plesk)** — migrated from IONOS shared 2026-07-10 (PERF-2026-07-09); same box as staging + orchestrator, separate Plesk subscription | IONOS VPS (Plesk), same box as the orchestrator |
 | Connector | ❌ not installed (Phase 4 decision) | ✅ tc-growth-connector (draft-only writes) |
 | GSC / GA4 | ✅ read-only (the production data source) | — |
 | Drift | ❓ unknown — staging is a copy of production from ~2026-06; verify before trusting audits |
+
+> **Single-box risk (accepted 2026-07-10):** production, staging, and the agent platform share
+> one VPS. Mitigations: separate Plesk subscriptions/DB users per site; offsite backups (❓ owner
+> to configure in Plesk); old shared hosting kept as DNS-rollback for 2–4 weeks post-migration.
+> The agent's production profile stays read-only by construction — co-location changes blast
+> radius, not permissions.
 
 ## CMS & stack (observed in staging wp-admin)
 
@@ -70,6 +76,15 @@ need owner confirmation._
   WooCommerce release if the mailing-list sync is actually wanted (re-measure after reconnect).
 - **Residual:** ~2.5–3s uncached TTFB is the shared-hosting baseline (staging VPS: ~2–4s);
   acceptable, but an argument for the eventual production-on-VPS decision.
+- **Update 2026-07-09/10:** the "MailChimp fix" did NOT hold — slowness returned (flat 20–22s).
+  Query Monitor then found the true shape: **24.7s of 29.4s page time was database time across
+  468 queries** (~53 ms/query on the shared host's remote MySQL, which flapped between fast and
+  slow). Contributing software habits (ride along, now cheap on local DB, tune later):
+  `wp_load_alloptions()` re-executed 2,834×/request, Gravity Forms Stripe feed queried 61×,
+  YITH wishlist 12×/button. Shared host also ran **no OPcache** and `memory_limit 0`.
+- **Resolution:** owner migrated production to the VPS on **2026-07-10**. Measured result:
+  bootstrap 20.4–22.7s → **1.8–2.3s** (stable across runs), cart 22.2s → 1.8s, EN homepage
+  36.9s → 0.7s. Old shared hosting retained as DNS rollback during the observation window.
 
 ## Owner to-fill (❓ list)
 
