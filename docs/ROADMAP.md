@@ -202,11 +202,31 @@ Good ideas that fail the Release 0.3 filters; recorded so they aren't lost and a
   false-positive rate, duplicate-case rate, missed detections, average investigation cost,
   decision-reuse rate. The runs/cases/decisions tables already carry the raw data. Trust comes
   from being predictably correct over months, not from features.
-- Dashboard: approve/reject buttons (turns GET-only console into a write path — deliberate
-  security decision), case impact scores (revenue at risk / SEO / urgency), evidence deep-links
-  (GA4/GSC/Woo), case lifecycle timeline (detected → investigated → proposed → approved →
-  executed → verified → closed).
-- Notifications for high-priority cases (email exists; push channel later).
+- **Operations Console (dashboard v2) — full CLI parity, owner request 2026-07-12:** the goal is
+  that routine operation NEVER requires SSH/bash; the terminal remains for sysadmin work only.
+  Everything the CLI does becomes a governed UI control:
+  - **Decision queue:** approve / reject with a required basis text field; add decisions;
+    record outcomes (worked / didn't / partial).
+  - **Cases:** status select (open / monitoring / resolved — ALWAYS_ASK-class transitions get an
+    explicit confirmation step), add case notes, set confidence with basis.
+  - **Run launchers via the Execution API (below):** investigate-with-question box, draft test
+    with target picker, on-demand report, smoke test. The dashboard never executes anything
+    itself — it enqueues NAMED operations only.
+  - **Agent communication channel:** a task/question box per case (and global) — each submission
+    becomes a normal governed run (phase gate, cost log, audit) whose result attaches to the
+    case journal + notifies. A task channel with memory, NOT a freeform chat that bypasses
+    governance. (Proven manually 2026-07-12: the blind re-examination run was exactly this
+    workflow over SSH.)
+  - **Hard prerequisites before ANY write control ships:** session auth + CSRF (Basic Auth is a
+    read-gate, not a write-gate), actor recorded on every journal/decision entry ("who clicked"),
+    per-action confirmations, loopback+reverse-proxy topology unchanged. The GET-only v1 is a
+    security wall; v2 replaces it deliberately in one reviewed step, not by accretion.
+  - Plus the earlier v2 items: case impact scores (revenue at risk / SEO / urgency), evidence
+    deep-links (GA4/GSC/Woo), lifecycle timeline (detected → investigated → proposed → approved →
+    executed → verified → closed).
+  - Sequencing inside 1.x: reliability metrics first, then decision-queue buttons (highest
+    daily value), then case controls, then run launchers + task channel.
+- Notifications for high-priority cases and completed on-demand runs (email exists; push later).
 - **Execution API / task queue (instead of SSH, ever):** the agent requests NAMED operations
   (run validation, refresh site profile, smoke test, generate report); the orchestrator executes
   only whitelisted commands locally and returns structured results. The agent never holds shell
