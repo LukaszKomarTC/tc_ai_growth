@@ -53,8 +53,16 @@ need owner confirmation._
    empty Yoast box on a draft is expected; no brand suffix in titles (policy decision D#5).
 3. **WPBakery content** → page body is shortcode-built; content edits must preserve builder
    markup, not raw-HTML rewrite it.
-4. **Order attribution** → WooCommerce order IDs observed in the 50–53k range; GA4 purchase
-   event currently not firing (case TRK-20260706-050158).
+4. **Order attribution** → WooCommerce order IDs observed in the 50–53k range. GA4 purchase
+   tracking **verified end-to-end 2026-07-12** (case TRK-20260706-050158): WooCommerce Google
+   Analytics Integration, real Stripe payment, purchase + Key event in Realtime (order 53940,
+   2.25 EUR). Standing rules: (a) GA4 counts **consenting browsers only** (Consent Mode default
+   denied) — WooCommerce is the revenue source of truth; GA4/Woo purchase ratio ≈ consent rate;
+   (b) the plugin's `_ga_tracked` order meta is a **one-shot** — a thank-you render with consent
+   denied burns the purchase forever; (c) test checkouts must be logged out (admin exclusion),
+   accept the banner FIRST, and leave totals **≥ 1 EUR** (Stripe minimum 0.50 EUR; below it the
+   session update 400-fails — an old gateway version once swallowed that error and charged the
+   stale pre-coupon amount: order 53937, 45.00 vs 0.45, refunded).
 5. **Permalinks** → ES pages at root (`/alquiler_bicicletas/`), EN under `/en/`. Slugs use
    underscores historically — do NOT "fix" slugs without an explicit task + redirect plan.
 6. **Shared hosting has a thin PHP-worker budget** → one misbehaving plugin can take every

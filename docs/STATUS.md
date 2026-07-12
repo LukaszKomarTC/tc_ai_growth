@@ -73,8 +73,12 @@ plugin/schema/infra changes remain intentional human deployments.
 
 ## Open business items (outside the code)
 
-- **GA4/Woo conversion tracking fix** (case `TRK-20260706-050158`) — blocks all ROI measurement.
+- ~~GA4/Woo conversion tracking fix~~ ✅ **verified end-to-end 2026-07-12** (purchase + Key event
+  from a real Stripe payment, order 53940; standing measurement rules in `SITE_PROFILE.md`).
+  ROI measurement unblocked. GA4 undercounts by the consent rate — Woo is revenue truth.
+- Production hosting migrated to the VPS 2026-07-10 (PERF-2026-07-09); 10–15× faster uncached.
 - Google Ads developer token + Meta app review — long-lead; enables the Ads specialist later.
 - Decision queue hygiene: approve/reject the current proposals so Monday runs respect them.
+- WP-02 (410 spam URLs, D#2) and WP-03 (noindex order pages, D#6) — still awaiting human execution.
 
 _Update this file when maturity or release state changes; details live in git history, not here._
