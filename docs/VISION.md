@@ -48,16 +48,45 @@ bottleneck; trust is.
 ## Permanent limits (human-controlled regardless of mode)
 
 These are not phase-gated — they are refused by construction (`core/approval.py
-FORBIDDEN_CAPABILITIES` — the tools do not exist):
+FORBIDDEN_CAPABILITIES` — the tools do not exist, cannot be enabled by configuration,
+permissions, or dashboard settings, and are absent from any capability registry):
 
-- Automatic **pricing** changes
-- Automatic **availability / booking** changes
-- Automatic **checkout / tracking-code** modification
-- Automatic **financial transfers** (never even a tool)
-- Automatic **publishing** without a human approval step
+- **Pricing** changes
+- **Availability / booking** changes (including creating or modifying bookings)
+- **Checkout / tracking-code** modification
+- **Financial transfers** — absolute: never a tool, in any mode, ever, amendment or not
+- **Publishing** without a human approval step
 
-Changing any of these is a conscious policy amendment to this document — years away, if ever —
-never a side effect of a feature.
+Precision on scope: these prohibit *write* capabilities. **Reads in the same domains —
+availability checks, reservation summaries, booking-conflict detection, pricing visibility,
+checkout diagnostics — are ordinary gated capabilities**, subject to the normal mode ladder
+and release gates, not to this section.
+
+The correct description of these limits is: **constitutionally prohibited under the current
+VISION.md** — not "never possible." Except for financial transfers (absolute), they can be
+introduced by exactly one path: the amendment procedure below. Never as a side effect of a
+feature, a spec revision, a dashboard permission, or a persuasive review.
+
+## Amendment procedure (the only path to changing the permanent limits)
+
+An amendment is a governance act, not a documentation edit. Editing this file alone changes
+nothing — the procedure is what grants force:
+
+1. **Written proposal** — exact capability definition (what it can and cannot do, parameters,
+   blast-radius limits), risk/benefit assessment, rollback design, verification probes, and
+   audit/alert requirements.
+2. **Cooling-off period: 7 days minimum** between proposal and ratification. No same-day
+   constitutional changes, ever — regardless of who proposes or how urgent it feels.
+3. **Explicit owner ratification, recorded as a decision in the platform store** (with the
+   proposal attached as evidence). Only the owner can ratify; the agent and its tooling can
+   draft a proposal but nothing more.
+4. **Dedicated release gate** — staging implementation and validation before any production
+   presence, exactly like any other capability, on top of the amendment.
+5. **Separate activation** — ratifying the amendment and enabling the capability are two
+   distinct human actions. Merging the code never activates the capability; one click must
+   never do both.
+
+If any step is missing, the limit stands, whatever this file happens to say.
 
 ## Long-term destination
 
