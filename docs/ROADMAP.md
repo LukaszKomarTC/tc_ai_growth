@@ -235,8 +235,10 @@ Good ideas that fail the Release 0.3 filters; recorded so they aren't lost and a
     diagnostic sight, constrained hands, explicit escalation" — capability registry (id, class,
     risk, approval, timeout, rollback, verification probe, state) defined BEFORE more screens;
     escalation modes: standard probes → staging read-only SQL (limits, audit, expires) →
-    **PII-scrubbed production-replica read-only SQL** (owner-approved per investigation; also
-    serves as backup-restore verification) → guarded registered actions (⛉ per-run). Free-form
+    **sanitized diagnostic replica** read-only SQL (PII AND secrets removed, scrub verified by
+    probe, inert — no mail/webhooks/cron, owner-approved per investigation, snapshot age on
+    every result; verifies the DB backup layer only — NOT full disaster recovery; build only
+    after ordinary probes prove insufficient) → guarded registered actions (⛉ per-run). Free-form
     SQL on the LIVE production DB stays out (masking arbitrary SQL is not reliably solvable).
     Bookings/availability READS are ordinary gated 1.x capabilities (the constitution restricts
     writes, not reads); booking/price WRITE capabilities can only ever be created via an
