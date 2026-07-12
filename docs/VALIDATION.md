@@ -29,8 +29,9 @@ reaches staging. Review each result in staging wp-admin.
 - [ ] **case_read consulted** before judging new-vs-known (visible in run tool calls).
 - [x] **Links decisions to cases** — 2026-07-06: D#6 (noindex order pages) logged as proposed,
       linked to TRK-20260706-050158.
-- [ ] **Updates confidence with a basis** — visible in the case journal and the dashboard
-      confidence-evolution ladder.
+- [x] **Updates confidence with a basis** — 2026-07-12 re-examination of TRK-20260706-050158:
+      0.85 → 0.95, basis "live ecommerce funnel + 2 purchase events after 8 Jul install";
+      recorded by the run in the case journal (confirm ladder rendering on the dashboard).
 - [x] **References a previous investigation** — 2026-07-06 mid-week report cites the 2026-07-05
       human Googlebot-404 verification from the case journal in its spam assessment.
 
@@ -42,9 +43,13 @@ reaches staging. Review each result in staging wp-admin.
       approved; case journals carry the entries.
 - [x] **decision-reject** settles; the NEXT run does not re-propose — 2026-07-06: D#1 rejected as
       duplicate; absent from the same-day mid-week report.
-- [ ] **Case update after manual action**: human applies a change, notes it via case-note; the
-      next report acknowledges it instead of re-recommending it. (Scheduled: Work Package #1
-      execution will produce this evidence.)
+- [x] **Case update after manual action** — 2026-07-12, stronger than the scripted test: the
+      WP-01 tracking fix was applied WITHOUT a prior case-note, and a blind re-examination run
+      discovered it from GA4 data alone — acknowledged the change, raised confidence with basis,
+      proposed MONITORING (respecting ALWAYS_ASK), cross-referenced the INC spam cases without
+      re-raising, honored D#7 provenance (no Woo/staging data), and routed its one
+      context-starved hypothesis (D#8, "value mapping broken" — actually coupon-test totals)
+      to the human decision queue instead of asserting it.
 - [x] **Dashboard reflects all of the above** — 2026-07-06 screenshots: cases, run costs,
       decision statuses, confidence, validation report page.
 
