@@ -226,6 +226,23 @@ Good ideas that fail the Release 0.3 filters; recorded so they aren't lost and a
     executed → verified → closed).
   - Sequencing inside 1.x: reliability metrics first, then decision-queue buttons (highest
     daily value), then case controls, then run launchers + task channel.
+  - **Rev 2 (2026-07-12, after external review — artifact "TC Operations Console" rev2):**
+    two-layer navigation (owner "Business" layer: Today / Sales & Bookings / Approvals is the
+    default landing; "Technical" layer beneath); new sections **Backups**, **Integrations
+    health**, **Changes/drift feed**, **Permissions**; business-impact fields required on every
+    case and decision (severity, revenue/customer impact, rollback, verification) — a broken
+    checkout and a stale sitemap must not queue as equals. Access philosophy reworded: "full
+    diagnostic sight, constrained hands, explicit escalation" — capability registry (id, class,
+    risk, approval, timeout, rollback, verification probe, state) defined BEFORE more screens;
+    escalation modes: standard probes → staging read-only SQL (limits, audit, expires) →
+    **PII-scrubbed production-replica read-only SQL** (owner-approved per investigation; also
+    serves as backup-restore verification) → guarded registered actions (⛉ per-run). Free-form
+    SQL on the LIVE production DB stays out (masking arbitrary SQL is not reliably solvable).
+    Bookings/availability READS are ordinary gated 1.x capabilities (the constitution restricts
+    writes, not reads); booking/price WRITE capabilities can only ever be created via an
+    explicit owner amendment of VISION.md at a dedicated gate — never via a spec revision.
+    Anti-goal recorded: the dashboard is a thin layer over working CLI/API capabilities, shipped
+    slice-by-slice where it replaces real recurring manual work — it must not become the project.
 - Notifications for high-priority cases and completed on-demand runs (email exists; push later).
 - **Execution API / task queue (instead of SSH, ever):** the agent requests NAMED operations
   (run validation, refresh site profile, smoke test, generate report); the orchestrator executes
