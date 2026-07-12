@@ -28,6 +28,21 @@ that plugs into the governed core; it is not the identity of the system.
 9. **Simplicity over cleverness.**
 10. **The checklist decides, not enthusiasm.**
 
+## Capability philosophy
+
+The platform may develop broad capability to **inspect, analyse, recommend, prepare, test, and
+execute constrained operations** across the whole business and technical stack. **Capability is
+not limited by domain; authority is limited** — by risk class, environment, approval level,
+rollback, and verification, as recorded per-operation in the capability registry.
+
+Absence of a capability in the current release is an **implementation state, not a
+constitutional ban**, unless it is listed under Permanent limits below.
+
+Low-risk operations may graduate to **pre-approved bounded autonomy** (limits on amount,
+frequency, scope, environment, expiry; rollback and escalation defined) — only after
+reliability evidence and an owner-approved written policy, and never inside the permanently
+limited domains without a material amendment first.
+
 ## Operating modes
 
 The platform is always in exactly one mode. Every activity should know which mode it is in;
@@ -70,13 +85,16 @@ feature, a spec revision, a dashboard permission, or a persuasive review.
 ## Amendment procedure (the only path to changing the permanent limits)
 
 An amendment is a governance act, not a documentation edit. Editing this file alone changes
-nothing — the procedure is what grants force:
+nothing — the procedure is what grants force. There are two classes:
+
+**Material amendment** — changes actual authority: introduces a capability into a permanently
+limited domain, alters a prohibited domain, or grants new autonomy.
 
 1. **Written proposal** — exact capability definition (what it can and cannot do, parameters,
    blast-radius limits), risk/benefit assessment, rollback design, verification probes, and
    audit/alert requirements.
 2. **Cooling-off period: 7 days minimum** between proposal and ratification. No same-day
-   constitutional changes, ever — regardless of who proposes or how urgent it feels.
+   material changes, ever — regardless of who proposes or how urgent it feels.
 3. **Explicit owner ratification, recorded as a decision in the platform store** (with the
    proposal attached as evidence). Only the owner can ratify; the agent and its tooling can
    draft a proposal but nothing more.
@@ -86,7 +104,12 @@ nothing — the procedure is what grants force:
    distinct human actions. Merging the code never activates the capability; one click must
    never do both.
 
-If any step is missing, the limit stands, whatever this file happens to say.
+**Clarifying amendment** — improves wording or precision without changing any authority.
+Requires: explicit owner approval, normal code/document review, and a statement in the commit
+that the change grants no new authority. No cooling-off. If there is any doubt about which
+class applies, it is material.
+
+If any required step is missing, the limit stands, whatever this file happens to say.
 
 ## Long-term destination
 
