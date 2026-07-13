@@ -148,6 +148,9 @@ def test_model_preamble_is_stripped_before_delivery():
     out = build_weekly_report(rt, persist=False)
     assert "All data collected. Now I have full context" not in out
     assert "# Weekly Report" in out
+    # The emailed body must BEGIN with the platform's approved header — narration can never
+    # precede it (review round 4 requirement: verify the output, not just the function).
+    assert out.startswith("# Tossa Cycling — Growth Report (")
     # A report with no heading at all is left untouched (fallback).
     rt2 = _FakeRuntime(text="plain text only, no headings")
     assert "plain text only" in build_weekly_report(rt2, persist=False)
@@ -178,12 +181,28 @@ def test_dates_are_computed_and_injected_not_model_derived():
 
 def test_rule9_arithmetic_and_spec_citation_rules_present():
     c = _coordinator()
-    assert "show your arithmetic" in c
+    assert "computed or omitted" in c
+    assert "unless the platform computed and injected it" in c   # compute in code or omit — no model %
     assert "numerator and denominator" in c
     assert "cite approved specifications" in c
     assert "never improvise production patterns" in c
     assert "impressions are not a transferable asset" in c
     assert "preferred-domain setting, removed in 2019" in c
+    assert "aggregate masked urls" in c
+
+
+def test_rule10_technical_claims_calibration():
+    c = _coordinator()
+    assert "technical claims calibration" in c
+    assert "never assert which quota or rate limit caused it" in c
+    assert "cause unverified; retry with backoff" in c
+    assert "unless it was live-tested in this run" in c
+    assert "comparative de-indexing speed claims (404 vs 410)" in c
+    assert "current implementation unverified" in c
+    assert "fetching the page's meta robots / x-robots-tag directly" in c
+    assert "they prove nothing about crawlability" in c
+    assert "contributing page-experience signals" in c
+    assert '"ranking eligibility"' in c
 
 
 def test_rule1b_historical_assets_stay_indexed():

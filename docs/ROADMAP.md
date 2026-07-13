@@ -253,7 +253,9 @@ Good ideas that fail the Release 0.3 filters; recorded so they aren't lost and a
   headers on manual runs. On failure: regenerate once with violations attached; still failing →
   withhold + record a report-quality failure. Lesson from 2026-07-13: prompt tests prove rules
   EXIST; only deterministic post-processing proves mechanical rules are OBEYED; semantic rules
-  are validated by graded live runs.
+  are validated by graded live runs. Related Memory 2.0 field (review round 4): cases carry a
+  keyed `fix_date` fact so the platform can COMPUTE incident-contamination percentages of a
+  report window and inject them — until then, the model omits percentages and states dates.
 - Notifications for high-priority cases and completed on-demand runs (email exists; push later).
 - **Execution API / task queue (instead of SSH, ever):** the agent requests NAMED operations
   (run validation, refresh site profile, smoke test, generate report); the orchestrator executes
