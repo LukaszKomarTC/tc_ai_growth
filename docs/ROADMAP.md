@@ -202,24 +202,96 @@ Good ideas that fail the Release 0.3 filters; recorded so they aren't lost and a
   false-positive rate, duplicate-case rate, missed detections, average investigation cost,
   decision-reuse rate. The runs/cases/decisions tables already carry the raw data. Trust comes
   from being predictably correct over months, not from features.
-- Dashboard: approve/reject buttons (turns GET-only console into a write path — deliberate
-  security decision), case impact scores (revenue at risk / SEO / urgency), evidence deep-links
-  (GA4/GSC/Woo), case lifecycle timeline (detected → investigated → proposed → approved →
-  executed → verified → closed).
-- Notifications for high-priority cases (email exists; push channel later).
+- **Operations Console (dashboard v2) — full CLI parity, owner request 2026-07-12:** the goal is
+  that routine operation NEVER requires SSH/bash; the terminal remains for sysadmin work only.
+  Everything the CLI does becomes a governed UI control:
+  - **Decision queue:** approve / reject with a required basis text field; add decisions;
+    record outcomes (worked / didn't / partial).
+  - **Cases:** status select (open / monitoring / resolved — ALWAYS_ASK-class transitions get an
+    explicit confirmation step), add case notes, set confidence with basis.
+  - **Run launchers via the Execution API (below):** investigate-with-question box, draft test
+    with target picker, on-demand report, smoke test. The dashboard never executes anything
+    itself — it enqueues NAMED operations only.
+  - **Agent communication channel:** a task/question box per case (and global) — each submission
+    becomes a normal governed run (phase gate, cost log, audit) whose result attaches to the
+    case journal + notifies. A task channel with memory, NOT a freeform chat that bypasses
+    governance. (Proven manually 2026-07-12: the blind re-examination run was exactly this
+    workflow over SSH.)
+  - **Hard prerequisites before ANY write control ships:** session auth + CSRF (Basic Auth is a
+    read-gate, not a write-gate), actor recorded on every journal/decision entry ("who clicked"),
+    per-action confirmations, loopback+reverse-proxy topology unchanged. The GET-only v1 is a
+    security wall; v2 replaces it deliberately in one reviewed step, not by accretion.
+  - Plus the earlier v2 items: case impact scores (revenue at risk / SEO / urgency), evidence
+    deep-links (GA4/GSC/Woo), lifecycle timeline (detected → investigated → proposed → approved →
+    executed → verified → closed).
+  - Sequencing inside 1.x: reliability metrics first, then decision-queue buttons (highest
+    daily value), then case controls, then run launchers + task channel.
+  - **Rev 2 (2026-07-12, after external review — artifact "TC Operations Console" rev2):**
+    two-layer navigation (owner "Business" layer: Today / Sales & Bookings / Approvals is the
+    default landing; "Technical" layer beneath); new sections **Backups**, **Integrations
+    health**, **Changes/drift feed**, **Permissions**; business-impact fields required on every
+    case and decision (severity, revenue/customer impact, rollback, verification) — a broken
+    checkout and a stale sitemap must not queue as equals. Access philosophy reworded: "full
+    diagnostic sight, constrained hands, explicit escalation" — capability registry (id, class,
+    risk, approval, timeout, rollback, verification probe, state) defined BEFORE more screens;
+    escalation modes: standard probes → staging read-only SQL (limits, audit, expires) →
+    **sanitized diagnostic replica** read-only SQL (PII AND secrets removed, scrub verified by
+    probe, inert — no mail/webhooks/cron, owner-approved per investigation, snapshot age on
+    every result; verifies the DB backup layer only — NOT full disaster recovery; build only
+    after ordinary probes prove insufficient) → guarded registered actions (⛉ per-run). Free-form
+    SQL on the LIVE production DB stays out (masking arbitrary SQL is not reliably solvable).
+    Bookings/availability READS are ordinary gated 1.x capabilities (the constitution restricts
+    writes, not reads); booking/price WRITE capabilities can only ever be created via an
+    explicit owner amendment of VISION.md at a dedicated gate — never via a spec revision.
+    Anti-goal recorded: the dashboard is a thin layer over working CLI/API capabilities, shipped
+    slice-by-slice where it replaces real recurring manual work — it must not become the project.
+- Notifications for high-priority cases and completed on-demand runs (email exists; push later).
 - **Execution API / task queue (instead of SSH, ever):** the agent requests NAMED operations
   (run validation, refresh site profile, smoke test, generate report); the orchestrator executes
   only whitelisted commands locally and returns structured results. The agent never holds shell
   credentials. Complements GitOps auto-deploy for operational (non-deploy) actions.
-- **Site Inspector (Type A — strong 0.4/1.0 candidate):** read-only connector endpoint
-  `tc_site_inspect` returning curated, structured JSON (WP version, theme, active plugins,
-  detected SEO/multilingual/builder stack, CPTs, taxonomies, languages, permalink structure,
-  Woo/Bookings status). Security constraints by construction: WHITELISTED fields only — never a
-  raw wp_options dump (options carry API keys/tokens), never customer PII; no writes, no
-  activation/deactivation. Agent refreshes docs/SITE_PROFILE.md from it; first run validated
-  against the human-written profile. Bonus: staging↔production profile DIFF is exactly the
-  resync verification Phase 4 needs. Principle: the agent may know everything about HOW the
-  business works; it does not automatically see everything the database CONTAINS.
+- **Site Intelligence module (Type A — FIRST capability of the next release; absorbs the
+  earlier "Site Inspector"). Origin: 2026-07-13 owner insight** — the first scheduled report
+  recommended CTR-optimising an EXPIRED Tour de Girona edition because the agent had analytics
+  for URLs but no model of the site: it didn't know `/tour_de_girona-listado/` is the menu-linked
+  hub that already routes demand to future editions. Analytics without structure = confident
+  wrong recommendations. Merged design (owner + external review + our refinements):
+  - **Four connected maps:** technical URL map (status, final URL, canonical, hreflang, language,
+    title/meta/H1, indexability, template, in/out links, menu+sitemap presence) · content
+    structure (hub → edition, category → product, ES ↔ EN pairs) · business-role map (hub /
+    category / product / upcoming event / past event / info / transactional / legal / archive —
+    role determines allowed recommendation types) · conversion-path map (where each page's
+    traffic is supposed to go next).
+  - **Lifecycle states, mechanically derived, BUILT FIRST** (cheapest, kills the whole
+    error class): events draft→upcoming→closed→ongoing→past→cancelled from event dates;
+    products active/temporarily-unavailable/seasonal/discontinued from Woo status. Rule:
+    a past event can never receive a CTR recommendation — only route-to-hub improvements.
+  - **Storage = Memory 2.0 keyed facts:** graph rows (page, role, state, language pair, hub
+    parent, relationships) live in the existing SQLite store as additive schema, every fact
+    carrying environment + snapshot timestamp + source (API vs crawl) provenance. NOT a new
+    parallel system — this completes Site Inspector + SITE_PROFILE + Memory 2.0 as one build.
+  - **Three scan levels — never a full crawl per report:** (1) baseline discovery once
+    (WP REST + menus + Woo + events + Yoast sitemap + GSC URL set + controlled public crawl
+    with deny-list: cart/checkout/order-*/account/add-to-cart params, rate-limited, staging-
+    proven before production); (2) incremental diff before each report — which IS the console's
+    Changes feed ("Event X moved upcoming→past, product Y disappeared, page Z changed
+    canonical, page A published but orphaned"); (3) mandatory recommendation-time LIVE fetch of
+    any page the agent proposes changing, even when the cached map has an answer.
+  - **Human classification pass:** owner approves the load-bearing roles (primary hubs, money
+    pages, current-vs-historical, intended funnels, never-auto-redirect pages) — agent infers,
+    human ratifies, exactly like SITE_PROFILE today.
+  - **Report integration:** weekly report opens with map version + changes since last sync;
+    every recommendation must cite the target page's role, lifecycle state, parent hub, and
+    conversion destination. Recommendation rubric: search opportunity × business relevance ×
+    availability × conversion-path quality × technical confidence × cost — never impressions ×
+    position × CTR alone.
+  - **Site Architecture Advisor** (monthly/on-demand, after the map is stable): navigation,
+    taxonomy, orphans, duplicate intent, expired content, weak funnels, ES/EN inconsistencies,
+    consolidation opportunities — the owner's "organize and present the content" workstream.
+  - Retained from Site Inspector: whitelisted fields only, never raw wp_options, never customer
+    PII; staging↔production structure DIFF doubles as the Phase-4 resync check. Principle
+    unchanged: the agent may know everything about HOW the business works; it does not
+    automatically see everything the database CONTAINS.
 - **qTranslate-aware connector fields (Type A):** the site uses qTranslate XT — both languages
   live inside the same post fields as `[:es]…[:en]…[:]` tagged strings (NOT WPML/Polylang
   separate posts). The connector should expose and accept per-language values (or validated raw

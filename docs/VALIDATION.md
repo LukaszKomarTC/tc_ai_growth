@@ -29,8 +29,9 @@ reaches staging. Review each result in staging wp-admin.
 - [ ] **case_read consulted** before judging new-vs-known (visible in run tool calls).
 - [x] **Links decisions to cases** — 2026-07-06: D#6 (noindex order pages) logged as proposed,
       linked to TRK-20260706-050158.
-- [ ] **Updates confidence with a basis** — visible in the case journal and the dashboard
-      confidence-evolution ladder.
+- [x] **Updates confidence with a basis** — 2026-07-12 re-examination of TRK-20260706-050158:
+      0.85 → 0.95, basis "live ecommerce funnel + 2 purchase events after 8 Jul install";
+      recorded by the run in the case journal (confirm ladder rendering on the dashboard).
 - [x] **References a previous investigation** — 2026-07-06 mid-week report cites the 2026-07-05
       human Googlebot-404 verification from the case journal in its spam assessment.
 
@@ -42,9 +43,13 @@ reaches staging. Review each result in staging wp-admin.
       approved; case journals carry the entries.
 - [x] **decision-reject** settles; the NEXT run does not re-propose — 2026-07-06: D#1 rejected as
       duplicate; absent from the same-day mid-week report.
-- [ ] **Case update after manual action**: human applies a change, notes it via case-note; the
-      next report acknowledges it instead of re-recommending it. (Scheduled: Work Package #1
-      execution will produce this evidence.)
+- [x] **Case update after manual action** — 2026-07-12, stronger than the scripted test: the
+      WP-01 tracking fix was applied WITHOUT a prior case-note, and a blind re-examination run
+      discovered it from GA4 data alone — acknowledged the change, raised confidence with basis,
+      proposed MONITORING (respecting ALWAYS_ASK), cross-referenced the INC spam cases without
+      re-raising, honored D#7 provenance (no Woo/staging data), and routed its one
+      context-starved hypothesis (D#8, "value mapping broken" — actually coupon-test totals)
+      to the human decision queue instead of asserting it.
 - [x] **Dashboard reflects all of the above** — 2026-07-06 screenshots: cases, run costs,
       decision statuses, confidence, validation report page.
 
@@ -69,9 +74,32 @@ reaches staging. Review each result in staging wp-admin.
 ## Sign-off (Release 0.3 → 1.0 gate; see docs/STATUS.md for the full criteria)
 
 - [ ] All boxes green (dates + evidence above).
-- [ ] THREE consecutive clean Mondays: ____-__-__ · ____-__-__ · ____-__-__
+- [ ] THREE consecutive clean Mondays: **2026-07-13 ✅ (operational gate)** · ____-__-__ · ____-__-__
       (clean = no calibration failure, no duplicate case, no false critical, no re-proposed
       decided item).
+
+      **Scheduled Run #1 — Operational gate PASS. Analytical-rule defects discovered during
+      external review. Recommendations remained contained by the approval gate. Corrections
+      required before Run #2.**
+      - Gate evidence: standing-incidents table honored both cases without re-raising; D#8
+        rejection cited, not re-proposed; D#7 enforced in-body (staging Woo zeros explicitly
+        discarded); €2.70/3 conversions reported with the tracking-gap caveat; ads/PageSpeed
+        outages reported as blocked, not hallucinated; www/non-www finding graded OBSERVATION
+        medium-confidence with verification steps (verified same day: 301 enforces non-www
+        post-migration); no autonomous production change of any kind.
+      - Analytical defects (review 2026-07-13, all contained by the approval gate — none
+        executed): CTR-optimisation recommended for an EXPIRED Tour de Girona edition (no
+        commercial-state check); CTR benchmarks presented as quantified losses; "all data
+        collected" while four sources were unavailable; order IDs unmasked; purchase metrics
+        reported as bare "conversions"; findings promoted toward causes (also committed by
+        both reviewers during analysis — hence the rule).
+      - Corrections: the seven RECOMMENDATION & REPORTING rules + FINDINGS-ARE-NOT-CAUSES
+        calibration rule, encoded in prompts and pinned by tests/test_report_rules.py.
+        A manual rerun validates the corrected rules (does NOT count toward this gate);
+        Run #2 is not clean if it repeats any listed defect.
+      - Known cosmetic defect: header banner reads "default · STAGING" while body data is
+        production GSC/GA4 — profile label vs data provenance; covered by the Memory 2.0 /
+        console provenance-label spec.
 - [ ] Zero production writes during the entire release.
 - [ ] Decision logged: "Release 0.3 validation complete — proceed to 1.0 production shadow mode."
 
