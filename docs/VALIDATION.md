@@ -114,6 +114,17 @@ reaches staging. Review each result in staging wp-admin.
         **A second manual validation rerun (`--validation`) must be clean on the mechanical
         rules before scheduled Run #2 counts.** Neither manual run counts toward the gate;
         manual runs on 2026-07-13 are distinguishable in the ledger by kind/timestamp.
+      - **Manual validation rerun #2 (2026-07-13, `--validation`): PASS — corrections
+        validated.** Every model-side rule held: computed dates verbatim; IDs masked
+        (acknowledged in-report); MANUAL VALIDATION labels present; past events gated with
+        routing CTAs; TdG fail-safed pending state confirmation; "not transaction-matched"
+        wording exact; non-www finding kept unproven pending verification; robots.txt advice
+        CORRECT (meta robots / X-Robots-Tag, keep crawlable); cross-run note dedup ("earlier
+        09:10 pass already wrote the notes — not duplicating"). Two residual defects were
+        PIPELINE bugs, fixed same day with tests: lint false-positive on anti-robots.txt
+        advice (negation-aware now) and model preamble shipping "All data collected" chatter
+        (stripped before delivery). No third manual rerun required — both fixes are
+        deterministic and unit-tested. **Scheduled Run #2 counts on its own merits.**
       - Known cosmetic defect: header banner reads "default · STAGING" while body data is
         production GSC/GA4 — profile label vs data provenance; covered by the Memory 2.0 /
         console provenance-label spec.
