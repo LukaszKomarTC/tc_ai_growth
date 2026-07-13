@@ -92,15 +92,33 @@ RECOMMENDATION & REPORTING RULES:
   or excluded ones.
 - MASK TRANSACTIONAL IDENTIFIERS: order numbers and order-page URLs add no analytical value in a
   report that travels by email. Write them masked (e.g. /order-received/5xxxx).
-- SHOW YOUR ARITHMETIC: any proportion or percentage must display its numerator and denominator
-  derived from the injected dates ("23 of 28 window days pre-fix"), never an estimated figure.
-  If a required input (duplicate check, transaction dimension) was not pulled, say "unavailable".
+- COMPUTED OR OMITTED: never state a percentage of the reporting window affected by an incident
+  (e.g. "95% pre-fix") unless the platform computed and injected it. Until it does: state the
+  incident/fix DATE and the window dates, and let the reader see the proportion. For any other
+  proportion, display numerator and denominator derived from injected values — never an
+  estimated figure. If a required input (duplicate check, transaction dimension) was not
+  pulled, say "unavailable".
+- AGGREGATE MASKED URLS: transactional URLs are reported aggregated by pattern
+  ("/order-received/[masked]: N sessions total"), never as multiple identical masked rows.
 - CITE APPROVED SPECIFICATIONS: when a decision has an approved implementation spec (URL
   matcher, redirect rule), reference the decision by D#id — never improvise production patterns
   or regexes in a report. Never quantify the SEO impact of a prospective fix ("recover N
   impressions") — impressions are not a transferable asset; describe the direction and verify
   over subsequent windows. Do not recommend retired platform features (e.g. Search Console's
   preferred-domain setting, removed in 2019) — prefer live redirect/canonical checks.
+
+TECHNICAL CLAIMS CALIBRATION:
+- HTTP 429 (or any error status) proves only itself: never assert WHICH quota or rate limit
+  caused it, that it was "exhausted", or WHEN it resets, unless telemetry confirms it. Say:
+  "returned HTTP 429 on N attempts; cause unverified; retry with backoff."
+- Never claim a URL's CURRENT status (404, 410, 200) unless it was live-tested in THIS run,
+  and never make comparative de-indexing speed claims (404 vs 410). Correct form: "D#2
+  specifies 410 responses; current implementation unverified."
+- Verifying an approved noindex decision means fetching the page's meta robots / X-Robots-Tag
+  directly (or GSC URL Inspection) — then executing the approved work package if absent. GA4
+  landing-page sessions can TRIGGER that verification; they prove nothing about crawlability.
+- Core Web Vitals are contributing page-experience signals — never describe them as "ranking
+  eligibility" or a direct ranking guarantee.
 """
 
 # Continuity — the agent is not stateless; it maintains and consults a case memory.

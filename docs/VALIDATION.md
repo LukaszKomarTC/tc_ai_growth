@@ -136,6 +136,19 @@ reaches staging. Review each result in staging wp-admin.
         **No third manual rerun** — deterministic fixes are unit-tested; semantic rules are
         graded live. **Scheduled Run #2 counts on its own merits and is not clean if it
         repeats any listed miss.**
+      - **Review round 4 disposition (2026-07-13):** contamination percentages are
+        COMPUTED-OR-OMITTED (correction accepted: the fix date is case data, not Site
+        Intelligence — code computation lands with Memory 2.0 keyed `fix_date` facts; until
+        then the model states dates, never percentages). Added TECHNICAL CLAIMS CALIBRATION
+        rules + fixtures: 429 proves only itself (no quota stories); no live-status (404/410)
+        claims without an in-run test and no comparative de-indexing speed claims; noindex
+        verification = direct meta robots / X-Robots-Tag fetch (GA4 sessions only trigger it);
+        CWV = contributing page-experience signals, never "ranking eligibility"; masked
+        transactional URLs aggregated by pattern, no identical duplicate rows. Preamble test
+        now asserts the emailed body BEGINS with the approved header. Profile identity =
+        owner config: `TC_SITE_NAME=Tossa Cycling` in the VPS .env (examples already correct).
+        **A third manual `--validation` rerun after this deploys + the .env edit grades
+        semantic quality only — the mechanical layer is closed.**
       - Known cosmetic defect: header banner reads "default · STAGING" while body data is
         production GSC/GA4 — profile label vs data provenance; covered by the Memory 2.0 /
         console provenance-label spec.
