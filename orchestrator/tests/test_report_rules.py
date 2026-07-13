@@ -165,13 +165,31 @@ def test_dates_are_computed_and_injected_not_model_derived():
     today = dt.datetime.now(ZoneInfo("Europe/Madrid")).date()
     assert run_date == today.isoformat()
     assert window_end == run_date                              # window can never end in the future
-    assert window_start == (today - dt.timedelta(days=28)).isoformat()
-    # And the task the model receives carries them verbatim:
+    # INCLUSIVE 28-day window: start..end spans exactly 28 calendar dates (rerun #2 shipped
+    # 29 dates labelled "28 days" — the off-by-one this test now pins).
+    start = dt.date.fromisoformat(window_start)
+    end = dt.date.fromisoformat(window_end)
+    assert (end - start).days + 1 == 28
+    # And the report header must use the computed date verbatim.
     rt = _FakeRuntime()
-    build_weekly_report(rt, persist=False)
-    # (task not captured by the fake; the header is) — the report header must use the computed date.
     out = build_weekly_report(rt, persist=False)
     assert run_date in out
+
+
+def test_rule9_arithmetic_and_spec_citation_rules_present():
+    c = _coordinator()
+    assert "show your arithmetic" in c
+    assert "numerator and denominator" in c
+    assert "cite approved specifications" in c
+    assert "never improvise production patterns" in c
+    assert "impressions are not a transferable asset" in c
+    assert "preferred-domain setting, removed in 2019" in c
+
+
+def test_rule1b_historical_assets_stay_indexed():
+    c = _coordinator()
+    assert "historical assets stay indexed" in c
+    assert "never recommend noindexing or redirecting a past edition" in c
 
 
 # --- Manual-validation separation (ledger kind, header label) ---

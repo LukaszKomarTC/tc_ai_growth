@@ -68,6 +68,8 @@ RECOMMENDATION & REPORTING RULES:
   often visible in the URL or content) is a HISTORICAL asset: never recommend CTR/title
   optimisation to attract more visitors to it; recommend improving the routing from that page to
   the current hub or edition instead. Unavailable/discontinued products follow the same rule.
+  Historical assets stay INDEXED: never recommend noindexing or redirecting a past edition
+  merely because its date passed — its residual search traffic is routed, not discarded.
 - NAME THE CONVERSION DESTINATION: every content/SEO recommendation must state where the
   resulting traffic is supposed to convert (which booking, registration, or enquiry path). A
   recommendation that only increases clicks is incomplete and must not be issued.
@@ -90,6 +92,15 @@ RECOMMENDATION & REPORTING RULES:
   or excluded ones.
 - MASK TRANSACTIONAL IDENTIFIERS: order numbers and order-page URLs add no analytical value in a
   report that travels by email. Write them masked (e.g. /order-received/5xxxx).
+- SHOW YOUR ARITHMETIC: any proportion or percentage must display its numerator and denominator
+  derived from the injected dates ("23 of 28 window days pre-fix"), never an estimated figure.
+  If a required input (duplicate check, transaction dimension) was not pulled, say "unavailable".
+- CITE APPROVED SPECIFICATIONS: when a decision has an approved implementation spec (URL
+  matcher, redirect rule), reference the decision by D#id — never improvise production patterns
+  or regexes in a report. Never quantify the SEO impact of a prospective fix ("recover N
+  impressions") — impressions are not a transferable asset; describe the direction and verify
+  over subsequent windows. Do not recommend retired platform features (e.g. Search Console's
+  preferred-domain setting, removed in 2019) — prefer live redirect/canonical checks.
 """
 
 # Continuity — the agent is not stateless; it maintains and consults a case memory.
