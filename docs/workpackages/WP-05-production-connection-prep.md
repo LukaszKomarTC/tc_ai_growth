@@ -1,7 +1,7 @@
 # WP-05 — Production connection prep (dormant read-only environment)
 
-**Status:** READY for human execution — all steps 0.3-legal (configuration + human plugin
-install + read-only smoke tests; no platform capability changes, no scheduling changes).
+**Status:** EXECUTION IN PROGRESS — infrastructure complete and verified (see Execution record
+at the bottom); remaining: five seed decisions + completion decision in the production store.
 **Goal:** `tossacycling-production` exists as a **dormant, read-only, isolated** environment so
 Release 1.0 (production shadow mode) activation is a one-line timer change, not a build.
 
@@ -91,3 +91,62 @@ that disagrees with the connector hostname → treat as incidents, stop, investi
 ```bash
 tc-growth decision-add "tossacycling-production connected as dormant read-only environment: separate credentials/HMAC/store, server-side write kill-switch (TC_GROWTH_DISABLE_WRITES), activation tests passed, NOT scheduled until Release 0.3 closes."
 ```
+
+---
+
+## Execution record (2026-07-13)
+
+Executed across two sessions: VPS-side infrastructure by Claude Code on the VPS (per
+`WP05_CLAUDE_CODE_HANDOFF.md`); repository verification, external checks, and this record by
+the repo session (which has no VPS access by design).
+
+### Completed and verified
+
+| Criterion | Evidence |
+|---|---|
+| Connector installed + active on production | v0.1.0, home + REST 200 before/after (VPS session) |
+| `TC_GROWTH_DISABLE_WRITES=true` in wp-config | PHP lint clean; wp-config backups taken (VPS session) |
+| **Write routes NOT registered (server-side)** | **Externally re-verified from an independent network**: POST `create-seo-draft` and `publish-seo-draft` → `404 rest_no_route`; read route `site-map` → `401 tc_growth_forbidden` (registered, auth-guarded); namespace `tc-growth/v1` present |
+| Dedicated identity | `tc-agent-prod` (Contributor) + own application password + own HMAC key; secrets in `orchestrator/secrets/tossacycling-production-*`, tcgrowth:tcgrowth 600; values never printed |
+| Profile | `profiles/tossacycling-production.env` (600): `TC_ENV_KIND=production`, `TC_ALLOW_WRITES=false`, prod hostname, GA4 256544830, GSC sc-domain:tossacycling.com |
+| Separate store | `data/tc_growth-tossacycling-production.db` (distinct path/inode from staging; pre-seed backup exists) |
+| Platform gate | `wp_list` allowed at READ_ONLY; draft/publish tools denied via write cap (VPS session) |
+| Signed write attempts | all five endpoints → 404 rest_no_route (VPS session; matches external check) |
+| PII spot-check | site-map/pages/products/orders-attribution: no customer PII (VPS session) |
+| Scheduler | `tc-weekly-report.timer` untouched; nothing references tossacycling-production |
+| Memory seed (cases) | exactly 2 reviewed cases migrated with origin notes: INC-2026-02-01, TRK-20260706-050158 — no staging run history |
+| **Banner identity** | unit test added (`test_dashboard.py::test_production_banner_identity_is_red_and_read_only`): "Tossa Cycling · PRODUCTION" on red `#b32d2e` + "READ-ONLY PROFILE"; staging renders amber |
+| No secrets in repo/logs | this record contains references only |
+
+### Remaining — run on the VPS as tcgrowth (paste-ready)
+
+```bash
+cd /opt/tc_ai_growth/app/orchestrator
+P="/opt/tc_ai_growth/app/.venv/bin/python -m tc_growth.cli --site tossacycling-production"
+
+# 0) Pre-write verification: expect exactly 2 cases, 0 decisions, 0 runs
+sudo -u tcgrowth $P cases; sudo -u tcgrowth $P decisions; sudo -u tcgrowth $P runs
+
+# 1) Five reviewed policy decisions (texts reviewed 2026-07-13; origin-marked)
+sudo -u tcgrowth $P decision-add "Origin D#2 — Serve 410 for verified tobacco/vape spam URL patterns and submit targeted GSC removals" "Reviewed 2026-07-13. Confirm the affected URL pattern and live serving behavior before implementation. Spam URLs must return 410 and must never redirect to legitimate content. Current state: approved; execution not yet verified. Origin: staging decision D#2; reviewed summary only; no staging run history copied." "INC-2026-02-01"
+sudo -u tcgrowth $P decision-add "Origin D#4 — Preserve qTranslate XT ES/EN language blocks in the same WordPress post" "Reviewed 2026-07-13. Multilingual ES/EN content is stored with [:es]...[:en]...[:] tags in one post. Preserve all tags, update both language blocks in parallel, optimise each language independently, never replace a multilingual field with an untagged single-language value, and do not assume WPML or Polylang separate posts. Origin: staging decision D#4; reviewed summary only; no staging run history copied."
+sudo -u tcgrowth $P decision-add "Origin D#5 — Do not add a manual Tossa Cycling suffix to Yoast SEO titles" "Reviewed 2026-07-13. Yoast appends the configured site title automatically, so drafted SEO titles must not include a duplicate brand suffix such as \"| Tossa Cycling\". SEO meta descriptions take effect through the controlled connector approval flow. Origin: staging decision D#5; reviewed summary only; no staging run history copied."
+sudo -u tcgrowth $P decision-add "Origin D#6 — Apply noindex protection to order-received and order-pay URL patterns" "Reviewed 2026-07-13. Order confirmation and payment URLs must not be indexed. Confirm production implementation for /pedido/order-received/ and /pedido/order-pay/ patterns. Current state: approved; implementation not yet verified. Origin: staging decision D#6; reviewed summary only; no staging run history copied." "TRK-20260706-050158"
+sudo -u tcgrowth $P decision-add "Origin D#7 — Environment-labelled evidence policy for WordPress, GA4 and GSC" "Reviewed and corrected 2026-07-13 for the multi-environment architecture. Every source must be labelled by property and environment. WordPress connector evidence is valid only for the environment selected by the active profile: tossacycling-staging WordPress data is staging evidence and must never support production revenue claims; tossacycling-production WordPress data is production evidence. GA4 and GSC configured here are production sources. Never combine environments without an explicit comparison. Origin: staging decision D#7; wording corrected during migration; no staging run history copied."
+
+# 2) Verify: exactly 5 decisions, 2 cases, 0 runs
+sudo -u tcgrowth $P decisions; sudo -u tcgrowth $P cases; sudo -u tcgrowth $P runs
+
+# 3) Completion decision (SIXTH) — only after step 2 matches expectations
+sudo -u tcgrowth $P decision-add "tossacycling-production connected as dormant read-only environment" "Separate production WordPress user, Application Password, HMAC key and SQLite store are configured. TC_ALLOW_WRITES=false and TC_GROWTH_DISABLE_WRITES=true are independently verified. Authenticated production reads, hostname identity, analytics identities, credential isolation, PII checks, production banner and signed write-route rejection passed. The production profile is dormant and not referenced by any scheduler. Completed 2026-07-13 under WP-05."
+```
+
+If step 0 shows anything other than 2 cases / 0 decisions / 0 runs: STOP and reconcile —
+do not create duplicates.
+
+### Non-blocking follow-ups
+
+- CLI `smoke` without a positional tool raises `IndexError` — usability bug, fix separately
+  (Type B), not mixed into WP-05.
+- `/mnt/data/VPS_Migration_AI_Infrastructure_Master_Log.md` (on the VPS) is stale and
+  predates the migration — repository docs are the source of truth.
