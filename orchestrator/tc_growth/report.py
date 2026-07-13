@@ -75,11 +75,13 @@ def _report_dates() -> tuple[str, str, str]:
 
     The 2026-07-13 manual validation rerun invented "Week of 2026-07-14" (a future date) — date
     arithmetic must never be delegated to the model. The window end is the run date itself.
+    INCLUSIVE range: a 28-day window ending today starts today-27 (rerun #2 shipped a 29-day
+    window labelled "28 days" because of a days=28 off-by-one here).
     """
     from zoneinfo import ZoneInfo
 
     today = dt.datetime.now(ZoneInfo("Europe/Madrid")).date()
-    return today.isoformat(), (today - dt.timedelta(days=28)).isoformat(), today.isoformat()
+    return today.isoformat(), (today - dt.timedelta(days=27)).isoformat(), today.isoformat()
 
 
 WEEKLY_TASK = """\
@@ -87,7 +89,9 @@ Produce this week's growth report for Tossa Cycling.
 
 DATES (computed by the platform — use these verbatim, do NOT derive your own):
 - Run date (Europe/Madrid): {run_date}
-- Reporting window: {window_start} to {window_end} (the last 28 days, ending on the run date)
+- Reporting window: {window_start} to {window_end} (28 days inclusive, ending on the run date)
+- Sources report in their OWN timezones (GSC: Pacific Time; GA4: property timezone) — treat
+  window boundaries as approximate to ±1 day, and never re-derive day counts yourself.
 
 Steps:
 1. Pull Search Console for the last 28 days (group by query, then by page) and identify the top

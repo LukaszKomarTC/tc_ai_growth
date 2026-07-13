@@ -114,17 +114,28 @@ reaches staging. Review each result in staging wp-admin.
         **A second manual validation rerun (`--validation`) must be clean on the mechanical
         rules before scheduled Run #2 counts.** Neither manual run counts toward the gate;
         manual runs on 2026-07-13 are distinguishable in the ledger by kind/timestamp.
-      - **Manual validation rerun #2 (2026-07-13, `--validation`): PASS — corrections
-        validated.** Every model-side rule held: computed dates verbatim; IDs masked
-        (acknowledged in-report); MANUAL VALIDATION labels present; past events gated with
-        routing CTAs; TdG fail-safed pending state confirmation; "not transaction-matched"
-        wording exact; non-www finding kept unproven pending verification; robots.txt advice
-        CORRECT (meta robots / X-Robots-Tag, keep crawlable); cross-run note dedup ("earlier
-        09:10 pass already wrote the notes — not duplicating"). Two residual defects were
-        PIPELINE bugs, fixed same day with tests: lint false-positive on anti-robots.txt
-        advice (negation-aware now) and model preamble shipping "All data collected" chatter
-        (stripped before delivery). No third manual rerun required — both fixes are
-        deterministic and unit-tested. **Scheduled Run #2 counts on its own merits.**
+      - **Manual validation rerun #2 (2026-07-13, `--validation`): IMPROVED, NOT CLEAN**
+        (grade corrected after third external review — the initial same-day "PASS" was
+        premature). **Held:** computed dates used verbatim; IDs masked (acknowledged
+        in-report); MANUAL VALIDATION labels; past events gated with routing CTAs; TdG
+        fail-safed pending state confirmation; "not transaction-matched" wording exact;
+        non-www finding kept unproven; robots.txt advice correct; cross-run note dedup.
+        **Deterministic defects (all platform-side, all fixed same day with tests):**
+        window was 29 days labelled "28" (off-by-one, now days=27 + inclusive-count test);
+        lint false-positive on anti-robots.txt advice (negation-aware); model preamble
+        shipping "All data collected" chatter (stripped). **Semantic misses (prompt rules
+        added; graded against Run #2):** "95% pre-fix" estimated not computed (→ show-your-
+        arithmetic rule); "consider noindex once closed" for TdG contradicted the
+        historical-asset strategy (→ historical-assets-stay-indexed rule); obsolete GSC
+        preferred-domain check + "recover ~1,414 impressions" fabricated-impact language
+        (→ cite-approved-specs rule, no quantified fix impact, no retired features);
+        improvised /Word-Word/NUMERICID production pattern instead of citing D#2's approved
+        WP-02 matcher; GA4 landing pages described as proving crawlability (violates the
+        deployed attribution rule). Masked-ID collision (two orders → same 5xxxx) is a
+        DELIBERATE trade: privacy over distinguishability in emailed reports.
+        **No third manual rerun** — deterministic fixes are unit-tested; semantic rules are
+        graded live. **Scheduled Run #2 counts on its own merits and is not clean if it
+        repeats any listed miss.**
       - Known cosmetic defect: header banner reads "default · STAGING" while body data is
         production GSC/GA4 — profile label vs data provenance; covered by the Memory 2.0 /
         console provenance-label spec.
