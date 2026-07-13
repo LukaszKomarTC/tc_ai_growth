@@ -107,6 +107,21 @@ Actions (prioritised). For tools that are blocked or not yet provisioned, note t
 """
 
 
+def _strip_preamble(text: str) -> str:
+    """Drop model narration that precedes the report's first heading.
+
+    Manual validation rerun #2 shipped "All data collected. Now I have full context..." as
+    chatter before the actual report — the exact phrase rule 6 bans, in text that carries no
+    information. The report proper always starts at its first markdown heading; anything before
+    it is working-notes, not deliverable. No heading at all -> leave the text untouched.
+    """
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if line.lstrip().startswith("#"):
+            return "\n".join(lines[i:]) if i else text
+    return text
+
+
 def _lint_report(text: str) -> str:
     """Deterministic post-generation checks; appends visible warnings, never blocks delivery.
 
@@ -117,10 +132,14 @@ def _lint_report(text: str) -> str:
 
     warnings = []
     # robots.txt cannot noindex, and Disallow HIDES a meta-noindex from Google — a report that
-    # suggests it would make D#6-style fixes worse (caught in the 2026-07-13 rerun).
+    # RECOMMENDS it would make D#6-style fixes worse (caught in the 2026-07-13 rerun). A line
+    # that warns AGAINST robots.txt is correct advice and must not be flagged (false positive
+    # in manual validation rerun #2 — the model said "not robots.txt" and lint scolded it).
+    _negations = ("not robots.txt", "do not use robots.txt", "don't use robots.txt",
+                  "never", "cannot", "can not", "would hide", "hides")
     for line in text.splitlines():
         low = line.lower()
-        if "robots.txt" in low and "noindex" in low:
+        if "robots.txt" in low and "noindex" in low and not any(n in low for n in _negations):
             warnings.append("mentions robots.txt alongside noindex — robots.txt CANNOT noindex; "
                             "use a meta robots tag or X-Robots-Tag and keep the page crawlable")
             break
@@ -167,7 +186,7 @@ def build_weekly_report(
     if result.blocked_calls:
         names = sorted({c["tool"] for c in result.blocked_calls})
         footer = "\n\n---\n_Blocked (need higher phase / human approval): " + ", ".join(names) + "_"
-    return header + _lint_report(_mask_transactional_ids(result.text)) + footer
+    return header + _lint_report(_mask_transactional_ids(_strip_preamble(result.text))) + footer
 
 
 def deliver(report: str, *, validation: bool = False) -> None:

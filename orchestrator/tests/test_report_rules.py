@@ -126,6 +126,33 @@ def test_lint_silent_on_clean_reports():
     assert "Platform lint" not in out
 
 
+def test_rule8_lint_does_not_flag_correct_anti_robots_txt_advice():
+    """Manual validation rerun #2: the model correctly said 'not robots.txt — that would hide
+    the tag' and the lint scolded it anyway. Warnings against robots.txt are compliance."""
+    rt = _FakeRuntime(
+        text="# R\nApply a Yoast noindex meta robots tag (not robots.txt — that would hide "
+             "the tag from crawlers). Do not use robots.txt for noindex."
+    )
+    out = build_weekly_report(rt, persist=False)
+    assert "Platform lint" not in out
+
+
+def test_model_preamble_is_stripped_before_delivery():
+    """Rerun #2 shipped 'All data collected. Now I have full context...' as pre-report chatter —
+    the exact phrase rule 6 bans, carrying no information. Everything before the model's first
+    heading is working-notes, not deliverable."""
+    rt = _FakeRuntime(
+        text="All data collected. Now I have full context. Compiling.\n\n"
+             "# Weekly Report\nAll currently available sources collected."
+    )
+    out = build_weekly_report(rt, persist=False)
+    assert "All data collected. Now I have full context" not in out
+    assert "# Weekly Report" in out
+    # A report with no heading at all is left untouched (fallback).
+    rt2 = _FakeRuntime(text="plain text only, no headings")
+    assert "plain text only" in build_weekly_report(rt2, persist=False)
+
+
 # --- Deterministic dates (2026-07-13 rerun: model invented a future "Week of" date) ---
 
 def test_dates_are_computed_and_injected_not_model_derived():
