@@ -72,3 +72,26 @@ def test_server_serves_overview_and_is_get_only(tmp_path, monkeypatch):
     finally:
         httpd.shutdown()
         httpd.server_close()
+
+
+def test_production_banner_identity_is_red_and_read_only(monkeypatch):
+    """WP-05 acceptance: the production identity must read 'Tossa Cycling · PRODUCTION',
+    render on the red banner (#b32d2e), and carry the READ-ONLY PROFILE marker when the
+    profile write cap is off. Staging stays amber. Unit-level evidence — no email, no run."""
+    from tc_growth.dashboard import _site_banner
+
+    monkeypatch.setenv("TC_SITE", "")
+    monkeypatch.setenv("TC_SITE_NAME", "Tossa Cycling")
+    monkeypatch.setenv("TC_ENV_KIND", "production")
+    monkeypatch.setenv("TC_ALLOW_WRITES", "false")
+    banner = _site_banner()
+    assert "Tossa Cycling · PRODUCTION" in banner
+    assert "#b32d2e" in banner                      # production = red, never amber
+    assert "READ-ONLY PROFILE" in banner
+
+    monkeypatch.setenv("TC_ENV_KIND", "staging")
+    monkeypatch.setenv("TC_ALLOW_WRITES", "true")
+    staging = _site_banner()
+    assert "Tossa Cycling · STAGING" in staging
+    assert "#996b00" in staging                     # staging = amber
+    assert "READ-ONLY PROFILE" not in staging
