@@ -250,15 +250,48 @@ Good ideas that fail the Release 0.3 filters; recorded so they aren't lost and a
   (run validation, refresh site profile, smoke test, generate report); the orchestrator executes
   only whitelisted commands locally and returns structured results. The agent never holds shell
   credentials. Complements GitOps auto-deploy for operational (non-deploy) actions.
-- **Site Inspector (Type A — strong 0.4/1.0 candidate):** read-only connector endpoint
-  `tc_site_inspect` returning curated, structured JSON (WP version, theme, active plugins,
-  detected SEO/multilingual/builder stack, CPTs, taxonomies, languages, permalink structure,
-  Woo/Bookings status). Security constraints by construction: WHITELISTED fields only — never a
-  raw wp_options dump (options carry API keys/tokens), never customer PII; no writes, no
-  activation/deactivation. Agent refreshes docs/SITE_PROFILE.md from it; first run validated
-  against the human-written profile. Bonus: staging↔production profile DIFF is exactly the
-  resync verification Phase 4 needs. Principle: the agent may know everything about HOW the
-  business works; it does not automatically see everything the database CONTAINS.
+- **Site Intelligence module (Type A — FIRST capability of the next release; absorbs the
+  earlier "Site Inspector"). Origin: 2026-07-13 owner insight** — the first scheduled report
+  recommended CTR-optimising an EXPIRED Tour de Girona edition because the agent had analytics
+  for URLs but no model of the site: it didn't know `/tour_de_girona-listado/` is the menu-linked
+  hub that already routes demand to future editions. Analytics without structure = confident
+  wrong recommendations. Merged design (owner + external review + our refinements):
+  - **Four connected maps:** technical URL map (status, final URL, canonical, hreflang, language,
+    title/meta/H1, indexability, template, in/out links, menu+sitemap presence) · content
+    structure (hub → edition, category → product, ES ↔ EN pairs) · business-role map (hub /
+    category / product / upcoming event / past event / info / transactional / legal / archive —
+    role determines allowed recommendation types) · conversion-path map (where each page's
+    traffic is supposed to go next).
+  - **Lifecycle states, mechanically derived, BUILT FIRST** (cheapest, kills the whole
+    error class): events draft→upcoming→closed→ongoing→past→cancelled from event dates;
+    products active/temporarily-unavailable/seasonal/discontinued from Woo status. Rule:
+    a past event can never receive a CTR recommendation — only route-to-hub improvements.
+  - **Storage = Memory 2.0 keyed facts:** graph rows (page, role, state, language pair, hub
+    parent, relationships) live in the existing SQLite store as additive schema, every fact
+    carrying environment + snapshot timestamp + source (API vs crawl) provenance. NOT a new
+    parallel system — this completes Site Inspector + SITE_PROFILE + Memory 2.0 as one build.
+  - **Three scan levels — never a full crawl per report:** (1) baseline discovery once
+    (WP REST + menus + Woo + events + Yoast sitemap + GSC URL set + controlled public crawl
+    with deny-list: cart/checkout/order-*/account/add-to-cart params, rate-limited, staging-
+    proven before production); (2) incremental diff before each report — which IS the console's
+    Changes feed ("Event X moved upcoming→past, product Y disappeared, page Z changed
+    canonical, page A published but orphaned"); (3) mandatory recommendation-time LIVE fetch of
+    any page the agent proposes changing, even when the cached map has an answer.
+  - **Human classification pass:** owner approves the load-bearing roles (primary hubs, money
+    pages, current-vs-historical, intended funnels, never-auto-redirect pages) — agent infers,
+    human ratifies, exactly like SITE_PROFILE today.
+  - **Report integration:** weekly report opens with map version + changes since last sync;
+    every recommendation must cite the target page's role, lifecycle state, parent hub, and
+    conversion destination. Recommendation rubric: search opportunity × business relevance ×
+    availability × conversion-path quality × technical confidence × cost — never impressions ×
+    position × CTR alone.
+  - **Site Architecture Advisor** (monthly/on-demand, after the map is stable): navigation,
+    taxonomy, orphans, duplicate intent, expired content, weak funnels, ES/EN inconsistencies,
+    consolidation opportunities — the owner's "organize and present the content" workstream.
+  - Retained from Site Inspector: whitelisted fields only, never raw wp_options, never customer
+    PII; staging↔production structure DIFF doubles as the Phase-4 resync check. Principle
+    unchanged: the agent may know everything about HOW the business works; it does not
+    automatically see everything the database CONTAINS.
 - **qTranslate-aware connector fields (Type A):** the site uses qTranslate XT — both languages
   live inside the same post fields as `[:es]…[:en]…[:]` tagged strings (NOT WPML/Polylang
   separate posts). The connector should expose and accept per-language values (or validated raw
