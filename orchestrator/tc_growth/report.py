@@ -17,6 +17,24 @@ from .runtime.base import AgentRuntime, RuntimeResult
 from .tools.load import load_all
 
 
+def _mask_transactional_ids(text: str) -> str:
+    """Mask order identifiers in report text (rule 7, enforced mechanically).
+
+    The 2026-07-13 manual validation rerun showed the prompt rule alone is not reliable: the
+    model printed /order-pay/53385 and /order-received/53717 verbatim. Reports travel by email,
+    and an order URL + key pattern is customer-adjacent data with zero analytical value, so the
+    platform guarantees the masking instead of hoping the model remembers. Keeps the first digit
+    (enough to see the era of the order) and masks the rest: /order-received/53717 -> /order-received/5xxxx.
+    """
+    import re
+
+    return re.sub(
+        r"(order-(?:received|pay)/)(\d)\d+",
+        lambda m: f"{m.group(1)}{m.group(2)}xxxx",
+        text,
+    )
+
+
 def _first_line(text: str, limit: int = 200) -> str:
     """Summary line for the run ledger. Models often emit preamble ("All data gathered...")
     before the actual report, so prefer the first markdown HEADING; fall back to first text."""
@@ -92,7 +110,7 @@ def build_weekly_report(runtime: AgentRuntime, *, phase: Phase = Phase.READ_ONLY
     if result.blocked_calls:
         names = sorted({c["tool"] for c in result.blocked_calls})
         footer = "\n\n---\n_Blocked (need higher phase / human approval): " + ", ".join(names) + "_"
-    return header + result.text + footer
+    return header + _mask_transactional_ids(result.text) + footer
 
 
 def deliver(report: str) -> None:

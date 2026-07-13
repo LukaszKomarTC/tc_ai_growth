@@ -98,19 +98,35 @@ def test_rule7_transactional_identifiers_masked():
     assert "/order-received/5xxxx" in c
 
 
+def test_rule7_masking_is_enforced_mechanically():
+    """The 2026-07-13 manual rerun proved the prompt rule alone is unreliable (the model printed
+    order-pay/53385 and order-received/53717 verbatim) — so the pipeline masks, not the model."""
+    rt = _FakeRuntime(
+        text="Landing pages: /en/pedido/order-received/53717 (5 sessions) and "
+             "/en/pedido/order-pay/53385 (6 sessions). Spam URL /Vape-Pod/735473 unaffected."
+    )
+    out = build_weekly_report(rt, persist=False)
+    assert "53717" not in out
+    assert "53385" not in out
+    assert "/order-received/5xxxx" in out
+    assert "/order-pay/5xxxx" in out
+    assert "/Vape-Pod/735473" in out            # non-transactional URLs stay intact
+
+
 # --- Approval gate remains intact around the report path (functional, not textual) ---
 
 class _FakeRuntime:
     """Records the phase the weekly report actually runs with."""
 
-    def __init__(self) -> None:
+    def __init__(self, text: str = "# Weekly Report\nAll currently available sources collected.") -> None:
         self.phase = None
         self.system = None
+        self._text = text
 
     def run(self, *, system, task, tools, phase, model=None, max_iterations=12):
         self.phase = phase
         self.system = system
-        return RuntimeResult(text="# Weekly Report\nAll currently available sources collected.")
+        return RuntimeResult(text=self._text)
 
 
 def test_weekly_report_runs_read_only_and_draft_tools_stay_gated(monkeypatch):
