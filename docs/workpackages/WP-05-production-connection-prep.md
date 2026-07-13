@@ -118,7 +118,23 @@ the repo session (which has no VPS access by design).
 | **Banner identity** | unit test added (`test_dashboard.py::test_production_banner_identity_is_red_and_read_only`): "Tossa Cycling · PRODUCTION" on red `#b32d2e` + "READ-ONLY PROFILE"; staging renders amber |
 | No secrets in repo/logs | this record contains references only |
 
-### Remaining — run on the VPS as tcgrowth (paste-ready)
+### Remaining — supported completion method: the finalizer script
+
+The single supported way to finish WP-05 on the VPS (idempotent, verify-first, backs up the
+store, seeds the five origin-marked decisions + the completion decision, links Origin D#2/D#6
+to their cases, and re-verifies 2 cases / 6 decisions / 0 runs):
+
+```bash
+sudo bash /opt/tc_ai_growth/app/scripts/wp05_finalize.sh
+```
+
+It re-execs as `tcgrowth`, refuses to act on any unexpected store state, refuses if
+`TC_ALLOW_WRITES=false` is missing or any systemd unit references the profile, prints
+`WP-05 COMPLETE` on success and `WP-05 ALREADY COMPLETE` on reruns. Integration-tested in
+`orchestrator/tests/test_wp05_finalize.py` (seed path, idempotent rerun, wrong-state block,
+missing-write-cap block).
+
+<details><summary>Manual command sequence (superseded — kept for reference)</summary>
 
 ```bash
 cd /opt/tc_ai_growth/app/orchestrator
@@ -143,6 +159,8 @@ sudo -u tcgrowth $P decision-add "tossacycling-production connected as dormant r
 
 If step 0 shows anything other than 2 cases / 0 decisions / 0 runs: STOP and reconcile —
 do not create duplicates.
+
+</details>
 
 ### Non-blocking follow-ups
 
