@@ -69,12 +69,12 @@ def cmd_smoke(name: str, raw_args: str) -> int:
     return 0 if payload.get("ok") else 1
 
 
-def cmd_weekly_report(kind: str = "messages") -> int:
+def cmd_weekly_report(kind: str = "messages", *, validation: bool = False) -> int:
     from .report import build_weekly_report, deliver
 
     runtime = _build_runtime(kind)
-    report = build_weekly_report(runtime, phase=Phase.READ_ONLY)
-    deliver(report)
+    report = build_weekly_report(runtime, phase=Phase.READ_ONLY, validation=validation)
+    deliver(report, validation=validation)
     return 0
 
 
@@ -330,7 +330,11 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_smoke(rest[0], rest[1] if len(rest) > 1 else "")
     if cmd == "weekly-report":
         # Optional: `weekly-report managed` to use the hosted Managed Agents runtime.
-        return cmd_weekly_report(rest[0] if rest else "messages")
+        # `--validation`: manual validation run — distinct ledger kind, labelled header,
+        # [MANUAL VALIDATION] email subject; never counts toward the acceptance gate.
+        validation = "--validation" in rest
+        positional = [a for a in rest if not a.startswith("--")]
+        return cmd_weekly_report(positional[0] if positional else "messages", validation=validation)
     if cmd == "investigate":
         return cmd_investigate(rest[0] if rest else "")
     if cmd == "test-email":

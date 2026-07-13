@@ -10,7 +10,7 @@ def test_deliver_routes_to_telegram(monkeypatch):
     called = {}
     monkeypatch.setattr(report, "get_settings", lambda: Settings(report_channel="telegram"))
     monkeypatch.setattr(report, "_deliver_telegram", lambda r: called.setdefault("telegram", r))
-    monkeypatch.setattr(report, "_deliver_email", lambda r: called.setdefault("email", r))
+    monkeypatch.setattr(report, "send_email", lambda s, b, **k: called.setdefault("email", (s, b)))
     report.deliver("hello")
     assert called == {"telegram": "hello"}
 
@@ -19,15 +19,24 @@ def test_deliver_routes_to_email_by_default(monkeypatch):
     called = {}
     monkeypatch.setattr(report, "get_settings", lambda: Settings(report_channel="email"))
     monkeypatch.setattr(report, "_deliver_telegram", lambda r: called.setdefault("telegram", r))
-    monkeypatch.setattr(report, "_deliver_email", lambda r: called.setdefault("email", r))
+    monkeypatch.setattr(report, "send_email", lambda s, b, **k: called.setdefault("email", (s, b)))
     report.deliver("hi")
-    assert called == {"email": "hi"}
+    assert called == {"email": ("Tossa Cycling — Growth Report", "hi")}
+
+
+def test_deliver_validation_prefixes_subject(monkeypatch):
+    # Manual validation runs must be unmistakable in the inbox (review 2026-07-13).
+    called = {}
+    monkeypatch.setattr(report, "get_settings", lambda: Settings(report_channel="email"))
+    monkeypatch.setattr(report, "send_email", lambda s, b, **k: called.setdefault("email", (s, b)))
+    report.deliver("hi", validation=True)
+    assert called["email"][0] == "[MANUAL VALIDATION] Tossa Cycling — Growth Report"
 
 
 def test_email_unconfigured_does_not_raise(monkeypatch, capsys):
     # No SMTP host -> stdout fallback, no exception.
     monkeypatch.setattr(report, "get_settings", lambda: Settings(smtp_host="", report_recipient="x@y.z"))
-    report._deliver_email("the report")
+    report.send_email("subj", "the report", raise_on_error=False)
     assert "the report" in capsys.readouterr().out
 
 
@@ -44,7 +53,7 @@ def test_email_send_failure_does_not_raise(monkeypatch, capsys):
     import smtplib
 
     monkeypatch.setattr(smtplib, "SMTP", boom)
-    report._deliver_email("the report")  # must not raise
+    report.send_email("subj", "the report", raise_on_error=False)  # must not raise
     assert "delivery failed" in capsys.readouterr().out
 
 

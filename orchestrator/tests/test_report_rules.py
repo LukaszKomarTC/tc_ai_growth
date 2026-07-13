@@ -98,19 +98,111 @@ def test_rule7_transactional_identifiers_masked():
     assert "/order-received/5xxxx" in c
 
 
+def test_rule5b_no_implied_transaction_match():
+    c = _coordinator()
+    assert '"not transaction-matched"' in c
+    assert "never imply a match that was not programmatically performed" in c
+
+
+# --- Rule 8 (2026-07-13 rerun review): noindex method + GA4-attribution-is-not-indexing ---
+
+def test_rule8_noindex_never_via_robots_txt():
+    c = _coordinator()
+    assert "never recommend robots.txt as a noindex method" in c
+    assert "meta robots tag or x-robots-tag" in c
+    assert "investigation trigger, not proof the url is indexed" in c
+
+
+def test_rule8_lint_flags_robots_txt_noindex_advice():
+    rt = _FakeRuntime(text="Apply noindex via Yoast SEO or robots.txt to the order pages.")
+    out = build_weekly_report(rt, persist=False)
+    assert "Platform lint" in out
+    assert "robots.txt CANNOT noindex" in out
+
+
+def test_lint_silent_on_clean_reports():
+    rt = _FakeRuntime()
+    out = build_weekly_report(rt, persist=False)
+    assert "Platform lint" not in out
+
+
+# --- Deterministic dates (2026-07-13 rerun: model invented a future "Week of" date) ---
+
+def test_dates_are_computed_and_injected_not_model_derived():
+    import datetime as dt
+    from zoneinfo import ZoneInfo
+
+    from tc_growth.report import _report_dates
+
+    run_date, window_start, window_end = _report_dates()
+    today = dt.datetime.now(ZoneInfo("Europe/Madrid")).date()
+    assert run_date == today.isoformat()
+    assert window_end == run_date                              # window can never end in the future
+    assert window_start == (today - dt.timedelta(days=28)).isoformat()
+    # And the task the model receives carries them verbatim:
+    rt = _FakeRuntime()
+    build_weekly_report(rt, persist=False)
+    # (task not captured by the fake; the header is) — the report header must use the computed date.
+    out = build_weekly_report(rt, persist=False)
+    assert run_date in out
+
+
+# --- Manual-validation separation (ledger kind, header label) ---
+
+def test_validation_run_is_labelled_and_ledgered_separately(monkeypatch):
+    recorded = {}
+    monkeypatch.setattr(
+        "tc_growth.report.persist_run",
+        lambda kind, result, *, started_at, duration_s: recorded.setdefault("kind", kind),
+    )
+    rt = _FakeRuntime()
+    out = build_weekly_report(rt, persist=True, validation=True)
+    assert recorded["kind"] == "weekly-report-validation"      # machine-distinguishable in the ledger
+    assert "MANUAL VALIDATION" in out
+    assert "does not count toward the acceptance gate" in out
+    # A normal run carries neither the label nor the special kind.
+    recorded.clear()
+    out2 = build_weekly_report(rt, persist=True, validation=False)
+    assert recorded["kind"] == "weekly-report"
+    assert "MANUAL VALIDATION" not in out2
+
+
+def test_header_states_data_provenance():
+    rt = _FakeRuntime()
+    out = build_weekly_report(rt, persist=False)
+    assert "**Analytics source:** production GSC/GA4 (read-only)" in out
+    assert "**WP/Woo connector:** staging" in out
+
+
+def test_rule7_masking_is_enforced_mechanically():
+    """The 2026-07-13 manual rerun proved the prompt rule alone is unreliable (the model printed
+    order-pay/53385 and order-received/53717 verbatim) — so the pipeline masks, not the model."""
+    rt = _FakeRuntime(
+        text="Landing pages: /en/pedido/order-received/53717 (5 sessions) and "
+             "/en/pedido/order-pay/53385 (6 sessions). Spam URL /Vape-Pod/735473 unaffected."
+    )
+    out = build_weekly_report(rt, persist=False)
+    assert "53717" not in out
+    assert "53385" not in out
+    assert "/order-received/5xxxx" in out
+    assert "/order-pay/5xxxx" in out
+    assert "/Vape-Pod/735473" in out            # non-transactional URLs stay intact
+
+
 # --- Approval gate remains intact around the report path (functional, not textual) ---
 
 class _FakeRuntime:
     """Records the phase the weekly report actually runs with."""
 
-    def __init__(self) -> None:
+    def __init__(self, text: str = "# Weekly Report\nAll currently available sources collected.") -> None:
         self.phase = None
         self.system = None
+        self._text = text
 
     def run(self, *, system, task, tools, phase, model=None, max_iterations=12):
         self.phase = phase
         self.system = system
-        return RuntimeResult(text="# Weekly Report\nAll currently available sources collected.")
+        return RuntimeResult(text=self._text)
 
 
 def test_weekly_report_runs_read_only_and_draft_tools_stay_gated(monkeypatch):

@@ -77,7 +77,14 @@ RECOMMENDATION & REPORTING RULES:
   recommending changes") — never as quantified claims ("lost 15-25 clicks", "3x traffic").
 - PURCHASE REPORTING MUST BE SPECIFIC: report the GA4 event name (purchase), the event count,
   unique transaction IDs where available, and whether they match WooCommerce orders. Never use
-  the bare word "conversions" for a money claim.
+  the bare word "conversions" for a money claim. If transaction-level matching is not possible
+  (e.g. production WooCommerce is not connected), say "not transaction-matched" explicitly —
+  never imply a match that was not programmatically performed.
+- NOINDEX IMPLEMENTATION: never recommend robots.txt as a noindex method — robots.txt cannot
+  noindex, and Disallow HIDES a meta-noindex from crawlers. Recommend a meta robots tag or
+  X-Robots-Tag header, with the page left crawlable. Related: GA4 channel attribution on a URL
+  (e.g. "Organic Search" sessions landing on an order page) is an INVESTIGATION TRIGGER, not
+  proof the URL is indexed — proof requires GSC URL Inspection or equivalent.
 - STATE YOUR OWN LIMITATIONS PRECISELY: never say "all data collected" when any source failed or
   is unconfigured. Say "all currently available sources collected" and enumerate the unavailable
   or excluded ones.
