@@ -256,6 +256,37 @@ Good ideas that fail the Release 0.3 filters; recorded so they aren't lost and a
   are validated by graded live runs. Related Memory 2.0 field (review round 4): cases carry a
   keyed `fix_date` fact so the platform can COMPUTE incident-contamination percentages of a
   report window and inject them — until then, the model omits percentages and states dates.
+- **External Reviewer Council (post-Site-Intelligence; spec agreed 2026-07-13):** owner-registered
+  external AI reviewers independently challenge the primary agent's PROPOSALS (decisions/drafts —
+  not whole reports; review the diff, not the world) before synthesis. Design, validated by a
+  week of running it manually (Claude primary · ChatGPT adversarial · owner adjudicating):
+  - **Controlled council, not a chatroom:** independent first pass on the same sanitized
+    evidence packet (no anchoring — the reviewer never sees the primary answer first), ONE
+    challenge round, one synthesis. Stop on: factual dispute needing new evidence, repetition,
+    cost cap, or owner-judgment questions.
+  - **Adjudication by experiment, not rebuttal:** the challenge round must yield TESTABLE
+    claims; the orchestrator runs them against the diagnostic probes and synthesis cites test
+    results. (Every real dispute this week was settled by a curl/source-read/measurement —
+    never by argument quality.)
+  - **Preserve disagreement:** output = primary recommendation · reviewer objection · evidence
+    each way · remaining uncertainty · what evidence resolves it · owner decision required.
+    Agreement is NOT truth: provider diversity ≠ error diversity (all three reasoners committed
+    the same findings→causes error this week — correlated failure is the default).
+  - **Registry entries = capability-registry rows:** provider, connection (native adapter
+    first; MCP context exposure later; A2A only on proven need), role (evidence verifier /
+    commercial / risk / contrarian), profile + environment scoping, sanitized data access (no
+    PII, no credentials, no cross-profile memory), can-propose-never-execute, cost cap,
+    timeout, mandatory-for classes. Reviewer output is UNTRUSTED EVIDENCE (prompt-injection
+    surface); only the platform writes memory/cases/decisions.
+  - **Reliability scores from adjudication records:** every reviewer claim gets a disposition
+    (adopted / rejected-with-basis / already-fixed) — the decision-queue pattern; the score is
+    the measured adopt-rate, not a configured number.
+  - **Scope discipline:** start with ONE second-provider reviewer on high-impact items only
+    (production recommendations, low-confidence findings, owner-requested second opinions);
+    implementation is thin — a second runtime adapter + a governed run type over the existing
+    task-channel/evidence plumbing. Build order: Site Intelligence FIRST (more intelligence
+    without shared facts amplifies confusion; a shared world model is what makes added
+    intelligence valuable).
 - Notifications for high-priority cases and completed on-demand runs (email exists; push later).
 - **Execution API / task queue (instead of SSH, ever):** the agent requests NAMED operations
   (run validation, refresh site profile, smoke test, generate report); the orchestrator executes
