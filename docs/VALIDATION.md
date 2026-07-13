@@ -149,6 +149,20 @@ reaches staging. Review each result in staging wp-admin.
         owner config: `TC_SITE_NAME=Tossa Cycling` in the VPS .env (examples already correct).
         **A third manual `--validation` rerun after this deploys + the .env edit grades
         semantic quality only — the mechanical layer is closed.**
+      - **Manual validation rerun #3 (2026-07-13, `--validation`): SEMANTIC PASS — 9 of 10
+        rules held; manual validation cycle CLOSED.** Held: computed-or-omitted ("~5 of 28
+        days", no invented %); 429 calibration verbatim ("cause unverified; retry with
+        backoff"); historical-assets-stay-indexed (TdG explicitly "not noindexing");
+        spec citation ("reference D#2 specification"); www/non-www led with the benign
+        hypothesis + verification-first; "not transaction-matched"; CWV phrasing;
+        D#6 verify-then-execute; audit-before-draft sequencing. Analysis quality up:
+        discovered TdF-2026-Girona query interception on the TdG page and brand-query CTR
+        dilution on the carretera page (self-correcting an earlier overclaim). **One
+        violation:** the comparative 404-vs-410 de-indexing speed claim + "eroding
+        reputation signal" (rule was live) — now ALSO caught deterministically by lint;
+        graded against scheduled Run #2. One platform lint false-positive ("is not the
+        correct method" phrasing) — negation handling generalized, fixtures added.
+        **No further manual reruns. The next report that matters is the scheduled one.**
       - Known cosmetic defect: header banner reads "default · STAGING" while body data is
         production GSC/GA4 — profile label vs data provenance; covered by the Memory 2.0 /
         console provenance-label spec.
