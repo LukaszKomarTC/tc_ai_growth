@@ -137,6 +137,32 @@ def test_rule8_lint_does_not_flag_correct_anti_robots_txt_advice():
     assert "Platform lint" not in out
 
 
+def test_rule8_lint_handles_rerun3_negation_phrasing():
+    """Rerun #3 false positive: 'robots.txt Disallow is not the correct method' is correct
+    advice — any negative cue in the line exempts it."""
+    rt = _FakeRuntime(
+        text="# R\nIf pages are not yet noindexed, add a meta tag. Per D#6: leave pages "
+             "crawlable; robots.txt Disallow is not the correct method."
+    )
+    out = build_weekly_report(rt, persist=False)
+    assert "Platform lint" not in out
+
+
+def test_lint_flags_comparative_404_410_deindexing_claims():
+    """Rerun #3 violated the live prompt rule verbatim — the characteristic phrasing is now
+    caught deterministically."""
+    rt = _FakeRuntime(
+        text="# R\nEvery additional week of 404 (not 410) responses delays de-indexing "
+             "and erodes reputation."
+    )
+    out = build_weekly_report(rt, persist=False)
+    assert "Platform lint" in out
+    assert "404-vs-410" in out
+    # The compliant wording passes silently.
+    rt2 = _FakeRuntime(text="# R\nD#2 specifies 410 responses; current implementation unverified.")
+    assert "Platform lint" not in build_weekly_report(rt2, persist=False)
+
+
 def test_model_preamble_is_stripped_before_delivery():
     """Rerun #2 shipped 'All data collected. Now I have full context...' as pre-report chatter —
     the exact phrase rule 6 bans, carrying no information. Everything before the model's first

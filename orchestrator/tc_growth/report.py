@@ -139,14 +139,22 @@ def _lint_report(text: str) -> str:
     # RECOMMENDS it would make D#6-style fixes worse (caught in the 2026-07-13 rerun). A line
     # that warns AGAINST robots.txt is correct advice and must not be flagged (false positive
     # in manual validation rerun #2 — the model said "not robots.txt" and lint scolded it).
-    _negations = ("not robots.txt", "do not use robots.txt", "don't use robots.txt",
-                  "never", "cannot", "can not", "would hide", "hides")
+    # Any negative cue exempts the line: rerun #3 phrased correct advice as "robots.txt
+    # Disallow is not the correct method", which the previous fixed-phrase list missed. A
+    # warning-level lint prefers a rare false negative over recurring false positives.
+    _negations = (" not ", "never", "cannot", "can not", "avoid", "would hide", "hides",
+                  "instead of robots.txt")
     for line in text.splitlines():
         low = line.lower()
         if "robots.txt" in low and "noindex" in low and not any(n in low for n in _negations):
             warnings.append("mentions robots.txt alongside noindex — robots.txt CANNOT noindex; "
                             "use a meta robots tag or X-Robots-Tag and keep the page crawlable")
             break
+    # Comparative 404-vs-410 de-indexing speed claims keep recurring despite the prompt rule
+    # (rerun #3 violated it verbatim) — catch the characteristic phrasing deterministically.
+    if re.search(r"404[^.\n]{0,80}delays?\s+(?:de-?index|the\s+de-?index)", text, re.IGNORECASE):
+        warnings.append("makes a comparative 404-vs-410 de-indexing speed claim — say "
+                        "'D#2 specifies 410; current implementation unverified' instead")
     if re.search(r"order-(?:received|pay)/\d{2,}", text):
         warnings.append("unmasked transactional order ID survived masking — inspect the pipeline")
     if not warnings:
