@@ -74,16 +74,32 @@ reaches staging. Review each result in staging wp-admin.
 ## Sign-off (Release 0.3 → 1.0 gate; see docs/STATUS.md for the full criteria)
 
 - [ ] All boxes green (dates + evidence above).
-- [ ] THREE consecutive clean Mondays: **2026-07-13 ✅** · ____-__-__ · ____-__-__
+- [ ] THREE consecutive clean Mondays: **2026-07-13 ✅ (operational gate)** · ____-__-__ · ____-__-__
       (clean = no calibration failure, no duplicate case, no false critical, no re-proposed
-      decided item). #1 evidence: standing-incidents table honored both cases without
-      re-raising; D#8 rejection cited, not re-proposed; D#7 enforced in-body (staging Woo
-      zeros explicitly discarded); €2.70/3 conversions reported with the tracking-gap caveat;
-      ads/PageSpeed outages reported as blocked, not hallucinated; new www/non-www finding
-      graded OBSERVATION medium-confidence with verification steps (verified same day:
-      301 now enforces non-www post-migration). Known cosmetic defect: header banner reads
-      "default · STAGING" while body data is production GSC/GA4 — profile label vs data
-      provenance, already covered by the Memory 2.0 / console provenance-label spec.
+      decided item).
+
+      **Scheduled Run #1 — Operational gate PASS. Analytical-rule defects discovered during
+      external review. Recommendations remained contained by the approval gate. Corrections
+      required before Run #2.**
+      - Gate evidence: standing-incidents table honored both cases without re-raising; D#8
+        rejection cited, not re-proposed; D#7 enforced in-body (staging Woo zeros explicitly
+        discarded); €2.70/3 conversions reported with the tracking-gap caveat; ads/PageSpeed
+        outages reported as blocked, not hallucinated; www/non-www finding graded OBSERVATION
+        medium-confidence with verification steps (verified same day: 301 enforces non-www
+        post-migration); no autonomous production change of any kind.
+      - Analytical defects (review 2026-07-13, all contained by the approval gate — none
+        executed): CTR-optimisation recommended for an EXPIRED Tour de Girona edition (no
+        commercial-state check); CTR benchmarks presented as quantified losses; "all data
+        collected" while four sources were unavailable; order IDs unmasked; purchase metrics
+        reported as bare "conversions"; findings promoted toward causes (also committed by
+        both reviewers during analysis — hence the rule).
+      - Corrections: the seven RECOMMENDATION & REPORTING rules + FINDINGS-ARE-NOT-CAUSES
+        calibration rule, encoded in prompts and pinned by tests/test_report_rules.py.
+        A manual rerun validates the corrected rules (does NOT count toward this gate);
+        Run #2 is not clean if it repeats any listed defect.
+      - Known cosmetic defect: header banner reads "default · STAGING" while body data is
+        production GSC/GA4 — profile label vs data provenance; covered by the Memory 2.0 /
+        console provenance-label spec.
 - [ ] Zero production writes during the entire release.
 - [ ] Decision logged: "Release 0.3 validation complete — proceed to 1.0 production shadow mode."
 
