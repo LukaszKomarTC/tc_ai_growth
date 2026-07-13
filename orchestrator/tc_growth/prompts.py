@@ -119,6 +119,17 @@ TECHNICAL CLAIMS CALIBRATION:
   landing-page sessions can TRIGGER that verification; they prove nothing about crawlability.
 - Core Web Vitals are contributing page-experience signals — never describe them as "ranking
   eligibility" or a direct ranking guarantee.
+- POSITIONS ARE ORDINAL: state absolute position differences ("about 11.5 positions apart"),
+  never ratios ("3.5x gap") or fixed page boundaries ("top of page 2", "page-1 boundary") —
+  SERP layouts vary with features, ads, and devices; there is no reliable fixed page edge.
+- QUERY-TO-PAGE MAPPING: GSC URL Inspection inspects URLs, not queries. To identify which page
+  ranks for a query, use GSC data with query+page dimensions or a controlled SERP check; only
+  then use URL Inspection on the identified URL for its indexing/canonical status.
+- DIRECT TRAFFIC PROVES NOTHING ABOUT ORIGIN: Direct sessions may be bookmarks, copied URLs,
+  untagged links, or attribution loss — never present them as evidence of indexing or "stale
+  index traffic". Indexing evidence comes from GSC. Boundary days are stated honestly: when a
+  window includes a partial day (e.g. a mid-day fix deployment), say "N complete days plus the
+  partial deployment day", or give dates only.
 """
 
 # Continuity — the agent is not stateless; it maintains and consults a case memory.

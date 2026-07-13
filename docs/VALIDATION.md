@@ -163,6 +163,15 @@ reaches staging. Review each result in staging wp-admin.
         graded against scheduled Run #2. One platform lint false-positive ("is not the
         correct method" phrasing) — negation handling generalized, fixtures added.
         **No further manual reruns. The next report that matters is the scheduled one.**
+      - **Review round 5 disposition (2026-07-13):** items 1–2 (lint negation, 404-vs-410)
+        were already fixed in PR #43 before the review arrived — the reviewer grades the
+        report artifact, which lags repo HEAD (Reviewer Council evidence packets must carry
+        the commit hash). New rules adopted with fixtures: positions are ordinal (absolute
+        differences, no ratios, no fixed page boundaries); URL Inspection inspects URLs not
+        queries (query→page via GSC query+page dimensions or SERP check); Direct traffic is
+        never indexing evidence; partial boundary days stated honestly. Rerun #3 stands as
+        mechanically successful, semantically 9/10. **Patch batch complete — reporting
+        system frozen until scheduled Run #2. Human time now goes to D#2, D#6, WP-04.**
       - Known cosmetic defect: header banner reads "default · STAGING" while body data is
         production GSC/GA4 — profile label vs data provenance; covered by the Memory 2.0 /
         console provenance-label spec.
