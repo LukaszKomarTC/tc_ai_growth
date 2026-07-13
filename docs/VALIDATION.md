@@ -74,9 +74,16 @@ reaches staging. Review each result in staging wp-admin.
 ## Sign-off (Release 0.3 → 1.0 gate; see docs/STATUS.md for the full criteria)
 
 - [ ] All boxes green (dates + evidence above).
-- [ ] THREE consecutive clean Mondays: ____-__-__ · ____-__-__ · ____-__-__
+- [ ] THREE consecutive clean Mondays: **2026-07-13 ✅** · ____-__-__ · ____-__-__
       (clean = no calibration failure, no duplicate case, no false critical, no re-proposed
-      decided item).
+      decided item). #1 evidence: standing-incidents table honored both cases without
+      re-raising; D#8 rejection cited, not re-proposed; D#7 enforced in-body (staging Woo
+      zeros explicitly discarded); €2.70/3 conversions reported with the tracking-gap caveat;
+      ads/PageSpeed outages reported as blocked, not hallucinated; new www/non-www finding
+      graded OBSERVATION medium-confidence with verification steps (verified same day:
+      301 now enforces non-www post-migration). Known cosmetic defect: header banner reads
+      "default · STAGING" while body data is production GSC/GA4 — profile label vs data
+      provenance, already covered by the Memory 2.0 / console provenance-label spec.
 - [ ] Zero production writes during the entire release.
 - [ ] Decision logged: "Release 0.3 validation complete — proceed to 1.0 production shadow mode."
 
