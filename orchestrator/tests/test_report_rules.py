@@ -217,6 +217,21 @@ def test_rule9_arithmetic_and_spec_citation_rules_present():
     assert "aggregate masked urls" in c
 
 
+def test_rule11_ordinal_positions_query_mapping_direct_traffic():
+    """Review round 5 (2026-07-13): rerun #3 called positions a '3.5x gap' and a 'page-1
+    boundary', proposed URL Inspection for a QUERY, and read Direct sessions as stale-index
+    evidence — all now pinned as rules."""
+    c = _coordinator()
+    assert "positions are ordinal" in c
+    assert 'never ratios ("3.5x gap")' in c
+    assert "no reliable fixed page edge" in c
+    assert "url inspection inspects urls, not queries" in c
+    assert "query+page dimensions or a controlled serp check" in c
+    assert "direct traffic proves nothing about origin" in c
+    assert '"stale index traffic"' in c
+    assert "plus the partial deployment day" in c
+
+
 def test_rule10_technical_claims_calibration():
     c = _coordinator()
     assert "technical claims calibration" in c
