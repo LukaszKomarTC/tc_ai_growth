@@ -288,6 +288,20 @@ Good ideas that fail the Release 0.3 filters; recorded so they aren't lost and a
     without shared facts amplifies confusion; a shared world model is what makes added
     intelligence valuable).
 - Notifications for high-priority cases and completed on-demand runs (email exists; push later).
+- **Property & Environment Control Plane (2026-07-13; NOT a separate build — it is the
+  Operations Console's context selector + capability-registry rows):** the hierarchy is
+  Property → Environment (`tossacycling` → production/staging; later `tourdegirona`), never a
+  flat profile list. Identifiers (`property_id`, `environment_id`, `profile_id =
+  <property>-<environment>`) are established BEFORE production connects (WP-05); profile
+  examples renamed accordingly. Context is request-scoped in any future dashboard
+  (`/properties/<p>/environments/<e>/…`), never a mutable global. Memory: environment-scoped
+  operational facts vs property-level business knowledge = Memory 2.0's `scope` field; first
+  production store is fully separate with a reviewed, provenance-marked seed of policy
+  decisions + active cases (never staging run history). Fail-closed rules: unknown profile,
+  cross-property visibility, credential reuse, profile-less scheduled unit, banner/hostname
+  mismatch. Production connector installs with the server-side write kill-switch
+  (`TC_GROWTH_DISABLE_WRITES` — write routes never registered). Add-property wizard: far
+  future; two properties are safer with hand-authored, human-reviewed profile files.
 - **Execution API / task queue (instead of SSH, ever):** the agent requests NAMED operations
   (run validation, refresh site profile, smoke test, generate report); the orchestrator executes
   only whitelisted commands locally and returns structured results. The agent never holds shell

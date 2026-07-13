@@ -77,6 +77,15 @@ class TC_Growth_REST {
 			),
 		) );
 
+		// Server-side write kill-switch: on a production install, define
+		// TC_GROWTH_DISABLE_WRITES as true in wp-config.php and the write routes below are
+		// never registered. The connector is then read-only on BOTH sides of the wire —
+		// defense in depth beneath the platform's own TC_ALLOW_WRITES profile cap. Routes
+		// that do not exist cannot be called with leaked credentials.
+		if ( self::writes_disabled() ) {
+			return;
+		}
+
 		register_rest_route( TC_GROWTH_NAMESPACE, '/create-seo-draft', array(
 			'methods'             => WP_REST_Server::CREATABLE,
 			'callback'            => array( $this, 'create_seo_draft' ),
@@ -107,6 +116,15 @@ class TC_Growth_REST {
 			'callback'            => array( $this, 'log_agent_action' ),
 			'permission_callback' => $write,
 		) );
+	}
+
+	/**
+	 * Whether write routes are disabled server-side (TC_GROWTH_DISABLE_WRITES in wp-config.php).
+	 *
+	 * @return bool
+	 */
+	public static function writes_disabled() {
+		return defined( 'TC_GROWTH_DISABLE_WRITES' ) && TC_GROWTH_DISABLE_WRITES;
 	}
 
 	/**
