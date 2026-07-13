@@ -70,8 +70,26 @@ def persist_run(kind: str, result: RuntimeResult, *, started_at: str, duration_s
     except Exception as exc:  # noqa: BLE001 - logging must never break the run
         print(f"[run not logged: {exc}]")
 
+def _report_dates() -> tuple[str, str, str]:
+    """(run_date, window_start, window_end) computed in code, Europe/Madrid.
+
+    The 2026-07-13 manual validation rerun invented "Week of 2026-07-14" (a future date) — date
+    arithmetic must never be delegated to the model. The window end is the run date itself.
+    """
+    from zoneinfo import ZoneInfo
+
+    today = dt.datetime.now(ZoneInfo("Europe/Madrid")).date()
+    return today.isoformat(), (today - dt.timedelta(days=28)).isoformat(), today.isoformat()
+
+
 WEEKLY_TASK = """\
-Produce this week's growth report for Tossa Cycling. Steps:
+Produce this week's growth report for Tossa Cycling.
+
+DATES (computed by the platform — use these verbatim, do NOT derive your own):
+- Run date (Europe/Madrid): {run_date}
+- Reporting window: {window_start} to {window_end} (the last 28 days, ending on the run date)
+
+Steps:
 1. Pull Search Console for the last 28 days (group by query, then by page) and identify the top
    SEO opportunities (high-impression/low-CTR and position 5-20).
 2. Pull GA4 for the last 28 days (channel group + landing page) to connect traffic to bookings
@@ -89,10 +107,42 @@ Actions (prioritised). For tools that are blocked or not yet provisioned, note t
 """
 
 
-def build_weekly_report(runtime: AgentRuntime, *, phase: Phase = Phase.READ_ONLY, persist: bool = True) -> str:
+def _lint_report(text: str) -> str:
+    """Deterministic post-generation checks; appends visible warnings, never blocks delivery.
+
+    A full reject-and-regenerate validator is specced post-0.3; during validation-mode the
+    platform flags what it can catch mechanically so a defective report can't pass silently.
+    """
+    import re
+
+    warnings = []
+    # robots.txt cannot noindex, and Disallow HIDES a meta-noindex from Google — a report that
+    # suggests it would make D#6-style fixes worse (caught in the 2026-07-13 rerun).
+    for line in text.splitlines():
+        low = line.lower()
+        if "robots.txt" in low and "noindex" in low:
+            warnings.append("mentions robots.txt alongside noindex — robots.txt CANNOT noindex; "
+                            "use a meta robots tag or X-Robots-Tag and keep the page crawlable")
+            break
+    if re.search(r"order-(?:received|pay)/\d{2,}", text):
+        warnings.append("unmasked transactional order ID survived masking — inspect the pipeline")
+    if not warnings:
+        return text
+    return text + "\n\n---\n⚠️ **Platform lint:** " + " · ".join(warnings)
+
+
+def build_weekly_report(
+    runtime: AgentRuntime,
+    *,
+    phase: Phase = Phase.READ_ONLY,
+    persist: bool = True,
+    validation: bool = False,
+) -> str:
     tools = load_all()
     memory = known_cases_block()
-    task = f"{WEEKLY_TASK}\n\n{memory}" if memory else WEEKLY_TASK
+    run_date, window_start, window_end = _report_dates()
+    task_text = WEEKLY_TASK.format(run_date=run_date, window_start=window_start, window_end=window_end)
+    task = f"{task_text}\n\n{memory}" if memory else task_text
     started_at = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
     t0 = time.perf_counter()
     result = runtime.run(
@@ -103,24 +153,34 @@ def build_weekly_report(runtime: AgentRuntime, *, phase: Phase = Phase.READ_ONLY
         model=model_for("weekly-report"),
     )
     if persist:
-        persist_run("weekly-report", result, started_at=started_at, duration_s=round(time.perf_counter() - t0, 2))
-    header = (f"# Tossa Cycling — Growth Report ({dt.date.today().isoformat()})\n"
-              f"**Site:** {site_label()}\n\n")
+        # Distinct ledger kind: manual validation runs must be machine-distinguishable from the
+        # scheduled runs that count toward the release gate.
+        run_kind = "weekly-report-validation" if validation else "weekly-report"
+        persist_run(run_kind, result, started_at=started_at, duration_s=round(time.perf_counter() - t0, 2))
+    mode_line = ("**Report mode:** MANUAL VALIDATION — does not count toward the acceptance gate\n"
+                 if validation else "")
+    header = (f"# Tossa Cycling — Growth Report ({run_date})\n"
+              f"**Profile:** {site_label()} · **Analytics source:** production GSC/GA4 (read-only) · "
+              f"**WP/Woo connector:** staging\n"
+              f"{mode_line}\n")
     footer = ""
     if result.blocked_calls:
         names = sorted({c["tool"] for c in result.blocked_calls})
         footer = "\n\n---\n_Blocked (need higher phase / human approval): " + ", ".join(names) + "_"
-    return header + _mask_transactional_ids(result.text) + footer
+    return header + _lint_report(_mask_transactional_ids(result.text)) + footer
 
 
-def deliver(report: str) -> None:
+def deliver(report: str, *, validation: bool = False) -> None:
     """Send the report via the configured channel. Both paths are best-effort and never raise
     in a way that would break a scheduled run."""
     s = get_settings()
     if s.report_channel == "telegram":
         _deliver_telegram(report)
     else:
-        _deliver_email(report)
+        subject = "Tossa Cycling — Growth Report"
+        if validation:
+            subject = "[MANUAL VALIDATION] " + subject
+        send_email(subject, report, raise_on_error=False)
 
 
 def send_email(subject: str, body: str, *, raise_on_error: bool = False) -> bool:
@@ -163,9 +223,6 @@ def send_email(subject: str, body: str, *, raise_on_error: bool = False) -> bool
         return False
 
 
-def _deliver_email(report: str) -> None:
-    """Send the weekly report via SMTP; falls back to stdout and never raises (scheduled path)."""
-    send_email("Tossa Cycling — Growth Report", report, raise_on_error=False)
 
 
 def _deliver_telegram(report: str) -> None:

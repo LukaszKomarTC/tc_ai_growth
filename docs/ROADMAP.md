@@ -245,6 +245,15 @@ Good ideas that fail the Release 0.3 filters; recorded so they aren't lost and a
     explicit owner amendment of VISION.md at a dedicated gate — never via a spec revision.
     Anti-goal recorded: the dashboard is a thin layer over working CLI/API capabilities, shipped
     slice-by-slice where it replaces real recurring manual work — it must not become the project.
+- **Post-generation report validator (reject-and-regenerate; the 0.3-legal subset already
+  ships as warning-only lint + mechanical masking + injected dates):** before a report is
+  stored/delivered as valid, deterministic code rejects violations — unmasked transactional
+  IDs, future dates, robots.txt-as-noindex, past-event CTR recommendations (needs Site
+  Intelligence lifecycle states), purchase claims missing required fields, scheduled-report
+  headers on manual runs. On failure: regenerate once with violations attached; still failing →
+  withhold + record a report-quality failure. Lesson from 2026-07-13: prompt tests prove rules
+  EXIST; only deterministic post-processing proves mechanical rules are OBEYED; semantic rules
+  are validated by graded live runs.
 - Notifications for high-priority cases and completed on-demand runs (email exists; push later).
 - **Execution API / task queue (instead of SSH, ever):** the agent requests NAMED operations
   (run validation, refresh site profile, smoke test, generate report); the orchestrator executes

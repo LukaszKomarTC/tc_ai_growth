@@ -97,6 +97,23 @@ reaches staging. Review each result in staging wp-admin.
         calibration rule, encoded in prompts and pinned by tests/test_report_rules.py.
         A manual rerun validates the corrected rules (does NOT count toward this gate);
         Run #2 is not clean if it repeats any listed defect.
+      - **Manual validation rerun #1 (2026-07-13): materially improved, not clean.** Honored:
+        commercial-state fail-safe (eMTB past event → routing; TdG → refused to draft without
+        state confirmation — correct at current tooling; mechanical lifecycle classification is
+        the Site Intelligence module, post-gate), CTR-as-heuristics, completeness wording,
+        conversion destinations, approval gate. Failed: order IDs unmasked (→ fixed
+        MECHANICALLY in the pipeline, 53717→5xxxx, tested); "Week of" future date invented
+        (→ dates now computed in code, Europe/Madrid, injected into the task); noindex advice
+        included robots.txt — technically wrong and harmful (→ prompt rule + deterministic
+        lint warning); purchase match implied without being performed (→ "not
+        transaction-matched" rule); PageSpeed-quota specifics and "primary organic revenue
+        gap" overclaimed (findings≠causes — graded against Run #2). Also added:
+        `weekly-report --validation` (distinct ledger kind `weekly-report-validation`,
+        MANUAL VALIDATION header + email subject prefix, "does not count toward the gate"
+        stamp) and a provenance header (profile · analytics source · connector env).
+        **A second manual validation rerun (`--validation`) must be clean on the mechanical
+        rules before scheduled Run #2 counts.** Neither manual run counts toward the gate;
+        manual runs on 2026-07-13 are distinguishable in the ledger by kind/timestamp.
       - Known cosmetic defect: header banner reads "default · STAGING" while body data is
         production GSC/GA4 — profile label vs data provenance; covered by the Memory 2.0 /
         console provenance-label spec.
