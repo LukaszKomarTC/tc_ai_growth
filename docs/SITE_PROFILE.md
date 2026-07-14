@@ -103,6 +103,17 @@ need owner confirmation._
   bootstrap 20.4–22.7s → **1.8–2.3s** (stable across runs), cart 22.2s → 1.8s, EN homepage
   36.9s → 0.7s. Old shared hosting retained as DNS rollback during the observation window.
 
+## Site-level policy code (lives OUTSIDE the connector, deliberately)
+
+The tc-growth-connector must stay removable without side effects, so site-wide policies do
+NOT ride inside it. Current locations (Snippets plugin on each site):
+- **D#6 noindex** (production): `wp_robots` filter adding noindex to `order-received` /
+  `order-pay` endpoints. Installed 2026-07-14, verified live. If the Snippets plugin is ever
+  removed, this policy must move to the child theme's functions.php first.
+- (staging) the temporary product-revisions snippet is superseded by connector v0.1.1, which
+  declares `add_post_type_support('product','revisions')` itself — remove the snippet after
+  updating the plugin.
+
 ## Owner to-fill (❓ list)
 
 - Exact WP core version · forms plugin · YITH modules · which items are CPTs

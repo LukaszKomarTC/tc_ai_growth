@@ -5,7 +5,7 @@
  * Description:        Thin, secure connector that exposes controlled SEO/content/product data to
  *                     the TC AI Growth agent system and accepts AI-proposed changes as DRAFTS ONLY.
  *                     Never publishes, never touches prices, availability, bookings, or checkout.
- * Version:           0.1.0
+ * Version:           0.1.1
  * Requires at least: 6.4
  * Requires PHP:      8.0
  * Author:            Tossa Cycling
@@ -56,6 +56,18 @@ function tc_growth_register_asset_cpt() {
 	) );
 }
 add_action( 'init', 'tc_growth_register_asset_cpt' );
+
+/**
+ * The connector creates native product REVISIONS (create-product-revision), but WooCommerce's
+ * 'product' post type does not declare revisions support, so wp-admin renders no revisions UI
+ * and reviewers cannot see the connector's own output (found during validation, 2026-07-14).
+ * Declaring support enables the Revisions box + revision.php for products. Read-surface only:
+ * it changes nothing about what is stored or published.
+ */
+function tc_growth_enable_product_revisions() {
+	add_post_type_support( 'product', 'revisions' );
+}
+add_action( 'init', 'tc_growth_enable_product_revisions' );
 
 /**
  * Human-approval meta box for connector SEO drafts.
