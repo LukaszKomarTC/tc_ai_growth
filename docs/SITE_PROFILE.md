@@ -65,7 +65,16 @@ need owner confirmation._
    stale pre-coupon amount: order 53937, 45.00 vs 0.45, refunded).
 5. **Permalinks** → ES pages at root (`/alquiler_bicicletas/`), EN under `/en/`. Slugs use
    underscores historically — do NOT "fix" slugs without an explicit task + redirect plan.
-6. **Shared hosting has a thin PHP-worker budget** → one misbehaving plugin can take every
+6. **The custom event plugin is lifecycle-aware** (verified live 2026-07-13 on the TdG Spring
+   2026 page): past events automatically show a bilingual "Inscription form not available.
+   This event has already taken place." notice in place of the registration form, and every
+   TdG event page carries an "« All TDG events" button routing to the hub
+   (`/tour_de_girona-listado/`), which lists only future editions. Past editions stay indexed
+   (self-canonical, no noindex). Planned plugin enhancement (WP-04): promote the past-event
+   notice + hub CTA above the fold in the event template. Reports should treat "past event
+   page" recommendations accordingly: routing already exists; the improvement lever is
+   prominence, not existence.
+7. **Shared hosting has a thin PHP-worker budget** → one misbehaving plugin can take every
    uncacheable page (cart, checkout) to 20s+. WP Fastest Cache masks this on cached pages, so
    slowness reports must always be checked against UNCACHED endpoints (`/wp-json/` is the probe).
 
