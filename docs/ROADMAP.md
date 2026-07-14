@@ -233,6 +233,18 @@ Good ideas that fail the Release 0.3 filters; recorded so they aren't lost and a
     is why even "internal" writes wait for auth), then launchers + execution API + guarded
     actions. Objective: 95-99% of routine operations never require SSH; the shell stays as
     the emergency escape hatch.
+  - **Slice-priority heuristic (2026-07-14):** every console slice must state which SSH
+    commands, manual checks, or repetitive decisions it eliminates — "none" means it is not a
+    priority. Every recommendation surface carries a "Why am I seeing this?" affordance:
+    evidence -> reasoning summary -> confidence -> alternatives -> last verification.
+  - **Investigations become a first-class object (2026-07-14; build with the console's run
+    views, additive schema per the grow-with-the-writer rule):** today an investigation is a
+    runs-ledger row + emailed text. Grow it into: status (running/completed/failed/cancelled),
+    inputs (profile, prompt, evidence sources, tools used), duration + cost, FULL output, and
+    links (created case? fed decision? supported report?). Investigations are the provenance
+    of every conclusion the agent reaches — cases stay the operational object (never chat
+    threads; conversations are governed runs whose RESULTS attach as artifacts), and the
+    investigation trail is how "why did we believe this?" stays answerable months later.
   - **Rev 2 (2026-07-12, after external review — artifact "TC Operations Console" rev2):**
     two-layer navigation (owner "Business" layer: Today / Sales & Bookings / Approvals is the
     default landing; "Technical" layer beneath); new sections **Backups**, **Integrations
