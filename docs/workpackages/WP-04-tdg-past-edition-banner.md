@@ -1,6 +1,16 @@
 # WP-04 — Tour de Girona: past-edition banner → hub CTA
 
-**Status:** DRAFT for owner review — do NOT publish until approved.
+**Status:** SETTLED 2026-07-13 — manual banner SKIPPED; treatment moves into the event plugin.
+
+> **Owner review outcome:** the custom event plugin already auto-generates a bilingual
+> past-event notice in place of the inscription form ("Formulario de inscripción no disponible.
+> Este evento ya ha tenido lugar." / "Inscription form not available. This event has already
+> taken place.") and every TdG event page carries an "« All TDG events" button at the top
+> routing to the live calendar list (`/tour_de_girona-listado/`). The only remaining gap is
+> above-the-fold prominence + a stronger CTA, and that will be implemented **inside the event
+> plugin's post template** so all past editions get it automatically — not as a one-off manual
+> edit. The proposal below is retained as the content/spec input for that plugin change.
+> Success metric unchanged: hub engagement rising, not spring-page CTR.
 **Origin:** Scheduled run #1 (2026-07-13) surfaced 441 impressions/28d on the *expired* Spring
 2026 edition page; review established the page already has a "Todos eventos TDG" link near the
 top and a past-event message near the registration section. The gap is an **above-the-fold
