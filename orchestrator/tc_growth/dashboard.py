@@ -173,6 +173,7 @@ def _switcher(ctx: ProfileCtx) -> str:
 def _nav(ctx: ProfileCtx) -> str:
     return ("<nav>"
             f"<a href='{_u(ctx, '/today')}'>Today</a>"
+            f"<a href='{_u(ctx, '/activity')}'>Activity</a>"
             f"<a href='{_u(ctx, '/')}'>Overview</a>"
             f"<a href='{_u(ctx, '/validation')}'>Validation</a>"
             "</nav>")
@@ -405,6 +406,51 @@ def render_case(s: Store, key: str, ctx: ProfileCtx | None = None) -> str | None
     return _page(f"{case.ref or f'#{case.id}'} — {case.title}", body, ctx)
 
 
+_JOURNAL_LINE = re.compile(r"^\*\*(?P<ts>[0-9T:+.\-]+) \((?P<author>\w+)\):\*\* (?P<text>.+)$",
+                           re.MULTILINE)
+
+
+def activity_feed(s: Store, limit: int = 60) -> list[dict]:
+    """One chronological stream over what the store already knows: decisions, runs, and case
+    journal entries. No new schema — the feed is a read-only merge, newest first."""
+    events: list[dict] = []
+    cases = s.list_cases(limit=100)
+    for c in cases:
+        ref = c.ref or f"#{c.id}"
+        for m in _JOURNAL_LINE.finditer(c.body or ""):
+            events.append({"ts": m.group("ts"), "who": m.group("author"),
+                           "what": f"[{ref}] {m.group('text')[:180]}",
+                           "link": f"/case/{ref}"})
+    for d in s.list_decisions(limit=100):
+        events.append({"ts": d.made_at, "who": d.made_by or "—",
+                       "what": f"D#{d.id} {d.status}: {d.title}",
+                       "link": f"/decision/{d.id}"})
+        if (d.outcome or "").strip():
+            events.append({"ts": d.made_at, "who": d.made_by or "—",
+                           "what": f"D#{d.id} outcome recorded: {d.outcome[:120]}",
+                           "link": f"/decision/{d.id}"})
+    for r in s.list_runs(limit=50):
+        events.append({"ts": r.started_at, "who": "agent",
+                       "what": f"run {r.kind}: {(r.summary or '')[:140]}", "link": None})
+    events.sort(key=lambda e: e["ts"] or "", reverse=True)
+    return events[:limit]
+
+
+def render_activity(s: Store, ctx: ProfileCtx) -> str:
+    parts = []
+    for ev in activity_feed(s):
+        what = _e(ev["what"])
+        if ev["link"]:
+            what = "<a href='" + _u(ctx, ev["link"]) + "'>" + what + "</a>"
+        parts.append(f"<tr><td class='muted'>{_e(ev['ts'])}</td><td>{_e(ev['who'])}</td>"
+                     f"<td>{what}</td></tr>")
+    rows = "".join(parts) or "<tr><td colspan='3' class='muted'>no activity yet</td></tr>"
+    body = ("<p class='muted'>Everything the platform did or decided, newest first — decisions, "
+            "outcomes, case journal entries, runs.</p>"
+            f"<table><tr><th>when</th><th>who</th><th>what</th></tr>{rows}</table>")
+    return _page("Activity", body, ctx)
+
+
 def render_decision(s: Store, key: str, ctx: ProfileCtx | None = None) -> str | None:
     """Decision detail — the 'why am I seeing this?' page: what was decided, on what basis,
     by whom, with what outcome, linked to its case. Read-only; acting stays in the CLI until
@@ -495,6 +541,8 @@ class _Handler(BaseHTTPRequestHandler):
                 doc = render_overview(s, ctx)
             elif path == "/today":
                 doc = render_today(s, ctx)
+            elif path == "/activity":
+                doc = render_activity(s, ctx)
             elif path == "/validation":
                 doc = render_validation(ctx)
             elif path.startswith("/case/"):

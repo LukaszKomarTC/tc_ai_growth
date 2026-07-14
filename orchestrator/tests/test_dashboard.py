@@ -243,3 +243,46 @@ def test_decision_detail_view(monkeypatch, tmp_path):
     finally:
         httpd.shutdown()
         httpd.server_close()
+
+
+def test_activity_feed_merges_decisions_runs_and_journal(monkeypatch, tmp_path):
+    """Console slice 3: /activity is one chronological stream over existing store data —
+    decisions (+outcomes), runs, and case-journal entries — newest first, no new schema."""
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+    import threading
+
+    from tc_growth import store as store_mod
+    from tc_growth.dashboard import _Handler, activity_feed
+
+    db = tmp_path / "act.db"
+    monkeypatch.setenv("TC_DB_PATH", str(db))
+    s = store_mod.open_store()
+    cid = s.create_case(ref="ACT-1", title="case", category="incident",
+                        status="monitoring", opened_by="human",
+                        body="**2026-07-14T10:00:00+00:00 (human):** Executed the fix.")
+    did = s.record_decision(title="Do the thing", status="approved", made_by="human", case_id=cid)
+    s.update_decision(did, outcome="worked")
+    s.log_run(kind="weekly-report", model="m", prompt_tokens=1, completion_tokens=1,
+              duration_s=1.0, summary="ran fine", started_at="2026-07-14T09:00:00+00:00")
+    feed = activity_feed(s)
+    s.close()
+
+    texts = " | ".join(e["what"] for e in feed)
+    assert "Do the thing" in texts                    # decision event
+    assert "outcome recorded" in texts                # outcome event
+    assert "Executed the fix" in texts                # journal entry, with case ref
+    assert "run weekly-report" in texts               # run event
+    assert feed == sorted(feed, key=lambda e: e["ts"] or "", reverse=True)  # newest first
+
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    port = httpd.server_address[1]
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        body = urllib.request.urlopen(f"http://127.0.0.1:{port}/activity").read().decode()
+        assert "Activity" in body and "Do the thing" in body
+        assert f"/decision/{did}" in body             # events link to their objects
+        assert "/case/ACT-1" in body
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
