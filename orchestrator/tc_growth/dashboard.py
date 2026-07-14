@@ -248,10 +248,12 @@ def render_today(s: Store, ctx: ProfileCtx) -> str:
         "</div>"
     )
     attention_rows = "".join(
-        f"<tr><td>D#{_e(x['id'])}</td><td><span class='badge proposed'>needs decision</span></td>"
+        f"<tr><td><a href='{_u(ctx, '/decision/' + str(x['id']))}'>D#{_e(x['id'])}</a></td>"
+        f"<td><span class='badge proposed'>needs decision</span></td>"
         f"<td>{_e(x['title'])}</td></tr>" for x in d["proposed"]
     ) + "".join(
-        f"<tr><td>D#{_e(x['id'])}</td><td><span class='badge approved'>approved · outcome?</span></td>"
+        f"<tr><td><a href='{_u(ctx, '/decision/' + str(x['id']))}'>D#{_e(x['id'])}</a></td>"
+        f"<td><span class='badge approved'>approved · outcome?</span></td>"
         f"<td>{_e(x['title'])}</td></tr>" for x in d["awaiting"]
     )
     attention = (f"<h2>Needs your attention</h2><table><tr><th>id</th><th>state</th><th>title</th></tr>"
@@ -297,7 +299,7 @@ def render_overview(s: Store, ctx: ProfileCtx | None = None) -> str:
         return _e(d.case_id)
 
     dec_rows = "".join(
-        f"<tr><td>D#{_e(d.id)}</td><td>{_e(d.made_at)}</td>"
+        f"<tr><td><a href='{_u(ctx, '/decision/' + str(d.id))}'>D#{_e(d.id)}</a></td><td>{_e(d.made_at)}</td>"
         f"<td><span class='badge {_e(d.status)}'>{_e(d.status)}</span></td><td>{_e(d.made_by)}</td>"
         f"<td>{_e(d.title)}</td><td>{_case_cell(d)}</td></tr>"
         for d in decisions
@@ -370,7 +372,7 @@ def render_case(s: Store, key: str, ctx: ProfileCtx | None = None) -> str | None
         return None
     decisions = s.list_decisions(case_id=case.id)
     dec_html = "".join(
-        f"<tr><td>D#{_e(d.id)}</td><td>{_e(d.made_at)}</td>"
+        f"<tr><td><a href='{_u(ctx, '/decision/' + str(d.id))}'>D#{_e(d.id)}</a></td><td>{_e(d.made_at)}</td>"
         f"<td><span class='badge {_e(d.status)}'>{_e(d.status)}</span></td>"
         f"<td>{_e(d.made_by)}</td><td>{_e(d.title)}</td></tr>"
         for d in decisions
@@ -401,6 +403,42 @@ def render_case(s: Store, key: str, ctx: ProfileCtx | None = None) -> str | None
         f"<h2>Linked decisions</h2><table><tr><th>id</th><th>made</th><th>status</th><th>by</th><th>title</th></tr>{dec_html}</table>"
     )
     return _page(f"{case.ref or f'#{case.id}'} — {case.title}", body, ctx)
+
+
+def render_decision(s: Store, key: str, ctx: ProfileCtx | None = None) -> str | None:
+    """Decision detail — the 'why am I seeing this?' page: what was decided, on what basis,
+    by whom, with what outcome, linked to its case. Read-only; acting stays in the CLI until
+    the authenticated write layer lands (post-0.3)."""
+    ctx = ctx or profile_ctx("default")
+    if not key.isdigit():
+        return None
+    d = s.get_decision(int(key))
+    if d is None:
+        return None
+    case_html = "<span class='muted'>—</span>"
+    if d.case_id:
+        case = s.get_case(d.case_id)
+        if case is not None:
+            ref = _e(case.ref or f"#{case.id}")
+            case_html = f"<a href='{_u(ctx, '/case/' + ref)}'>{ref}</a> — {_e(case.title)}"
+    outcome_html = (f"<p><b>Outcome:</b> {_e(d.outcome)}</p>" if (d.outcome or "").strip()
+                    else "<p class='muted'>No execution outcome recorded yet.</p>")
+    act_hint = ""
+    if d.status == "proposed":
+        act_hint = (f"<p class='muted'>Act via CLI: <code>decision-approve {d.id} \"basis\"</code> · "
+                    f"<code>decision-reject {d.id} \"basis\"</code> — dashboard buttons arrive with "
+                    "the authenticated write layer (post-0.3).</p>")
+    elif d.status == "approved" and not (d.outcome or "").strip():
+        act_hint = (f"<p class='muted'>Approved, awaiting execution — record with CLI: "
+                    f"<code>decision-outcome {d.id} worked \"evidence\"</code>.</p>")
+    body = (
+        f"<p><span class='badge {_e(d.status)}'>{_e(d.status)}</span> "
+        f"made by {_e(d.made_by)} · {_e(d.made_at)}</p>"
+        f"<h2>Basis / rationale</h2><pre>{_e(d.rationale or '(none recorded)')}</pre>"
+        f"<h2>Linked case</h2><p>{case_html}</p>"
+        f"<h2>Outcome</h2>{outcome_html}{act_hint}"
+    )
+    return _page(f"D#{d.id} — {d.title}", body, ctx)
 
 
 def _open_ctx_store(ctx: ProfileCtx) -> Store | None:
@@ -461,6 +499,8 @@ class _Handler(BaseHTTPRequestHandler):
                 doc = render_validation(ctx)
             elif path.startswith("/case/"):
                 doc = render_case(s, path[len("/case/"):].strip("/"), ctx)
+            elif path.startswith("/decision/"):
+                doc = render_decision(s, path[len("/decision/"):].strip("/"), ctx)
             else:
                 doc = None
             if doc is None:

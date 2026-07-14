@@ -195,3 +195,51 @@ def test_profile_scoped_routes(monkeypatch, tmp_path):
         httpd.shutdown()
         httpd.server_close()
         prof.unlink(missing_ok=True)
+
+
+def test_decision_detail_view(monkeypatch, tmp_path):
+    """Console slice 2: /decision/<id> is the 'why am I seeing this?' page — basis, status,
+    outcome, linked case — and D#ids across Today/overview/case pages link to it."""
+    import urllib.error
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+    import threading
+
+    from tc_growth import store as store_mod
+    from tc_growth.dashboard import _Handler
+
+    db = tmp_path / "dec.db"
+    monkeypatch.setenv("TC_DB_PATH", str(db))
+    s = store_mod.open_store()
+    cid = s.create_case(ref="CASE-9", title="the case", category="incident",
+                        status="monitoring", opened_by="human")
+    did = s.record_decision(title="Serve 410 for spam", status="approved", made_by="human",
+                            rationale="Spam URLs must return 410 and never redirect.",
+                            case_id=cid)
+    s.update_decision(did, outcome="worked")
+    s.close()
+
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    port = httpd.server_address[1]
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        body = urllib.request.urlopen(f"http://127.0.0.1:{port}/decision/{did}").read().decode()
+        assert "Serve 410 for spam" in body
+        assert "Basis / rationale" in body
+        assert "never redirect" in body                 # the why
+        assert "CASE-9" in body and "/case/CASE-9" in body
+        assert "worked" in body                         # outcome shown
+
+        # The overview's decision table links to the detail page.
+        over = urllib.request.urlopen(f"http://127.0.0.1:{port}/").read().decode()
+        assert f"/decision/{did}" in over
+
+        # Unknown decision -> 404.
+        try:
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/decision/99999")
+            raise AssertionError("unknown decision must 404")
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 404
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
