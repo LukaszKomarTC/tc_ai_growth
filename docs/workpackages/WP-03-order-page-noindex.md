@@ -26,3 +26,15 @@
 sudo -u tcgrowth /opt/tc_ai_growth/app/.venv/bin/python -m tc_growth.cli case-note TRK-20260706-050158 "WP-03 executed <date>: noindex live on /pedido/ patterns, verified in page source both languages."
 sudo -u tcgrowth /opt/tc_ai_growth/app/.venv/bin/python -m tc_growth.cli decision-outcome 6 worked "order pages noindexed"
 ```
+
+---
+
+## Execution record (2026-07-14)
+
+**D#6 EXECUTED and VERIFIED.** Implemented via the Snippets plugin (`wp_robots` filter,
+noindex on the `order-received` and `order-pay` WooCommerce endpoints; pages stay crawlable
+so the directive is visible — never robots.txt). Independent external verification (repo
+session, 2026-07-14): `/en/pedido/order-received/` now serves
+`<meta name='robots' content='noindex, follow' />`; homepage control unaffected
+(`index, follow`). Pre-check the same day had confirmed NO robots meta was present before
+the fix. Remaining: watch the /pedido/ URLs drop from GSC coverage over coming weeks.
