@@ -37,3 +37,25 @@
 sudo -u tcgrowth /opt/tc_ai_growth/app/.venv/bin/python -m tc_growth.cli case-note INC-2026-02-01 "WP-02 executed <date>: 410 rule live, verified on N samples, top-20 GSC removals submitted."
 sudo -u tcgrowth /opt/tc_ai_growth/app/.venv/bin/python -m tc_growth.cli decision-outcome 2 worked "410 serving, removals submitted"
 ```
+
+---
+
+## Execution record (2026-07-14)
+
+**D#2 EXECUTED and VERIFIED.** Owner added the approved matcher to production `.htaccess`
+(top of file, above the `# BEGIN WordPress` markers — outside them so permalink flushes cannot
+remove it, and before WordPress's catch-all so it actually evaluates; the first placement
+inside the WP block was unreachable and was corrected):
+
+```apache
+<IfModule mod_rewrite.c>
+RewriteEngine On
+RewriteRule ^[A-Za-z0-9%._-]+/[0-9]{6}/?$ - [G,L]
+</IfModule>
+```
+
+Independent external verification (repo session, 2026-07-14): four sampled spam URLs
+(`Cigarette-Price…/628548`, `Vape-Pod…/735473`, `Gold-Price…/608281`, `Smokeless…/575887`)
+flipped **404 → 410**; five control pages including a two-segment event URL stayed **200**.
+Remaining: GSC URL-removal requests for the top offenders (owner, GSC → Removals) and
+watching spam impressions decay in subsequent weekly reports.
