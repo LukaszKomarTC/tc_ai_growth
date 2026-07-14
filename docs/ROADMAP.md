@@ -233,6 +233,13 @@ Good ideas that fail the Release 0.3 filters; recorded so they aren't lost and a
     is why even "internal" writes wait for auth), then launchers + execution API + guarded
     actions. Objective: 95-99% of routine operations never require SSH; the shell stays as
     the emergency escape hatch.
+  - **SSH-elimination is a tracked KPI (2026-07-14):** each console milestone records
+    SSH-commands removed / manual steps removed / minutes saved per day. Later console items
+    (post-Investigations): **Notification Center** — invert browse-driven into event-driven
+    ("3 things need attention -> click -> resolve"); **search** across cases/investigations/
+    decisions/reports once volume warrants. Investigation analytics ("which models/tools
+    produce accepted recommendations, at what cost") = the reliability-metrics item, served
+    by the Investigations object.
   - **Slice-priority heuristic (2026-07-14):** every console slice must state which SSH
     commands, manual checks, or repetitive decisions it eliminates — "none" means it is not a
     priority. Every recommendation surface carries a "Why am I seeing this?" affordance:
