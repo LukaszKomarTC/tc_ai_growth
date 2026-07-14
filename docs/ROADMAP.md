@@ -224,8 +224,15 @@ Good ideas that fail the Release 0.3 filters; recorded so they aren't lost and a
   - Plus the earlier v2 items: case impact scores (revenue at risk / SEO / urgency), evidence
     deep-links (GA4/GSC/Woo), lifecycle timeline (detected → investigated → proposed → approved →
     executed → verified → closed).
-  - Sequencing inside 1.x: reliability metrics first, then decision-queue buttons (highest
-    daily value), then case controls, then run launchers + task channel.
+  - Sequencing inside 1.x (revised 2026-07-13 after review convergence): the READ-ONLY shell
+    ships during 0.3 as Type-B polish (Today page, case/decision detail, request-scoped
+    profile switcher, GET /api/* JSON added incrementally — slice 1 shipped 2026-07-13); then
+    post-gate: auth foundation (session + CSRF + actor) FIRST, then store-write controls
+    (decision approve/reject, case notes/status — store-only writes, but the store is the
+    AGENT'S MEMORY: an unauthenticated write path would be a memory-poisoning surface, which
+    is why even "internal" writes wait for auth), then launchers + execution API + guarded
+    actions. Objective: 95-99% of routine operations never require SSH; the shell stays as
+    the emergency escape hatch.
   - **Rev 2 (2026-07-12, after external review — artifact "TC Operations Console" rev2):**
     two-layer navigation (owner "Business" layer: Today / Sales & Bookings / Approvals is the
     default landing; "Technical" layer beneath); new sections **Backups**, **Integrations
