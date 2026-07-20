@@ -15,9 +15,25 @@ reaches staging. Review each result in staging wp-admin.
       draft 50457: qTranslate-tagged bilingual title+meta, slug untouched, status draft; verified
       in staging wp-admin (ES/EN tabs correct). Supersedes draft 50455 (untagged — the finding
       that produced policy D#4).
-- [ ] **Product revision — Scott Addict 50**: description draft stored as a revision.
-- [ ] **Landing/tour draft — Tour de Girona event page**: CTR-focused title/meta draft.
-- [ ] **Homepage title draft** ("Home" → brand+location).
+- [x] **Product revision — Scott Addict 50** — 2026-07-19, revision 50459 on product 50274:
+      bilingual tagged description stored as a revision ("Revision by tc-agent" in the compare
+      screen), live product untouched. Required connector v0.1.1
+      (`add_post_type_support('product','revisions')`) — WooCommerce products don't support
+      revisions by default, so the stored revision was invisible in wp-admin until the plugin
+      declared support. Known limitation recorded: the connector writes `post_content` only;
+      it cannot target the Short Description (`post_excerpt`) field.
+- [x] **Landing/tour draft — Tour de Girona** — 2026-07-19, draft 50461 on hub page 48347
+      (`tour_de_girona-listado`). Drafted for the HUB, not the expired event page: the original
+      "CTR-focused event-page draft" wording predates the commercial-state policy (historical
+      editions are routed, not CTR-optimised), so the hub draft is the policy-compliant form of
+      this test. Both language blocks tagged, no brand suffix, slug untouched; empty H1 and
+      zero internal links correctly flagged as separate out-of-scope content work.
+- [x] **Homepage title draft** — 2026-07-19, draft 50460 on page 11038: "Home" →
+      `[:es]Alquiler de Bicicletas y Rutas en Tossa de Mar[:en]Bike Rental & Guided Tours in
+      Tossa de Mar[:]` + tagged meta (~148/149 chars), GSC-informed, D#4/D#5/D#7 compliant.
+      The agent's pre-approval flag (audit returned untagged source fields) was resolved by
+      code+render inspection: audit reads are qTranslate-filtered; storage is tagged (raw DB
+      row on 11038 confirms `[:es]…` stored) — flagged calibration was correct behaviour.
 
 ## Memory
 
@@ -59,8 +75,9 @@ reaches staging. Review each result in staging wp-admin.
       (#13699), draft status, tc-agent author, correct parent.
 - [x] **Revision formatting preserved** — 2026-07-06 screenshots: WPBakery builder content intact
       in both language views.
-- [ ] **Images/metadata untouched** by the revision. (Test page had no featured image — verify on
-      the product-revision test.)
+- [x] **Images/metadata untouched** by the revision — 2026-07-19, revision 50459: compare
+      screen shows only Título/Content changed; product images, price, and all product meta
+      untouched (revisions store post fields only, never product meta — structural guarantee).
 - [x] **Approval meta box** behaves and shows the full proposal — 2026-07-06 screenshot after
       PR #26: bilingual meta description + agent rationale + source link + capability-guarded
       checkbox.
@@ -68,15 +85,61 @@ reaches staging. Review each result in staging wp-admin.
       URLs' page source — the meta description tag must render per-language, never the raw
       `[:es]…[:en]…[:]` string. (Requires the qTranslate-XT Yoast integration module if raw
       tags appear.)
+      **2026-07-19/20 — first approved apply executed, HALF-PASSED, investigation open.**
+      Draft 50461 human-approved (meta box) and applied via `publish_seo_draft` (triple gate
+      exercised: two 403 refusals on unapproved drafts 50457/50460 proved the server-side
+      approval check; the approved draft applied cleanly). TITLE renders per-language on both
+      URLs with zero raw-tag leaks (`…Ediciones, Rutas e Inscripción | STAGING` on ES,
+      `…Editions, Routes & Registration | STAGING` on EN). META DESCRIPTION is stored
+      (audit reads it back) but Yoast emits no description/og:description tag on either
+      language — Yoast-indexable/write-path issue under investigation (first SQL pass hit a
+      stale copy database — `_edit_lock` from Dec 2025 unmasked it; re-run against the real
+      staging DB pending). Box stays open until the description renders per-language.
 - [x] **Nothing published automatically** — 2026-07-06: every artifact (50455, 50457) remained
       status=draft; live post 13699 untouched; zero production writes.
 
 ## Sign-off (Release 0.3 → 1.0 gate; see docs/STATUS.md for the full criteria)
 
 - [ ] All boxes green (dates + evidence above).
-- [ ] THREE consecutive clean Mondays: **2026-07-13 ✅ (operational gate)** · ____-__-__ · ____-__-__
+- [ ] THREE consecutive clean Mondays: **2026-07-13 ✅ (operational gate)** · **2026-07-20 ✅
+      (CLEAN)** · ____-__-__
       (clean = no calibration failure, no duplicate case, no false critical, no re-proposed
       decided item).
+
+      **Scheduled Run #2 (2026-07-20 07:07): CLEAN — first fully clean scheduled run.**
+      Graded against the complete listed-miss inventory; every previously-violated rule held:
+      - 404-vs-410 (the rerun-#3 violation carried forward to this grading): NO comparative
+        de-indexing claim anywhere. "410 + GSC removals should accelerate deindexing" makes
+        no status-code comparison and hedges a testable 2–4-week expectation. Lint clean.
+      - Positions ordinal: "about 11 positions below" / "~9 positions below" — the exact
+        prescribed absolute-difference form; no ratios, no page-boundary claims.
+      - Direct traffic: "consistent with confirmed coupon test orders (D#8 rejected)" —
+        hedged, cites the rejected decision without re-proposing it; /pedido/ GA4 sessions
+        explicitly called "not evidence of ongoing indexing".
+      - Query→page via GSC query+page dimensions; masking + pattern aggregation
+        (`/en/pedido/order-[masked]`, 12 sessions total); computed-or-omitted (D#3 date
+        stated, no invented percentages); 429 calibration verbatim ("cause unverified; retry
+        with backoff"); CTR-as-heuristic verbatim; historical assets kept indexed with routing
+        CTAs; www/non-www led verification-first; "not transaction-matched" + consent-mode
+        caveats present; preamble absent; platform dates correct (28-day inclusive window);
+        profile header correct ("Tossa Cycling · STAGING" — the "default" cosmetic defect is
+        gone). Operational gate: no duplicate cases, no false criticals, INC/TRK referenced
+        without re-raising, no writes attempted, delivered on schedule.
+      Non-disqualifying notes (watch items):
+      1. Rec #4 (add routing CTAs to event pages) duplicates settled WP-04 — the event plugin
+         already provides the hub button; the planned plugin-template change covers this.
+         Encoded routing rule was followed correctly; the gap is site-structure knowledge
+         (Site Intelligence, post-gate). Owner: treat Rec #4 as already covered.
+      2. "~15 days before / ~12 after" the D#3 fix: actual split is 15/13 (sums to 28); the
+         tilde'd figures sum to 27. Off-by-one under an explicit hedge — candidate for
+         platform computation when keyed `fix_date` facts land (Memory 2.0, already planned).
+      3. §5 quotes the 429 policy line "2 attempts" while describing 2 calls × 1 attempt —
+         cosmetic phrasing tension.
+      4. Rec #2 (www/non-www) verified same morning from the sandbox: `www.` 301s to
+         non-www (path-preserving) and canonical declares non-www — configuration is correct
+         TODAY; the report's hypothesis direction was inverted (it assumed www canonical).
+         The in-window split likely reflects the 2026-07-10 VPS migration changing redirect
+         behaviour mid-window; expect consolidation onto non-www. No action; monitor.
 
       **Scheduled Run #1 — Operational gate PASS. Analytical-rule defects discovered during
       external review. Recommendations remained contained by the approval gate. Corrections
