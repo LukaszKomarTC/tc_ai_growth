@@ -75,6 +75,11 @@ class Settings(BaseSettings):
     wp_app_password: str = Field(default="", description="WordPress Application Password")
     wp_signing_key: str = Field(default="", description="Shared HMAC key (matches plugin)")
 
+    # -- WP-07 Source Reader: colon-separated allowlisted roots for read-only source access
+    #    (e.g. /var/www/vhosts/.../wp-content/plugins:/var/www/vhosts/.../wp-content/themes).
+    #    Empty = tool not configured for this profile. Deny rules live in core/source_reader.
+    source_roots: str = Field(default="", description="Colon-separated dirs the source reader may read (per profile)")
+
     # --- Google ---
     gsc_site_url: str = Field(default="", description="Search Console property, e.g. sc-domain:tossacycling.com")
     ga4_property_id: str = Field(default="", description="GA4 numeric property id")

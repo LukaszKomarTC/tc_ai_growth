@@ -33,6 +33,11 @@ TOOL_MIN_PHASE: dict[str, Phase] = {
     # store (case_note class); query reads the stored snapshot.
     "site_snapshot_refresh": Phase.READ_ONLY,
     "site_map_query": Phase.READ_ONLY,
+    # Source Reader (WP-07): filesystem reads inside allowlisted roots, deny-list on
+    # credentials/dumps/uploads — reads are ordinary capability, exposure is the risk
+    # being controlled (path discipline, not phase).
+    "source_list": Phase.READ_ONLY,
+    "source_read": Phase.READ_ONLY,
     "woo_revenue_attribution": Phase.READ_ONLY,
     "budget_recommendations": Phase.READ_ONLY,  # dry-run analysis, changes nothing
     # case memory — writes to the agent's OWN store, never to an external system, so the phase
