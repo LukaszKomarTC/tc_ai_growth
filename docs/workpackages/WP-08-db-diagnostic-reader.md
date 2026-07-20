@@ -31,9 +31,18 @@ model context.**
    regexed); LIMIT injected/capped (200 rows); response size cap; 5 s execution timeout
    (`MAX_EXECUTION_TIME` hint — the DB shares the box with the live shop); profile-bound
    DSN (staging tool cannot reach production DB and vice versa); every query + rowcount
-   audit-logged.
+   audit-logged. **Query-shape controls (reviewer additions, adopted 2026-07-20):** no
+   `SELECT *` (explicit column lists only); `EXPLAIN` cost pre-check for free-form queries
+   — deny unbounded joins over commerce tables and full scans beyond a scanned-row budget;
+   concurrency limit of ONE diagnostic query per profile at a time. The timeout protects
+   checkout after a query starts; shape controls stop it becoming expensive at all.
 5. **Result screen (defense in depth):** returned column names/values screened for
    email/phone/name-shaped data; matches redact the column and flag the query in the log.
+   Views (layer 2) are the PRIMARY privacy mechanism; this screen catches mistakes — it is
+   never the main control.
+6. **Audit hygiene:** logs record actor, profile, normalized query fingerprint, tables
+   touched, row count, duration, and outcome — NEVER full result payloads. The audit trail
+   must not become the PII leak it exists to prevent.
 
 ## Owner one-time setup
 
