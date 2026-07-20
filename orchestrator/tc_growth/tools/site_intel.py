@@ -68,6 +68,16 @@ def _query(args: dict[str, Any]) -> Any:
         text=str(args.get("text", "")),
         limit=min(50, int(args.get("limit", 20))),
     )
+
+    if args.get("classify"):
+        import datetime as dt
+        from zoneinfo import ZoneInfo
+
+        from ..core.lifecycle import classify_lifecycle
+
+        today = dt.datetime.now(ZoneInfo("Europe/Madrid")).date()
+        matches = [{**m, "lifecycle": classify_lifecycle(m, today=today)} for m in matches]
+
     return {"snapshot_id": row.id, "taken_at": row.taken_at, "matches": matches,
             "menus": snapshot.get("menus", []) if args.get("include_menus") else []}
 
@@ -96,6 +106,9 @@ registry.register(Tool(
             "text": {"type": "string", "description": "Case-insensitive substring over slug + raw title"},
             "limit": {"type": "integer", "default": 20, "maximum": 50},
             "include_menus": {"type": "boolean", "default": False},
+            "classify": {"type": "boolean", "default": False,
+                         "description": "Annotate each match with its commercial lifecycle "
+                                        "(state/tier/confidence/basis via the approved evidence ladder)"},
         },
     },
     handler=_query,
