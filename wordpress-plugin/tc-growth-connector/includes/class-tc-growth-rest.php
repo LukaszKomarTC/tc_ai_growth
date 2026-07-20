@@ -545,6 +545,26 @@ class TC_Growth_REST {
 			);
 		}
 
+		// Read the proposed meta description RAW, bypassing all get_post_metadata filters.
+		// qTranslate XT filters every postmeta read in front-end/REST contexts down to one
+		// language slice — a filtered read here would strip the [:es]…[:en]…[:] tags and apply
+		// a single-language value over a multilingual field (observed live: staging post 48347,
+		// 2026-07-20, Spanish-only value stored, English block lost).
+		global $wpdb;
+		$meta_desc = $wpdb->get_var( $wpdb->prepare(
+			"SELECT meta_value FROM {$wpdb->postmeta} WHERE post_id = %d AND meta_key = '_tc_growth_proposed_meta_description' LIMIT 1",
+			$draft_id
+		) );
+
+		// Write the meta description BEFORE updating the post: SEO plugins (Yoast >= 14) rebuild
+		// their indexable cache on the post-save hooks, so the description must already be in
+		// postmeta when wp_update_post() fires — writing it after leaves the rebuilt indexable
+		// with an empty description and the tag missing from the rendered page.
+		if ( $meta_desc ) {
+			update_post_meta( $source_id, '_yoast_wpseo_metadesc', $meta_desc );
+			update_post_meta( $source_id, 'rank_math_description', $meta_desc );
+		}
+
 		// Apply title + slug to the live source post (keeps its published status).
 		$update = wp_update_post( array(
 			'ID'         => $source_id,
@@ -553,13 +573,6 @@ class TC_Growth_REST {
 		), true );
 		if ( is_wp_error( $update ) ) {
 			return $update;
-		}
-
-		// Apply the proposed meta description to whichever SEO plugin is present.
-		$meta_desc = get_post_meta( $draft_id, '_tc_growth_proposed_meta_description', true );
-		if ( $meta_desc ) {
-			update_post_meta( $source_id, '_yoast_wpseo_metadesc', $meta_desc );
-			update_post_meta( $source_id, 'rank_math_description', $meta_desc );
 		}
 
 		// Retire the draft so it can't be applied twice.

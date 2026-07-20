@@ -5,7 +5,7 @@
  * Description:        Thin, secure connector that exposes controlled SEO/content/product data to
  *                     the TC AI Growth agent system and accepts AI-proposed changes as DRAFTS ONLY.
  *                     Never publishes, never touches prices, availability, bookings, or checkout.
- * Version:           0.1.1
+ * Version:           0.1.2
  * Requires at least: 6.4
  * Requires PHP:      8.0
  * Author:            Tossa Cycling
