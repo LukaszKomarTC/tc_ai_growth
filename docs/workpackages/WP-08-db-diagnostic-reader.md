@@ -67,3 +67,6 @@ tc-growth decision-add "Production read layer brought forward: Site Intelligence
 - [ ] Every query visible in the audit log with profile + rowcount; suite green.
 - [ ] Live proof: the 2026-07-20 indexable diagnosis re-run end-to-end by the agent alone
       (stored meta vs indexable row, one turn, zero human relays).
+- [ ] Sugar Calendar coverage verified BEFORE its tables become the lifecycle tier-2 source:
+      the textdomain sighting (2026-07-20) proves the plugin is installed, not that every
+      relevant event lives in its tables — map table relationships and event coverage first.
