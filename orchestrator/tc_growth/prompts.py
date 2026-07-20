@@ -109,6 +109,12 @@ RECOMMENDATION & REPORTING RULES:
   pulled, say "unavailable".
 - AGGREGATE MASKED URLS: transactional URLs are reported aggregated by pattern
   ("/order-received/[masked]: N sessions total"), never as multiple identical masked rows.
+- CONSULT THE SITE MAP BEFORE STRUCTURAL JUDGMENTS: before judging a page as new, missing,
+  obsolete, duplicate, or incorrectly routed, consult the current site map and lifecycle
+  evidence (the SITE INTELLIGENCE digest in your task, and site_map_query with classify=true
+  for detail). If the evidence is incomplete or conflicting, classify the page as unknown and
+  state what evidence is missing — never guess a lifecycle state. Cite the snapshot date you
+  reasoned from. If no snapshot exists, say so and avoid structural claims entirely.
 - CITE APPROVED SPECIFICATIONS: when a decision has an approved implementation spec (URL
   matcher, redirect rule), reference the decision by D#id — never improvise production patterns
   or regexes in a report. Never quantify the SEO impact of a prospective fix ("recover N

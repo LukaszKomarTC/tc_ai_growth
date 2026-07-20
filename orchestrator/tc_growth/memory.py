@@ -75,3 +75,32 @@ def known_cases_block(store=None, *, limit: int = 25) -> str:
             "duplicating it.\n\n" + dlines
         )
     return block
+
+
+def site_intel_block(store=None) -> str:
+    """SITE INTELLIGENCE digest for task injection (WP-06 slice 4), or '' without a snapshot.
+
+    Same resilience contract as known_cases_block: any failure returns '' — a missing or broken
+    snapshot must never break a scheduled report. The digest stays compact by design; the model
+    queries site_map_query for detail instead of receiving the whole snapshot."""
+    try:
+        import json
+
+        from .core.site_intel import format_digest
+        from .store import open_store
+
+        own = store is None
+        if own:
+            store = open_store()
+        try:
+            row = store.latest_snapshot()
+        finally:
+            if own:
+                store.close()
+        if row is None:
+            return ""
+        snapshot = json.loads(row.payload)
+        drift = json.loads(row.drift) if row.drift else None
+        return "## " + format_digest(row.taken_at, snapshot, drift)
+    except Exception:
+        return ""

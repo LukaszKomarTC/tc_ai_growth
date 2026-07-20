@@ -336,3 +336,16 @@ def test_rule_seo_title_and_visible_h1_optimised_independently():
     assert "optimise them independently" in c
     assert "push the primary cta below the fold" in c
     assert "keep the h1 clean" in c
+
+
+# --- Rule (WP-06 slice 4): consult the site map before structural judgments ---
+
+def test_rule_consult_site_map_before_structural_judgments():
+    """Run #2's watch item (recommending routing the event plugin already renders) was site-
+    structure blindness. The rule requires consulting the map + lifecycle evidence, admitting
+    unknown on incomplete/conflicting evidence, and citing the snapshot date."""
+    c = _coordinator()
+    assert "consult the site map before structural judgments" in c
+    assert "incomplete or conflicting" in c and "never guess a lifecycle state" in c
+    assert "cite the snapshot date" in c
+    assert "if no snapshot exists, say so" in c

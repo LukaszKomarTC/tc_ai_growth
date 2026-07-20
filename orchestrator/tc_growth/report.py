@@ -11,7 +11,7 @@ import time
 
 from .config import get_settings, model_for, site_label
 from .core.approval import Phase
-from .memory import known_cases_block
+from .memory import known_cases_block, site_intel_block
 from .prompts import COORDINATOR
 from .runtime.base import AgentRuntime, RuntimeResult
 from .tools.load import load_all
@@ -171,9 +171,11 @@ def build_weekly_report(
 ) -> str:
     tools = load_all()
     memory = known_cases_block()
+    site_map = site_intel_block()
     run_date, window_start, window_end = _report_dates()
     task_text = WEEKLY_TASK.format(run_date=run_date, window_start=window_start, window_end=window_end)
-    task = f"{task_text}\n\n{memory}" if memory else task_text
+    blocks = [b for b in (task_text, memory, site_map) if b]
+    task = "\n\n".join(blocks)
     started_at = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
     t0 = time.perf_counter()
     result = runtime.run(

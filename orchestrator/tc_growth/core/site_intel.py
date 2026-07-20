@@ -115,3 +115,52 @@ def query_snapshot(
         if len(out) >= limit:
             break
     return out
+
+
+def format_digest(taken_at: str, snapshot: dict[str, Any], drift: dict[str, Any] | None,
+                  *, max_items: int = 10) -> str:
+    """Compact SITE INTELLIGENCE block for task injection. Deliberately small: structure
+    summary + drift that needs interpretation + a pointer to the query tool — never the whole
+    snapshot (reports reason from the digest and query for detail on demand)."""
+    lines = [f"SITE INTELLIGENCE (snapshot {taken_at}, {len(snapshot.get('items', {}))} items):"]
+
+    types = snapshot.get("post_types", [])
+    if types:
+        lines.append("- Content: " + ", ".join(
+            f"{t['type']} ({t.get('published', '?')})" for t in types))
+    menus = snapshot.get("menus", [])
+    if menus:
+        lines.append("- Menus (the site's own primary paths): " + "; ".join(
+            f"{m.get('name', '?')} [{len(m.get('items', []))} entries]" for m in menus))
+
+    if drift is None or drift.get("baseline"):
+        lines.append("- Drift: first snapshot — baseline established, nothing to compare yet.")
+    elif not drift.get("has_drift"):
+        lines.append("- Drift: none since the previous snapshot.")
+    else:
+        lines.append("- UNEXPLAINED DRIFT since the previous snapshot (observed, not explained — "
+                     "account for it or flag it for the owner):")
+        for key, label in (("added", "added"), ("removed", "removed")):
+            rows = drift.get(key, [])
+            if rows:
+                shown = ", ".join(f"{i.get('slug', i.get('id'))} ({i.get('type', '?')})"
+                                  for i in rows[:max_items])
+                more = f" +{len(rows) - max_items} more" if len(rows) > max_items else ""
+                lines.append(f"  - {label}: {shown}{more}")
+        changed = drift.get("changed", [])
+        if changed:
+            shown = ", ".join(
+                f"{c.get('slug', c.get('id'))} [{'/'.join(c.get('changes', {}).keys())}]"
+                for c in changed[:max_items])
+            more = f" +{len(changed) - max_items} more" if len(changed) > max_items else ""
+            lines.append(f"  - changed: {shown}{more}")
+        if drift.get("menus_changed"):
+            lines.append("  - navigation menus changed — hubs/primary paths may have moved")
+        if drift.get("type_changes"):
+            lines.append("  - published counts changed: " + ", ".join(
+                f"{k} {v.get('before')}→{v.get('after')}"
+                for k, v in drift["type_changes"].items()))
+
+    lines.append("- Detail on demand: site_map_query (slug/type/text; classify=true adds "
+                 "lifecycle state/tier/confidence/basis).")
+    return "\n".join(lines)

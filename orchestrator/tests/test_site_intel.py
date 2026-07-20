@@ -121,3 +121,39 @@ def test_site_intel_modules_have_no_filesystem_write_capability():
         text = (root / rel).read_text(encoding="utf-8")
         offenders = [tok for tok in banned if tok in text]
         assert not offenders, f"{rel} must not touch the filesystem: {offenders}"
+
+
+# --- Slice 4: digest formatting + task injection ------------------------------------------
+
+def test_digest_baseline_and_no_drift_render_compactly():
+    from tc_growth.core.site_intel import format_digest
+    s = _snap([_item(1, "home", "Home")], menus=[{"name": "Main", "items": [1, 2]}],
+              post_types=[{"type": "page", "published": 1}])
+    d = format_digest("2026-07-20T07:00:00+00:00", s, {"baseline": True})
+    assert "baseline established" in d and "site_map_query" in d and "page (1)" in d
+    d2 = format_digest("t", s, {"baseline": False, "has_drift": False})
+    assert "none since the previous snapshot" in d2
+
+
+def test_digest_caps_drift_lists_and_labels_them_unexplained():
+    from tc_growth.core.site_intel import format_digest
+    s = _snap([_item(1, "home", "Home")])
+    drift = {
+        "baseline": False, "has_drift": True,
+        "added": [_item(100 + n, f"new-{n}", "x") for n in range(12)],
+        "removed": [], "changed": [], "menus_changed": True, "type_changes": {},
+    }
+    d = format_digest("t", s, drift, max_items=10)
+    assert "UNEXPLAINED DRIFT" in d and "+2 more" in d
+    assert "menus changed" in d  # hub moves are called out
+
+
+def test_site_intel_block_empty_without_snapshot_and_populated_with_one(tmp_path):
+    from tc_growth.memory import site_intel_block
+    store = SqliteStore(tmp_path / "s.db")
+    assert site_intel_block(store) == ""  # no snapshot -> no block, never an error
+    store.save_snapshot(payload=json.dumps(_snap([_item(1, "home", "Home")])), item_count=1,
+                        drift=json.dumps({"baseline": True}))
+    block = site_intel_block(store)
+    assert block.startswith("## SITE INTELLIGENCE") and "baseline established" in block
+    store.close()
