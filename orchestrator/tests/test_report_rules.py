@@ -349,3 +349,16 @@ def test_rule_consult_site_map_before_structural_judgments():
     assert "incomplete or conflicting" in c and "never guess a lifecycle state" in c
     assert "cite the snapshot date" in c
     assert "if no snapshot exists, say so" in c
+
+
+# --- Rule (WP-07): source code is not runtime behaviour ---
+
+def test_rule_source_code_is_not_runtime_behaviour():
+    """Source Intelligence explains implementation; it never by itself proves what production
+    does. The rule demands conditional phrasing, citation identity, and pairing with runtime
+    verification — and keeps source evidence distinct from empirical observation."""
+    cal = _norm(prompts.CALIBRATION)
+    assert "source code is not runtime behaviour" in cal
+    assert "the source implements x under conditions y" in cal
+    assert "different evidence classes" in cal
+    assert "runtime verification" in cal

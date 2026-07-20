@@ -25,9 +25,11 @@ from ..core.source_reader import (
 )
 from .base import Tool, ToolError, registry
 
-_READ_BUDGET = 60          # calls per process (a run is one process; smoke calls are one-shot)
+_READ_BUDGET = 60          # calls per process (a run is one process = one profile, env-bound;
+                           # cross-profile sharing of a counter is therefore impossible)
 _BYTE_BUDGET = 5 * 1024 * 1024
 _spent = {"calls": 0, "bytes": 0}
+_budget_lock = __import__("threading").Lock()
 
 
 def _audit(action: str, path: str, *, bytes_returned: int = 0, outcome: str = "ok") -> None:
@@ -49,9 +51,12 @@ def _audit(action: str, path: str, *, bytes_returned: int = 0, outcome: str = "o
 
 
 def _charge(bytes_returned: int) -> None:
-    _spent["calls"] += 1
-    _spent["bytes"] += bytes_returned
-    if _spent["calls"] > _READ_BUDGET or _spent["bytes"] > _BYTE_BUDGET:
+    """Atomic accounting. Denied reads charge a CALL (bounds deny-probe loops) but no bytes."""
+    with _budget_lock:
+        _spent["calls"] += 1
+        _spent["bytes"] += bytes_returned
+        calls, size = _spent["calls"], _spent["bytes"]
+    if calls > _READ_BUDGET or size > _BYTE_BUDGET:
         raise ToolError(
             f"source-read budget exhausted for this run ({_READ_BUDGET} calls / "
             f"{_BYTE_BUDGET // 1024**2} MB) — narrow the investigation or continue next run"
@@ -64,12 +69,14 @@ def _roots():
 
 def _read(args: dict[str, Any]) -> Any:
     path = str(args["path"])
+    roots = _roots()
     try:
-        resolved = resolve_checked(path, _roots())
-        result = read_file(resolved)
+        resolved = resolve_checked(path, roots)
+        result = read_file(resolved, roots)
     except SourceAccessDenied as exc:
-        _audit("read", path, outcome=f"denied: {exc}")
-        raise ToolError(str(exc))
+        _audit("read", path, outcome=f"denied:{exc.code}")
+        _charge(0)  # denials consume a call, never bytes
+        raise ToolError(f"[{exc.code}] {exc}")
     _charge(result["returned_bytes"])
     _audit("read", result["path"], bytes_returned=result["returned_bytes"])
     return result
@@ -82,10 +89,11 @@ def _list(args: dict[str, Any]) -> Any:
         return {"roots": [str(r) for r in roots]}
     try:
         resolved = resolve_checked(path, roots)
-        result = list_dir(resolved)
+        result = list_dir(resolved, roots)
     except SourceAccessDenied as exc:
-        _audit("list", path, outcome=f"denied: {exc}")
-        raise ToolError(str(exc))
+        _audit("list", path, outcome=f"denied:{exc.code}")
+        _charge(0)
+        raise ToolError(f"[{exc.code}] {exc}")
     _charge(0)
     _audit("list", result["path"])
     return result

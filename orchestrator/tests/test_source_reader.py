@@ -77,21 +77,23 @@ def test_deny_list_wins_inside_allowlisted_roots(root):
 
 def test_allowed_read_returns_content_and_caps_size(root):
     ok = resolve_checked(str(root / "some-plugin" / "main.php"), [root])
-    out = read_file(ok)
+    out = read_file(ok, [root])
     assert out["content"].startswith("<?php") and out["truncated"] is False
 
     big = root / "some-plugin" / "big.php"
     big.write_bytes(b"x" * (300 * 1024))
-    out = read_file(resolve_checked(str(big), [root]))
+    out = read_file(resolve_checked(str(big), [root]), [root])
     assert out["truncated"] is True and out["returned_bytes"] == 256 * 1024
     assert out["size_bytes"] == 300 * 1024  # caller sees the real size
 
 
 def test_list_marks_denied_children_unreadable(root):
     (root / "wp-config.php").write_text("<?php")
-    out = list_dir(resolve_checked(str(root), [root]))
+    out = list_dir(resolve_checked(str(root), [root]), [root])
     by_name = {e["name"]: e for e in out["entries"]}
-    assert by_name["wp-config.php"].get("readable") is False   # visible, not readable
+    assert "[redacted:secret_name]" in by_name                 # present but name withheld
+    assert by_name["[redacted:secret_name]"]["readable"] is False
+    assert "wp-config.php" not in by_name                      # the name itself never leaks
     assert "readable" not in by_name["some-plugin"]            # ordinary entries unmarked
 
 
@@ -137,3 +139,68 @@ def test_denied_read_is_audited_as_denied(root, tmp_path, monkeypatch):
         sr._read({"path": str(root / "wp-config.php")})
     rec = json.loads((tmp_path / "data" / "source_audit.jsonl").read_text().strip().splitlines()[-1])
     assert rec["outcome"].startswith("denied")
+
+
+# --- Reviewer hardening round (TOCTOU, non-regular, reason codes, citation identity) ------
+
+def test_read_rejects_fifo_and_directories(root):
+    import os
+    fifo = root / "some-plugin" / "pipe"
+    os.mkfifo(fifo)
+    with pytest.raises(SourceAccessDenied) as exc:
+        read_file(resolve_checked(str(fifo), [root]), [root])
+    assert exc.value.code in ("not_regular", "symlink")
+    with pytest.raises(SourceAccessDenied):
+        read_file(resolve_checked(str(root / "some-plugin"), [root]), [root])
+
+
+def test_expanded_deny_list_git_bak_npmrc(root):
+    git_cfg = root / ".git" / "config"
+    git_cfg.parent.mkdir()
+    git_cfg.write_text("[remote]")
+    for path in (git_cfg, root / "old-code.bak", root / ".npmrc"):
+        if not path.exists():
+            path.write_text("x")
+        with pytest.raises(SourceAccessDenied) as exc:
+            resolve_checked(str(path), [root])
+        assert exc.value.code in ("denied_dir", "denied_type", "secret_name")
+
+
+def test_denials_carry_stable_reason_codes(root, tmp_path):
+    cases = {
+        str(tmp_path / "outside.txt"): "outside_root",
+        str(root / "wp-config.php"): "secret_name",
+        str(root / "dump.sql"): "denied_type",
+        str(root / "uploads" / "x.csv"): "denied_dir",
+        str(root / "my-credentials.txt"): "secret_pattern",
+    }
+    (tmp_path / "outside.txt").write_text("x")
+    for path, code in cases.items():
+        with pytest.raises(SourceAccessDenied) as exc:
+            resolve_checked(path, [root])
+        assert exc.value.code == code, path
+
+
+def test_read_result_carries_citation_identity(root):
+    out = read_file(resolve_checked(str(root / "some-plugin" / "main.php"), [root]), [root])
+    assert out["rel_path"] == "some-plugin/main.php" and out["root"] == str(root.resolve())
+    assert len(out["sha256_returned"]) == 64 and out["mtime"] > 0
+    assert out["lines_returned"][0] == 1 and out["binary"] is False
+
+
+def test_binary_content_rejected_with_metadata_only(root):
+    blob = root / "some-plugin" / "image.php"   # php suffix, binary body — suffix can lie
+    blob.write_bytes(b"\x89PNG\x00\x01binary")
+    out = read_file(resolve_checked(str(blob), [root]), [root])
+    assert out["binary"] is True and out["content"] == ""
+    assert out["sha256_returned"]                # identity still reported
+
+
+def test_listing_redacts_leak_prone_names(root):
+    (root / "customer-export-july.csv").write_text("a,b")
+    (root / "stripe-token-backup.txt").write_text("x")
+    out = list_dir(resolve_checked(str(root), [root]), [root])
+    names = " ".join(e["name"] for e in out["entries"])
+    assert "customer-export-july.csv" not in names
+    assert "stripe-token-backup.txt" not in names
+    assert "[redacted:" in names

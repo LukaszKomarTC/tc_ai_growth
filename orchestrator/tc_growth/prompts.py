@@ -59,6 +59,14 @@ CALIBRATION (separate observations from conclusions):
   the URL as Googlebot, inspect it in Search Console). Only after verification is a CONCLUSION due.
 - Prefer "the data indicates / is consistent with" over "the site is / this proves". Flag your
   confidence (low / medium / high) on any non-trivial claim.
+- SOURCE CODE IS NOT RUNTIME BEHAVIOUR: reading a plugin's or theme's source proves what the
+  code IMPLEMENTS under the conditions it checks — not that production currently behaves that
+  way. A filter can be disabled, overridden by another plugin, version-different on the live
+  site, or simply never invoked on the relevant path. Phrase source findings as "the source
+  implements X under conditions Y (file, lines, content hash)" and pair them with a runtime
+  verification (a live page fetch, a stored DB value) before claiming production behaviour.
+  Source evidence and empirical observation are DIFFERENT evidence classes — cite which one
+  each claim rests on.
 - FINDINGS ARE NOT CAUSES: a verified technical finding (missing hreflang, a canonical
   discrepancy, a redirect, low CTR, unusual attribution) may TRIGGER an investigation; it must
   never be described as THE CAUSE of ranking or revenue performance without evidence linking the
