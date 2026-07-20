@@ -247,3 +247,57 @@ def test_undated_page_is_likely_evergreen_low_confidence():
     v = classify_lifecycle({"id": 1, "slug": "servicios", "type": "page", "title": "", "url": ""},
                            today=dt.date(2026, 7, 20))
     assert v["state"] == "likely_evergreen" and v["confidence"] == "low" and v["tier"] == "inference"
+
+
+# --- Reviewer round 2: integration wiring + provenance uniqueness -------------------------
+
+def test_rule_and_expectation_identities_are_unique():
+    """Two rules matching the same target or two expectations checking the same fact would
+    create silent precedence surprises — identities must be unique."""
+    from tc_growth.core.lifecycle import APPROVED_RULES
+    from tc_growth.core.site_intel import EXPECTED_STRUCTURE
+    rule_ids = [(r.get("slug"), r.get("type")) for r in APPROVED_RULES]
+    assert len(rule_ids) == len(set(rule_ids))
+    exp_ids = [(e["kind"], e["value"]) for e in EXPECTED_STRUCTURE]
+    assert len(exp_ids) == len(set(exp_ids))
+    for e in EXPECTED_STRUCTURE:  # expectations carry full provenance like rules do
+        assert e.get("source") and e.get("approved") and e.get("scope") and e.get("why")
+
+
+def test_report_task_wiring_carries_digest_with_snapshot_identity(tmp_path, monkeypatch):
+    """Integration fixture (reviewer): prove the PROMPT ASSEMBLY is wired — the task handed to
+    the runtime contains the digest, the snapshot identity for traceability, and the violation
+    with its basis. (Whether the MODEL then obeys is the live acceptance run's job.)"""
+    import tc_growth.store as store_pkg
+    from tc_growth.memory import site_intel_block
+
+    store = SqliteStore(tmp_path / "w.db")
+    snap = _snap([_item(1, "home", "Home")])  # hub missing -> violations exist
+    from tc_growth.core.site_intel import check_expectations
+    drift = {"baseline": True, "expectation_violations": check_expectations(snap)}
+    store.save_snapshot(payload=json.dumps(snap), item_count=1, drift=json.dumps(drift))
+
+    block = site_intel_block(store)
+    store.close()
+    assert "id 1 ·" in block                       # snapshot identity -> traceable claims
+    assert "APPROVED-EXPECTATION VIOLATIONS" in block
+    assert "tour_de_girona-listado" in block       # the violated expectation, with...
+    assert "source:" in block                      # ...its approved provenance cited
+    assert "site_map_query" in block               # pointer to detail
+
+
+def test_conflicting_lifecycle_survives_through_the_tool_path(tmp_path, monkeypatch):
+    """End-to-end through store + JSON + tool: a year-only slug stays 'unknown' when queried
+    with classify=true — uncertainty is preserved by the plumbing, not just the classifier."""
+    import tc_growth.tools.site_intel as si_tools
+
+    store = SqliteStore(tmp_path / "c.db")
+    snap = _snap([_item(7, "tour-de-girona-2026-road-s1", "TdG 2026", type_="events")])
+    store.save_snapshot(payload=json.dumps(snap), item_count=1, drift=None)
+    monkeypatch.setattr(si_tools, "open_store", lambda: store)
+    try:
+        out = si_tools._query({"slug": "tour-de-girona-2026-road-s1", "classify": True})
+    finally:
+        store.close()
+    life = out["matches"][0]["lifecycle"]
+    assert life["state"] == "unknown" and life["confidence"] == "low" and life["basis"]

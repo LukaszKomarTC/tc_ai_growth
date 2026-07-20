@@ -117,6 +117,6 @@ def site_intel_block(store=None) -> str:
             return _SITE_INTEL_UNAVAILABLE
         snapshot = json.loads(row.payload)
         drift = json.loads(row.drift) if row.drift else None
-        return "## " + format_digest(row.taken_at, snapshot, drift)
+        return "## " + format_digest(f"id {row.id} · {row.taken_at}", snapshot, drift)
     except Exception:
         return _SITE_INTEL_FAILED
