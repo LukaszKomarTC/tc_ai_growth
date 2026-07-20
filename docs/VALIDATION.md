@@ -110,6 +110,9 @@ reaches staging. Review each result in staging wp-admin.
 ## Sign-off (Release 0.3 → 1.0 gate; see docs/STATUS.md for the full criteria)
 
 - [ ] All boxes green (dates + evidence above).
+- [ ] At gate close: tag the exact deployed commit that produced the three clean Mondays
+      (`release-0.3-validated`) BEFORE merging any post-gate capability — the gate validated
+      that commit, not whatever main becomes afterwards.
 - [ ] THREE consecutive clean Mondays: **2026-07-13 ✅ (operational gate)** · **2026-07-20 ✅
       (CLEAN)** · ____-__-__
       (clean = no calibration failure, no duplicate case, no false critical, no re-proposed
