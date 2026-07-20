@@ -174,6 +174,12 @@ speculative schema.
   (opt-in); per-run cost logging makes tier choices verifiable.
 - ~~**Slice 8 — private web dashboard (v1).**~~ DONE (PR #14) as read-only loopback + SSH tunnel.
   v2 (later): approvals/actions — only after the read side is trusted in daily use.
+- **FINOPS-001 — cache-aware cost estimation (High; next engineering batch after prompt-caching
+  validation).** Full spec in `docs/PROMPT_CACHING.md`: `estimate_cost` must price four token
+  classes (input / output / cache creation / cache read), backed by a versioned **Pricing
+  Registry** (provider → model → per-class rates, version + effective date; each run references
+  the pricing version its `cost_usd` was computed under). Until then, `cost_usd` on cached runs
+  is a known underestimate and cost reports must say so.
 - **Slice 9 — new specialists.** Pricing, advanced SEO, reservations, workshop, inventory, forecasting —
   each inheriting memory, strategy, and prior decisions rather than starting cold. Gated on the
   long-lead credentials below.

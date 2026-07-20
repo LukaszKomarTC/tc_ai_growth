@@ -84,5 +84,30 @@ Consequences:
   savings appear on reuse. Compare pairs or several repeats, never run 1 vs the
   historical average.
 
-Fix (extend `estimate_cost` with cache-aware rates) is a small post-gate follow-up,
-candidate for the AI FinOps dashboard work.
+Fix is tracked as **FINOPS-001** below — first engineering batch after caching validation.
+
+## FINOPS-001 — Cache-aware, provider-aware cost estimation (High)
+
+**Trigger:** the limitation above — with caching enabled, `estimate_cost` systematically
+under-reports spend, making it the platform's first accounting inconsistency.
+**Sequence:** opened after the post-gate validation pair confirms caching works (step 7 of
+the deployment sequence); built in the next engineering batch.
+
+Scope:
+
+1. `estimate_cost` computes from FOUR token classes — input, output, cache creation,
+   cache read — each with its own rate (creation carries the TTL premium: 1.25× for 5m,
+   2× for 1h; reads ~0.1× input).
+2. **Pricing Registry** (feeds the AI FinOps dashboard): per provider → per model →
+   per token class rates, with `version` and `effective_date`. Every run row references
+   the pricing version used for its `cost_usd`, so when a provider changes prices,
+   historical costs remain the cost that was true when the run happened — or are
+   explicitly recalculated under a named schedule, never silently drifted.
+   This matches the existing write-time-stamp philosophy in `store/records.py`
+   ("you can't backfill them") — the registry makes the implicit pricing version explicit.
+3. Provider-neutral by construction (the point of `core/cost.py` having no SDK import):
+   the same registry shape must hold Anthropic, OpenAI, Google, Moonshot etc., whose
+   pricing structures differ.
+
+Until FINOPS-001 lands, `cost_usd` on cached runs is a KNOWN UNDERESTIMATE — every cost
+report that reads it must say so.
