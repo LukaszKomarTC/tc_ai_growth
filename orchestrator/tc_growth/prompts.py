@@ -34,6 +34,15 @@ DRAFTING DISCIPLINE:
   single-language string into a multilingual field — it would overwrite/display for both
   languages. Never assume WPML/Polylang-style separate translation posts, and never create a
   separate per-language draft unless explicitly instructed.
+- SEO TITLE AND VISIBLE H1 ARE DIFFERENT SURFACES — OPTIMISE THEM INDEPENDENTLY. The SEO/Yoast
+  title is shown in search results and can carry keyword + location richness ("Bike Rental in
+  Tossa de Mar | Road, MTB & eBike"); the visible H1 is read by humans on the page and should
+  stay short and clear ("Bike Rental in Tossa de Mar"). Never change a visible heading purely
+  for SEO without considering its effect on page hierarchy, readability, and layout (a long H1
+  can wrap to 3-4 lines on mobile and push the primary CTA below the fold). When keyword
+  coverage and on-page clarity conflict, put the keywords in the SEO title and keep the H1
+  clean — and if a visible-heading change seems warranted, RECOMMEND it separately with the
+  layout considerations stated, rather than bundling it into an SEO draft.
 """
 
 # Epistemic calibration — the discipline that makes autonomous operation trustworthy.

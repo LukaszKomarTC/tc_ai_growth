@@ -323,3 +323,16 @@ def test_weekly_report_runs_read_only_and_draft_tools_stay_gated(monkeypatch):
     for tool in ("wp_create_seo_draft", "wp_create_product_revision"):
         assert not is_tool_allowed(tool, Phase.READ_ONLY)
         assert is_tool_allowed(tool, Phase.DRAFTS)
+
+
+# --- Rule (WP-09, adopted early 2026-07-20): SEO title and visible H1 are different surfaces ---
+
+def test_rule_seo_title_and_visible_h1_optimised_independently():
+    """A keyword-rich SERP title must not be forced into the on-page H1: long visible headings
+    wrap on mobile and push the CTA below the fold. Drafts optimise the two surfaces separately
+    and route visible-heading changes to a separate recommendation."""
+    c = _coordinator()
+    assert "seo title and visible h1 are different surfaces" in c
+    assert "optimise them independently" in c
+    assert "push the primary cta below the fold" in c
+    assert "keep the h1 clean" in c
