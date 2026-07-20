@@ -23,6 +23,10 @@ class RuntimeResult:
     model: str | None = None
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    # Prompt-cache usage (None if the provider doesn't report caching). Verification signal for
+    # prompt caching: first run in a TTL window shows creation > 0, repeats show read > 0.
+    cache_creation_tokens: int | None = None
+    cache_read_tokens: int | None = None
 
 
 class AgentRuntime(Protocol):

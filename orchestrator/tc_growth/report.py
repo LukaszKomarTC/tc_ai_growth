@@ -56,8 +56,16 @@ def persist_run(kind: str, result: RuntimeResult, *, started_at: str, duration_s
     """Log a completed agent run to the store. Best-effort: a persistence problem (missing/RO DB)
     must NEVER break the report or investigation, so every failure is swallowed with a note."""
     try:
+        import json as _json
+
         from .store import open_store
 
+        detail = None
+        if result.cache_creation_tokens is not None or result.cache_read_tokens is not None:
+            detail = _json.dumps({
+                "cache_creation_tokens": result.cache_creation_tokens,
+                "cache_read_tokens": result.cache_read_tokens,
+            })
         open_store().log_run(
             kind=kind,
             model=result.model,
@@ -65,6 +73,7 @@ def persist_run(kind: str, result: RuntimeResult, *, started_at: str, duration_s
             completion_tokens=result.completion_tokens,
             duration_s=duration_s,
             summary=_first_line(result.text),
+            detail=detail,
             started_at=started_at,
         )
     except Exception as exc:  # noqa: BLE001 - logging must never break the run

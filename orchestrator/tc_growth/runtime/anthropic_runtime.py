@@ -50,6 +50,8 @@ class AnthropicRuntime:
         blocked: list[dict] = []
         prompt_tokens = 0
         completion_tokens = 0
+        cache_creation = 0
+        cache_read = 0
 
         for _ in range(max_iterations):
             response = self._client.messages.create(
@@ -58,6 +60,10 @@ class AnthropicRuntime:
                 system=system,
                 thinking={"type": "adaptive"},
                 output_config={"effort": "high"},
+                # Top-level automatic prompt caching: the API places the breakpoint at the last
+                # cacheable block. 1h TTL because runs recur on schedules, not within minutes.
+                # Requires anthropic>=0.117 (older SDKs reject the kwarg with TypeError).
+                cache_control={"type": "ephemeral", "ttl": "1h"},
                 tools=tool_specs,
                 messages=messages,
             )
@@ -65,12 +71,15 @@ class AnthropicRuntime:
             if usage is not None:
                 prompt_tokens += getattr(usage, "input_tokens", 0) or 0
                 completion_tokens += getattr(usage, "output_tokens", 0) or 0
+                cache_creation += getattr(usage, "cache_creation_input_tokens", 0) or 0
+                cache_read += getattr(usage, "cache_read_input_tokens", 0) or 0
 
             if response.stop_reason != "tool_use":
                 text = "".join(b.text for b in response.content if b.type == "text")
                 return RuntimeResult(
                     text=text, tool_calls=tool_calls, blocked_calls=blocked,
                     model=model, prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+                    cache_creation_tokens=cache_creation, cache_read_tokens=cache_read,
                 )
 
             messages.append({"role": "assistant", "content": response.content})
@@ -120,6 +129,8 @@ class AnthropicRuntime:
             model=model,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
+            cache_creation_tokens=cache_creation,
+            cache_read_tokens=cache_read,
         )
 
 
