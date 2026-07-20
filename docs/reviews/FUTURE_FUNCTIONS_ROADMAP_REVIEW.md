@@ -168,16 +168,62 @@ post-gate capture list already recorded, with email intelligence as the one genu
 build commitment — and it is the right first communication channel: lowest platform
 complexity, highest chance of immediately preventing a missed sale.
 
+## Adopted amendments (review round 2, 2026-07-20 — owner + reviewer convergence)
+
+The reviewer (ChatGPT) accepted this review's five conflicts (agreeing outright on four and
+resolving Conflict 1 the same way from the SaaS-architecture direction), and the roadmap is
+**accepted as the long-term architectural baseline with these six explicit amendments**
+rather than a rewrite:
+
+1. **Dedicated evidence stores per profile + a shared profile registry** — isolation by
+   file/store boundary, not by `profile_id` WHERE-clause discipline. The registry is the
+   only shared layer; cross-profile joins are impossible by construction. (Resolves
+   Conflict 1; also yields per-profile backup/export/deletion and legal isolation.)
+2. **Staging lifecycle policy** — staging carries a declared mode: `developer` /
+   `validation` / `restore-test`. Only restore-test mode may be overwritten; Backup
+   Guardian refuses a restore in any other mode, the same enforcement pattern as the phase
+   gate on a new axis. This also protects pending drafts and validation state generally,
+   not just from restores. (Resolves Conflict 2.)
+3. **Communications governance policy as a first-class chapter** — email/WhatsApp/voice
+   data gets its own policy (what may enter model context, what never may, storage,
+   retention, erasure), NOT an exception carved out of the DB-read PII rule. Material
+   governance change; owner approval + cooldown before any ingestion. (Resolves
+   Conflict 3.)
+4. **Reference-not-copy evidence model for communications** — the communication system
+   (mailbox, WhatsApp account, telephony provider) remains the system of record; the
+   evidence store holds references + minimized structured facts; erasure deletes facts and
+   dead-references pointers. Designed in before the first IMAP ingestion. (Resolves
+   Conflict 4.)
+5. **Booking operations elevated to the financial governance tier** — constitutional
+   safeguards, not merely "late phase": explicit owner amendment with cooldown before any
+   booking-write capability exists; payment capture permanently excluded. (Resolves
+   Conflict 5.)
+6. **Capability as a future first-class object** — a reusable business function above
+   tools/connectors declaring required connectors, executing role, and produced evidence.
+   **Sequencing constraint (maintainer):** Capability is an abstraction OVER named
+   operations and must be extracted, not designed up front — action registry ships first,
+   real operations get composed by hand in investigations, and the repeating compositions
+   become the first capabilities. Capability is the action registry's second major
+   version, not a parallel object built speculatively.
+
+On AI Organization, the reviewer stresses long-term durability (provider layer fully
+swappable, nothing above it changes); this review's caution was build TIMING (config
+tables first, admin UI last, second provider before the machinery). Both hold — recorded
+as importance: high, build trigger: second real provider.
+
 ## Actions arising
 
-1. Resolve CONFLICT 1 (DB-per-profile vs profile_id) at Evidence Platform v1.0 design —
-   recommendation on record: DB-per-profile + registry.
-2. Add the restore-test/staging-collision rule (CONFLICT 2) to the Backup Guardian spec.
-3. Owner decision required before any communication ingestion: communications data-class
-   policy amending the PII-in-context rule (CONFLICT 3) + reference-not-copy erasure
-   design (CONFLICT 4). Material governance change; cooldown applies.
-4. Booking creation is gated on a constitutional amendment that does not exist (CONFLICT
-   5); payment capture is permanently excluded either way.
+1. ~~Resolve CONFLICT 1~~ RESOLVED (amendment 1): DB-per-profile + shared registry;
+   implement at Evidence Platform v1.0 design.
+2. ~~Restore-test/staging-collision rule~~ RESOLVED (amendment 2): staging lifecycle
+   policy (developer/validation/restore-test modes) goes into the Backup Guardian spec.
+3. Owner decision still required before any communication ingestion: the communications
+   governance policy (amendment 3) + reference-not-copy design (amendment 4) exist as
+   agreed DIRECTION; the policy document itself is the material change that needs formal
+   approval + cooldown.
+4. Booking creation gated on a constitutional amendment that does not exist (amendment 5);
+   payment capture permanently excluded either way.
 5. Start the two long-lead external items early: WhatsApp/Meta Business verification;
    Ringover trial account.
-6. Action registry becomes the designated substrate for R8/R9 (1.1 write-safety).
+6. Action registry becomes the designated substrate for R8/R9 (1.1 write-safety) — and,
+   later, the substrate Capability (amendment 6) is extracted from.
