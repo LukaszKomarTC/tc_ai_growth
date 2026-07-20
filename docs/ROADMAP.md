@@ -198,6 +198,21 @@ Requirements (agreed 2026-07-06):
 
 Good ideas that fail the Release 0.3 filters; recorded so they aren't lost and aren't built early:
 
+- **Experience Intelligence (horizon concept, reviewer proposal 2026-07-20 — records AFTER the
+  four intelligences prove out):** beyond what the visitor SEES (WP-09) to what happens when
+  they USE the site — can a booking actually be completed, does the cookie banner block the
+  CTA, is the mobile menu usable, does the reservation flow make sense, does the page FEEL
+  slow. **Critical design constraint recorded now: a journey is the first "read" that is not a
+  read.** Completing a booking or checkout has side effects (orders created, inventory
+  reserved, payments attempted) — journey testing therefore runs on STAGING, which is exactly
+  what "staging is the write lab" means; production journeys, if ever, stop before any
+  state-changing step and need their own approval design against the FORBIDDEN-capabilities
+  boundary (booking/checkout are the sacred zone). Read-only fragments (banner-overlap
+  detection, menu usability probes, perceived-load timing) can ship earlier inside WP-09's
+  tier-1 machinery. Long-horizon sequence sketch (18-month projection, non-binding):
+  four intelligences → Console → Council → Experience → Operations Intelligence
+  (what changed / why it matters / who should know / what the options and consequences are).
+
 - **Reliability metrics as a first-class feature (build FIRST post-0.3, before new capabilities):**
   false-positive rate, duplicate-case rate, missed detections, average investigation cost,
   decision-reuse rate. The runs/cases/decisions tables already carry the raw data. Trust comes
