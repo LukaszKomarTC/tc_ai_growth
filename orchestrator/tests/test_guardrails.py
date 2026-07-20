@@ -90,6 +90,14 @@ def test_woo_revenue_attribution_is_read_only_tool():
     assert is_tool_allowed("woo_revenue_attribution", Phase.READ_ONLY)
 
 
+def test_wp_site_structure_is_read_only_tool():
+    """WP-06 Site Intelligence slice 1: structure reads are ordinary capability."""
+    names = {t.name for t in load_all().all()}
+    assert "wp_site_structure" in names
+    assert is_tool_allowed("wp_site_structure", Phase.READ_ONLY)
+    assert not needs_confirmation("wp_site_structure")
+
+
 def test_publish_seo_draft_is_phase3_and_needs_confirmation():
     names = {t.name for t in load_all().all()}
     assert "publish_seo_draft" in names

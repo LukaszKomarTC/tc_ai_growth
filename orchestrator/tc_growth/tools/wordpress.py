@@ -78,6 +78,16 @@ def _orders_attribution(args: dict[str, Any]) -> Any:
     return _request("GET", f"/orders-attribution?days={days}")
 
 
+def _site_structure(args: dict[str, Any]) -> Any:
+    page = int(args.get("page", 1))
+    per_page = int(args.get("per_page", 100))
+    types = str(args.get("types", "")).strip()
+    path = f"/site-structure?page={page}&per_page={per_page}"
+    if types:
+        path += f"&types={types}"
+    return _request("GET", path)
+
+
 def _create_seo_draft(args: dict[str, Any]) -> Any:
     import json
 
@@ -150,6 +160,23 @@ registry.register(Tool(
         "required": ["kind"],
     },
     handler=_list,
+))
+
+registry.register(Tool(
+    name="wp_site_structure",
+    description="Site Intelligence: post-type inventory, navigation menus, and a paged list of "
+                "all public content with RAW titles (qTranslate tags included), slugs, parents, "
+                "templates, and dates. Use to understand what the site IS before recommending "
+                "structural or routing changes — menus show the site's own primary paths.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "page": {"type": "integer", "default": 1},
+            "per_page": {"type": "integer", "default": 100},
+            "types": {"type": "string", "description": "Optional comma-separated post types filter (e.g. 'page,product')"},
+        },
+    },
+    handler=_site_structure,
 ))
 
 registry.register(Tool(

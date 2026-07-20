@@ -28,6 +28,7 @@ TOOL_MIN_PHASE: dict[str, Phase] = {
     "pagespeed_check": Phase.READ_ONLY,
     "wp_list": Phase.READ_ONLY,
     "wp_seo_audit": Phase.READ_ONLY,
+    "wp_site_structure": Phase.READ_ONLY,
     "woo_revenue_attribution": Phase.READ_ONLY,
     "budget_recommendations": Phase.READ_ONLY,  # dry-run analysis, changes nothing
     # case memory — writes to the agent's OWN store, never to an external system, so the phase

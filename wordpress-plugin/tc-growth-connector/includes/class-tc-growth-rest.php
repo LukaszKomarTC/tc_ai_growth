@@ -38,6 +38,17 @@ class TC_Growth_REST {
 			'permission_callback' => $read,
 		) );
 
+		register_rest_route( TC_GROWTH_NAMESPACE, '/site-structure', array(
+			'methods'             => WP_REST_Server::READABLE,
+			'callback'            => array( $this, 'get_site_structure' ),
+			'permission_callback' => $read,
+			'args'                => array(
+				'page'     => array( 'type' => 'integer', 'default' => 1, 'minimum' => 1 ),
+				'per_page' => array( 'type' => 'integer', 'default' => 100, 'minimum' => 1, 'maximum' => 200 ),
+				'types'    => array( 'type' => 'string', 'default' => '' ),
+			),
+		) );
+
 		register_rest_route( TC_GROWTH_NAMESPACE, '/pages', array(
 			'methods'             => WP_REST_Server::READABLE,
 			'callback'            => array( $this, 'get_pages' ),
@@ -166,6 +177,103 @@ class TC_Growth_REST {
 
 		TC_Growth_Audit::log( wp_get_current_user()->user_login, 'read-site-map', null, null, array( 'count' => count( $items ) ) );
 		return rest_ensure_response( array( 'items' => $items ) );
+	}
+
+	/**
+	 * Site structure (WP-06 Site Intelligence, slice 1): post-type inventory, menus, and a
+	 * paged item list with RAW titles.
+	 *
+	 * Titles are returned RAW ($post->post_title, no filters) deliberately: qTranslate XT
+	 * language-filters `the_title`/postmeta reads in REST contexts, which previously made
+	 * multilingual fields look untagged to the agent (see SITE_PROFILE behaviour #7 and the
+	 * v0.1.2 fix). Site Intelligence wants ground truth, tags included.
+	 */
+	public function get_site_structure( WP_REST_Request $request ) {
+		$page      = max( 1, (int) $request->get_param( 'page' ) );
+		$per_page  = min( 200, max( 1, (int) $request->get_param( 'per_page' ) ) );
+		$types_arg = trim( (string) $request->get_param( 'types' ) );
+
+		$public_types = get_post_types( array( 'public' => true ), 'objects' );
+		unset( $public_types['attachment'] );
+
+		$type_inventory = array();
+		foreach ( $public_types as $slug => $obj ) {
+			$counts = wp_count_posts( $slug );
+			$type_inventory[] = array(
+				'type'      => $slug,
+				'label'     => $obj->labels->name,
+				'published' => isset( $counts->publish ) ? (int) $counts->publish : 0,
+				'draft'     => isset( $counts->draft ) ? (int) $counts->draft : 0,
+			);
+		}
+
+		// Menus: the site's own idea of its primary paths. Raw titles (see docblock).
+		$menus = array();
+		foreach ( wp_get_nav_menus() as $menu ) {
+			$entries = array();
+			foreach ( (array) wp_get_nav_menu_items( $menu->term_id ) as $item ) {
+				$raw_title = get_post_field( 'post_title', $item->ID, 'raw' );
+				if ( '' === $raw_title && $item->object_id ) {
+					$raw_title = get_post_field( 'post_title', (int) $item->object_id, 'raw' );
+				}
+				$entries[] = array(
+					'title'     => $raw_title,
+					'url'       => $item->url,
+					'object'    => $item->object,
+					'object_id' => (int) $item->object_id,
+					'parent'    => (int) $item->menu_item_parent,
+				);
+			}
+			$menus[] = array(
+				'name'  => $menu->name,
+				'items' => $entries,
+			);
+		}
+
+		$query_types = array_keys( $public_types );
+		if ( '' !== $types_arg ) {
+			$requested   = array_filter( array_map( 'sanitize_key', explode( ',', $types_arg ) ) );
+			$query_types = array_values( array_intersect( $query_types, $requested ) );
+		}
+
+		$query = new WP_Query( array(
+			'post_type'      => $query_types,
+			'post_status'    => 'publish',
+			'posts_per_page' => $per_page,
+			'paged'          => $page,
+			'orderby'        => 'ID',
+			'order'          => 'ASC',
+		) );
+
+		$items = array();
+		foreach ( $query->posts as $post ) {
+			$items[] = array(
+				'id'       => $post->ID,
+				'type'     => $post->post_type,
+				'slug'     => $post->post_name,
+				'title'    => $post->post_title, // RAW — tags included, see docblock.
+				'parent'   => (int) $post->post_parent,
+				'template' => (string) get_post_meta( $post->ID, '_wp_page_template', true ),
+				'url'      => get_permalink( $post ),
+				'date'     => get_post_time( 'c', true, $post ),
+				'modified' => get_post_modified_time( 'c', true, $post ),
+			);
+		}
+
+		TC_Growth_Audit::log( wp_get_current_user()->user_login, 'read-site-structure', null, null, array(
+			'page'  => $page,
+			'count' => count( $items ),
+		) );
+
+		return rest_ensure_response( array(
+			'post_types'  => $type_inventory,
+			'menus'       => 1 === $page ? $menus : array(), // menus once, not per page
+			'items'       => $items,
+			'page'        => $page,
+			'per_page'    => $per_page,
+			'total'       => (int) $query->found_posts,
+			'total_pages' => (int) $query->max_num_pages,
+		) );
 	}
 
 	/**
