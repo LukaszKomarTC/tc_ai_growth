@@ -81,20 +81,29 @@ reaches staging. Review each result in staging wp-admin.
 - [x] **Approval meta box** behaves and shows the full proposal — 2026-07-06 screenshot after
       PR #26: bilingual meta description + agent rationale + source link + capability-guarded
       checkbox.
-- [ ] **qTranslate x Yoast at apply time**: after the first approved apply, view BOTH language
-      URLs' page source — the meta description tag must render per-language, never the raw
-      `[:es]…[:en]…[:]` string. (Requires the qTranslate-XT Yoast integration module if raw
-      tags appear.)
-      **2026-07-19/20 — first approved apply executed, HALF-PASSED, investigation open.**
-      Draft 50461 human-approved (meta box) and applied via `publish_seo_draft` (triple gate
-      exercised: two 403 refusals on unapproved drafts 50457/50460 proved the server-side
-      approval check; the approved draft applied cleanly). TITLE renders per-language on both
-      URLs with zero raw-tag leaks (`…Ediciones, Rutas e Inscripción | STAGING` on ES,
-      `…Editions, Routes & Registration | STAGING` on EN). META DESCRIPTION is stored
-      (audit reads it back) but Yoast emits no description/og:description tag on either
-      language — Yoast-indexable/write-path issue under investigation (first SQL pass hit a
-      stale copy database — `_edit_lock` from Dec 2025 unmasked it; re-run against the real
-      staging DB pending). Box stays open until the description renders per-language.
+- [x] **qTranslate x Yoast at apply time** — CLOSED 2026-07-20 on a three-part evidence chain
+      (owner called scope: no further staging drilling; final end-to-end confirmation rides
+      the first production apply, Release 1.1, per-run human confirmation).
+      1. **Apply pipeline verified live** (2026-07-19/20): draft 50461 human-approved and
+         applied via `publish_seo_draft`; triple gate exercised (two 403 refusals on
+         unapproved drafts 50457/50460 proved the server-side approval check). TITLE renders
+         per-language on both URLs, zero raw-tag leaks.
+      2. **Connector defect found & fixed by this test — the test earned its keep.** First
+         apply stored a Spanish-only meta (qTranslate language-filters postmeta reads in
+         REST contexts → the connector read its own proposal pre-stripped) and left Yoast's
+         indexable stale (meta written after `wp_update_post`). Fixed in v0.1.2 (raw `$wpdb`
+         read + meta-before-update, PR #58); re-apply verified by raw SQL: stored value is
+         the intact tagged string `[:es]Todas las ediciones…`.
+      3. **Per-language render of a tagged value is proven by the homepage**: its indexable
+         holds raw `[:es]CENTRO DE CICLISMO…` and renders ES on `/`, EN on `/en/`, no raw
+         tags (verified 2026-07-19 by page-source fetch of both languages).
+      **Why the applied value doesn't render on STAGING (documented, not a defect):** Yoast
+      refuses to create/update indexables when `WP_ENVIRONMENT_TYPE` is not 'production'
+      (confirmed by its own `wp yoast index --reindex` refusal message). Staging's rendered
+      SEO output is therefore FROZEN AT CLONE TIME — cloned indexable rows render; anything
+      written since never reaches the page. Production has no such gap. Optional staging
+      override if a live demo is ever wanted (3-line mu-plugin):
+      `add_filter( 'Yoast\WP\SEO\should_index_indexables', '__return_true' );`
 - [x] **Nothing published automatically** — 2026-07-06: every artifact (50455, 50457) remained
       status=draft; live post 13699 untouched; zero production writes.
 

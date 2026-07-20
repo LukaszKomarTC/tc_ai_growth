@@ -74,7 +74,17 @@ need owner confirmation._
    notice + hub CTA above the fold in the event template. Reports should treat "past event
    page" recommendations accordingly: routing already exists; the improvement lever is
    prominence, not existence.
-7. **Shared hosting has a thin PHP-worker budget** → one misbehaving plugin can take every
+7. **Staging's rendered SEO output is frozen at clone time** (discovered 2026-07-20, Test 4).
+   Yoast ≥17 refuses to create/update its indexable cache when `WP_ENVIRONMENT_TYPE` is not
+   'production' — staging pages render whatever indexable rows came with the production
+   clone; postmeta written since (by the connector, wp-admin, or anything else) is stored
+   correctly but never emitted. Consequences: (a) NEVER treat staging page-source
+   titles/descriptions as evidence of current SEO fields — read postmeta (raw) instead;
+   (b) apply-time render checks are only meaningful on production (or with the optional
+   3-line mu-plugin override recorded in VALIDATION.md); (c) the same test found and fixed
+   connector v0.1.2's bilingual-loss bug (qTranslate language-filters postmeta READS in
+   REST contexts — raw `$wpdb` reads required when copying multilingual values).
+8. **Shared hosting has a thin PHP-worker budget** → one misbehaving plugin can take every
    uncacheable page (cart, checkout) to 20s+. WP Fastest Cache masks this on cached pages, so
    slowness reports must always be checked against UNCACHED endpoints (`/wp-json/` is the probe).
 
