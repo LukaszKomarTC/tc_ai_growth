@@ -30,6 +30,14 @@ Never drain the queue quickly: tests passing per-branch does not prove combined
 behavior, and losing track of which merge introduced a regression forfeits the clean
 validated baseline the whole freeze existed to produce.
 
+**Discipline under success (binding):** the pressure to rush arrives precisely when run
+#3 is green and everything looks fine — a green branch is not evidence that the combined
+system is green. During this programme: no opportunistic fixes, no reordered merges, no
+"while we are here" changes, and no observer-retirement discussion until the registered
+criteria are met. Anything discovered mid-programme is RECORDED (case, finding, or patch
+item for a later batch), not fixed inline. Causal clarity outranks one or two days of
+feature velocity.
+
 **Order:**
 
 | # | Branch | Acceptance protocol |
