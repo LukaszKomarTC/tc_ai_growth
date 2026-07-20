@@ -56,12 +56,35 @@ is recorded. About process, not bugs. Questions fixed NOW — before the outcome
 so the retro cannot drift into a victory lap or a blame exercise:
 
 1. Which governance rules prevented mistakes? (name the incident each one caught)
-2. Which review requirements turned out unnecessary? (candidates for removal — discipline
-   that catches nothing is cost, not safety)
+2. For EVERY recurring control, classify and re-justify it (see the taxonomy below):
+   has it moved Transitional → Operational → Constitutional, or is it ready to retire?
+   A control that catches nothing isn't safety, it's cost wearing safety's clothes —
+   but classification, not raw hit-count, decides: some controls exist precisely in the
+   hope of never firing.
 3. Which acceptance criteria were ambiguous when the moment came to grade them?
 4. Which architectural decisions proved especially valuable?
 5. What surprised us during integration?
 6. What would we change before the next major release?
+
+**Control taxonomy (governance principle, adopted 2026-07-20):**
+
+- **Constitutional** — permanent unless governance itself changes: FORBIDDEN
+  capabilities, the financial-transfer prohibition, production-write per-run approval,
+  profile isolation. Retiring one is an amendment with cooldown, never a retro outcome.
+- **Operational** — remain only while they demonstrably reduce risk: extra verification
+  steps, review depth requirements, merge restrictions. The retro's main pruning ground.
+- **Transitional** — exist to reach a maturity milestone and are EXPECTED to disappear,
+  with retirement criteria pre-registered at creation: the observer dual-run, manual
+  validation counters, the clean-Monday gate itself. A transitional control without
+  retirement criteria is a defect — it will silently ossify into fake-constitutional.
+
+**Proportionality rule (standing, feeds question 6):** release-programme rigor — freezes,
+pre-registered evidence, one-branch-one-delta integration — is reserved for changes
+touching architecture, execution authority, evidence integrity, production safety, or
+platform-wide invariants. Routine feature work stays disciplined (branch, tests, review)
+but is NOT burdened with programme ceremony. This complements the 0.3 admission filters:
+those decide whether a change enters; this decides how much process weight it carries.
+A retro that finds governance applied disproportionately to routine work must say so.
 
 The retro is institutional memory: its answers feed the 1.1 planning directly, and no
 1.1 design work starts until it exists. The freeze-week's own lesson is pre-seeded as its
