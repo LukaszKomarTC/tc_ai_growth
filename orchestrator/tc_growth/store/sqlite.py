@@ -11,7 +11,7 @@ from pathlib import Path
 
 from . import records, seed
 from .db import connect
-from .records import Case, Decision, Run
+from .records import Case, Decision, Run, Snapshot
 
 
 class SqliteStore:
@@ -66,6 +66,17 @@ class SqliteStore:
         return records.list_decisions(self._conn, case_id=case_id, limit=limit)
 
     # -- lifecycle --
+    def save_snapshot(self, *, payload: str, item_count: int, drift: str | None = None,
+                      source: str = "wp_site_structure") -> int:
+        return records.save_snapshot(self._conn, payload=payload, item_count=item_count,
+                                     drift=drift, source=source)
+
+    def latest_snapshot(self) -> Snapshot | None:
+        return records.latest_snapshot(self._conn)
+
+    def list_snapshots(self, *, limit: int = 20) -> list[Snapshot]:
+        return records.list_snapshots(self._conn, limit=limit)
+
     def seed_incident_case(self) -> int:
         return seed.seed_incident_case(self._conn)
 

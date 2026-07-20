@@ -317,3 +317,53 @@ def list_decisions(
             "SELECT * FROM decisions ORDER BY id DESC LIMIT ?;", (limit,)
         ).fetchall()
     return [Decision(**r) for r in rows]
+
+
+@dataclass
+class Snapshot:
+    """One observed site-structure snapshot (WP-06). Payload/drift are JSON text.
+
+    Three-state discipline: `payload` is OBSERVED current state; SITE_PROFILE.md is APPROVED
+    knowledge (human-maintained, never written by this table); `drift` is the diff vs the
+    previous snapshot — UNEXPLAINED until a report or human accounts for it.
+    """
+
+    id: int
+    taken_at: str
+    source: str
+    item_count: int
+    payload: str
+    drift: str | None
+
+
+def save_snapshot(
+    conn: sqlite3.Connection,
+    *,
+    payload: str,
+    item_count: int,
+    drift: str | None = None,
+    source: str = "wp_site_structure",
+) -> int:
+    cur = conn.execute(
+        "INSERT INTO site_snapshots (taken_at, source, item_count, payload, drift) "
+        "VALUES (?, ?, ?, ?, ?);",
+        (_now(), source, item_count, payload, drift),
+    )
+    conn.commit()
+    return int(cur.lastrowid)
+
+
+def latest_snapshot(conn: sqlite3.Connection) -> Snapshot | None:
+    row = conn.execute(
+        "SELECT * FROM site_snapshots ORDER BY id DESC LIMIT 1;"
+    ).fetchone()
+    return Snapshot(**row) if row else None
+
+
+def list_snapshots(conn: sqlite3.Connection, *, limit: int = 20) -> list[Snapshot]:
+    rows = conn.execute(
+        "SELECT id, taken_at, source, item_count, length(payload) AS payload, drift "
+        "FROM site_snapshots ORDER BY id DESC LIMIT ?;", (limit,)
+    ).fetchall()
+    # payload column carries its LENGTH in listings (summaries must stay light).
+    return [Snapshot(**{**dict(r), "payload": str(r["payload"])}) for r in rows]

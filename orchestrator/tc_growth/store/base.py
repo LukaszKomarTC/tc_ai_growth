@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from .records import Case, Decision, Run
+from .records import Case, Decision, Run, Snapshot
 
 
 @runtime_checkable
@@ -83,6 +83,16 @@ class Store(Protocol):
     def get_decision(self, decision_id: int) -> Decision | None: ...
 
     def update_decision(self, decision_id: int, **fields: object) -> None: ...
+
+    # -- site snapshots (WP-06) --
+    def save_snapshot(
+        self, *, payload: str, item_count: int, drift: str | None = None,
+        source: str = "wp_site_structure",
+    ) -> int: ...
+
+    def latest_snapshot(self) -> Snapshot | None: ...
+
+    def list_snapshots(self, *, limit: int = 20) -> list[Snapshot]: ...
 
     # -- lifecycle --
     def seed_incident_case(self) -> int: ...

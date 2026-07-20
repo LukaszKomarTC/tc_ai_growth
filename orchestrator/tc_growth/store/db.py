@@ -16,7 +16,7 @@ from pathlib import Path
 
 from ..config import BASE_DIR, active_site, get_settings
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # One statement per table; CREATE ... IF NOT EXISTS makes init idempotent.
 _SCHEMA = """
@@ -64,9 +64,21 @@ CREATE TABLE IF NOT EXISTS decisions (
     case_id    INTEGER REFERENCES cases(id)
 );
 
+CREATE TABLE IF NOT EXISTS site_snapshots (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    taken_at   TEXT NOT NULL,
+    source     TEXT NOT NULL DEFAULT 'wp_site_structure',
+    item_count INTEGER NOT NULL,
+    payload    TEXT NOT NULL,                     -- JSON: post_types, menus, items (observed state)
+    drift      TEXT                               -- JSON diff vs PREVIOUS snapshot (observations,
+                                                  -- never approved knowledge; SITE_PROFILE.md is
+                                                  -- the human baseline and is never written here)
+);
+
 CREATE INDEX IF NOT EXISTS idx_cases_status    ON cases(status);
 CREATE INDEX IF NOT EXISTS idx_runs_kind       ON runs(kind);
 CREATE INDEX IF NOT EXISTS idx_decisions_case  ON decisions(case_id);
+CREATE INDEX IF NOT EXISTS idx_snapshots_taken ON site_snapshots(taken_at);
 """
 
 
@@ -113,6 +125,8 @@ def init_db(conn: sqlite3.Connection) -> None:
 
 def _migrate(conn: sqlite3.Connection, *, from_version: int) -> None:
     """Forward-only, additive migrations. Existing rows keep NULL in the new columns."""
+    # v2 -> v3: site_snapshots table (WP-06 Site Intelligence). Purely additive — the table is
+    # created by the executescript(_SCHEMA) pass above, so no statements are needed here.
     if from_version < 2:
         # v1 -> v2: provenance columns (who opened/closed a case, who made a decision).
         for stmt in (
