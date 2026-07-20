@@ -113,7 +113,7 @@ def test_tools_registered_read_only_and_budget_enforced(root, tmp_path, monkeypa
     monkeypatch.setenv("TC_SOURCE_ROOTS", str(root))
     monkeypatch.setattr(sr, "_roots", lambda: [root.resolve()])
     monkeypatch.setattr(sr, "BASE_DIR", tmp_path)          # audit lands in tmp
-    monkeypatch.setattr(sr, "_spent", {"calls": 0, "bytes": 0})
+    monkeypatch.setattr(sr, "_budgets", {})
 
     out = sr._read({"path": str(root / "some-plugin" / "main.php")})
     assert out["content"].startswith("<?php")
@@ -123,7 +123,7 @@ def test_tools_registered_read_only_and_budget_enforced(root, tmp_path, monkeypa
     assert rec["action"] == "read" and rec["outcome"] == "ok" and rec["bytes"] > 0
     assert "content" not in rec                            # metadata only, never file content
 
-    monkeypatch.setattr(sr, "_spent", {"calls": 10**6, "bytes": 0})
+    monkeypatch.setattr(sr, "_budgets", {sr._budget_key(): {"calls": 10**6, "bytes": 0}})
     from tc_growth.tools.base import ToolError
     with pytest.raises(ToolError, match="budget exhausted"):
         sr._read({"path": str(root / "some-plugin" / "main.php")})
@@ -184,7 +184,8 @@ def test_denials_carry_stable_reason_codes(root, tmp_path):
 def test_read_result_carries_citation_identity(root):
     out = read_file(resolve_checked(str(root / "some-plugin" / "main.php"), [root]), [root])
     assert out["rel_path"] == "some-plugin/main.php" and out["root"] == str(root.resolve())
-    assert len(out["sha256_returned"]) == 64 and out["mtime"] > 0
+    assert len(out["returned_sha256"]) == 64 and out["mtime"] > 0 and out["mtime_ns"] > 0
+    assert out["content_sha256"] == out["returned_sha256"]  # small file: full == returned
     assert out["lines_returned"][0] == 1 and out["binary"] is False
 
 
@@ -193,7 +194,7 @@ def test_binary_content_rejected_with_metadata_only(root):
     blob.write_bytes(b"\x89PNG\x00\x01binary")
     out = read_file(resolve_checked(str(blob), [root]), [root])
     assert out["binary"] is True and out["content"] == ""
-    assert out["sha256_returned"]                # identity still reported
+    assert out["returned_sha256"]                # identity still reported
 
 
 def test_listing_redacts_leak_prone_names(root):
@@ -204,3 +205,67 @@ def test_listing_redacts_leak_prone_names(root):
     assert "customer-export-july.csv" not in names
     assert "stripe-token-backup.txt" not in names
     assert "[redacted:" in names
+
+
+# --- Reviewer round 3: hash semantics + run-scoped budget ---------------------------------
+
+def test_dual_hash_semantics_on_truncated_file(root):
+    """content_sha256 identifies the WHOLE file (streamed from the same verified fd);
+    returned_sha256 identifies only the supplied evidence. On truncation they differ."""
+    import hashlib
+    big = root / "some-plugin" / "big2.php"
+    data = b"a" * (256 * 1024) + b"b" * 1000    # 257KB: truncated, but under the hash cap
+    big.write_bytes(data)
+    out = read_file(resolve_checked(str(big), [root]), [root])
+    assert out["truncated"] is True
+    assert out["content_sha256"] == hashlib.sha256(data).hexdigest()
+    assert out["returned_sha256"] == hashlib.sha256(data[:256 * 1024]).hexdigest()
+    assert out["content_sha256"] != out["returned_sha256"]
+    assert out["bytes_consumed"] == len(data)   # hashing bandwidth is accounted
+
+
+def test_full_hash_capped_with_explicit_note(root, monkeypatch):
+    import tc_growth.core.source_reader as core
+    monkeypatch.setattr(core, "MAX_FULL_HASH_BYTES", 300 * 1024)
+    huge = root / "some-plugin" / "huge.php"
+    huge.write_bytes(b"x" * (400 * 1024))
+    out = core.read_file(core.resolve_checked(str(huge), [root]), [root])
+    assert out["content_sha256"] is None and "full-hash cap" in out["content_hash_note"]
+    assert out["returned_sha256"]               # excerpt identity always present
+
+
+def test_budget_is_keyed_per_run_and_profile(root, tmp_path, monkeypatch):
+    """The lifecycle boundary is structural: (run, profile) key — a second run identity gets
+    a fresh allowance; the same run cannot escape its own."""
+    import tc_growth.tools.source_reader as sr
+    from tc_growth.tools.base import ToolError
+    monkeypatch.setattr(sr, "_roots", lambda: [root.resolve()])
+    monkeypatch.setattr(sr, "BASE_DIR", tmp_path)
+    monkeypatch.setattr(sr, "_budgets", {})
+    target = str(root / "some-plugin" / "main.php")
+
+    sr.bind_run("run-A")
+    for _ in range(sr._READ_BUDGET):
+        sr._read({"path": target})
+    with pytest.raises(ToolError, match="budget exhausted"):
+        sr._read({"path": target})
+
+    sr.bind_run("run-B")                        # new run identity -> fresh allowance
+    assert sr._read({"path": target})["returned_sha256"]
+    sr.bind_run("run-A")                        # returning to A: still exhausted
+    with pytest.raises(ToolError, match="budget exhausted"):
+        sr._read({"path": target})
+    sr._bound_run[0] = None                     # reset for other tests
+
+
+def test_budget_exhaustion_is_audited_distinctly(root, tmp_path, monkeypatch):
+    import tc_growth.tools.source_reader as sr
+    from tc_growth.tools.base import ToolError
+    monkeypatch.setattr(sr, "_roots", lambda: [root.resolve()])
+    monkeypatch.setattr(sr, "BASE_DIR", tmp_path)
+    monkeypatch.setattr(sr, "_budgets", {sr._budget_key(): {"calls": 10**6, "bytes": 0}})
+    with pytest.raises(ToolError):
+        sr._read({"path": str(root / "some-plugin" / "main.php")})
+    lines = (tmp_path / "data" / "source_audit.jsonl").read_text().strip().splitlines()
+    outcomes = [json.loads(l)["outcome"] for l in lines]
+    assert "budget_exhausted" in outcomes       # distinguishable from policy denials

@@ -25,11 +25,28 @@ from ..core.source_reader import (
 )
 from .base import Tool, ToolError, registry
 
-_READ_BUDGET = 60          # calls per process (a run is one process = one profile, env-bound;
-                           # cross-profile sharing of a counter is therefore impossible)
+_READ_BUDGET = 60
 _BYTE_BUDGET = 5 * 1024 * 1024
-_spent = {"calls": 0, "bytes": 0}
+
+# Budget state is keyed by (run identity, profile) — a STRUCTURAL boundary, not an
+# operational assumption (reviewer 2026-07-20). Today a tool process serves exactly one
+# report run and one profile (env-bound) and dies with it, so the default run identity is
+# the pid; if the orchestrator ever moves to persistent workers or queues, runtimes must
+# call bind_run(run_id) and the isolation survives that architecture change unchanged.
+# LIFECYCLE ASSUMPTION (documented + tested): one process = one run = one profile.
+_budgets: dict = {}
 _budget_lock = __import__("threading").Lock()
+_bound_run: list = [None]
+
+
+def bind_run(run_id: str) -> None:
+    """Bind subsequent budget accounting to an explicit run identity (future runtimes)."""
+    _bound_run[0] = str(run_id)
+
+
+def _budget_key() -> tuple:
+    import os as _os
+    return (_bound_run[0] or f"pid:{_os.getpid()}", get_settings().site_name or "default")
 
 
 def _audit(action: str, path: str, *, bytes_returned: int = 0, outcome: str = "ok") -> None:
@@ -50,13 +67,17 @@ def _audit(action: str, path: str, *, bytes_returned: int = 0, outcome: str = "o
         pass
 
 
-def _charge(bytes_returned: int) -> None:
-    """Atomic accounting. Denied reads charge a CALL (bounds deny-probe loops) but no bytes."""
+def _charge(bytes_consumed: int, *, path: str = "") -> None:
+    """Atomic per-(run, profile) accounting. Denied reads charge a CALL (bounds deny-probe
+    loops) but no bytes; full-file hashing charges its actual read bandwidth."""
+    key = _budget_key()
     with _budget_lock:
-        _spent["calls"] += 1
-        _spent["bytes"] += bytes_returned
-        calls, size = _spent["calls"], _spent["bytes"]
+        spent = _budgets.setdefault(key, {"calls": 0, "bytes": 0})
+        spent["calls"] += 1
+        spent["bytes"] += bytes_consumed
+        calls, size = spent["calls"], spent["bytes"]
     if calls > _READ_BUDGET or size > _BYTE_BUDGET:
+        _audit("budget", path, outcome="budget_exhausted")
         raise ToolError(
             f"source-read budget exhausted for this run ({_READ_BUDGET} calls / "
             f"{_BYTE_BUDGET // 1024**2} MB) — narrow the investigation or continue next run"
@@ -75,9 +96,13 @@ def _read(args: dict[str, Any]) -> Any:
         result = read_file(resolved, roots)
     except SourceAccessDenied as exc:
         _audit("read", path, outcome=f"denied:{exc.code}")
-        _charge(0)  # denials consume a call, never bytes
+        _charge(0, path=path)  # denials consume a call, never bytes
         raise ToolError(f"[{exc.code}] {exc}")
-    _charge(result["returned_bytes"])
+    except OSError as exc:  # distinct audit class: infrastructure, not policy or probing
+        _audit("read", path, outcome=f"fs_error:{exc.__class__.__name__}")
+        _charge(0, path=path)
+        raise ToolError(f"[fs_error] {exc}")
+    _charge(result["bytes_consumed"], path=path)
     _audit("read", result["path"], bytes_returned=result["returned_bytes"])
     return result
 
@@ -92,9 +117,9 @@ def _list(args: dict[str, Any]) -> Any:
         result = list_dir(resolved, roots)
     except SourceAccessDenied as exc:
         _audit("list", path, outcome=f"denied:{exc.code}")
-        _charge(0)
+        _charge(0, path=path)
         raise ToolError(f"[{exc.code}] {exc}")
-    _charge(0)
+    _charge(0, path=path)
     _audit("list", result["path"])
     return result
 

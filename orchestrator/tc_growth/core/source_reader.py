@@ -30,6 +30,7 @@ import stat as stat_mod
 from pathlib import Path
 
 MAX_READ_BYTES = 256 * 1024  # per-file cap; truncated reads carry an explicit marker
+MAX_FULL_HASH_BYTES = 4 * 1024 * 1024  # full-file identity hash cap (streamed, bounded)
 MAX_LIST_ENTRIES = 500
 
 _DENY_SUFFIXES = {".sql", ".zip", ".tar", ".gz", ".tgz", ".bz2", ".7z", ".pem", ".key",
@@ -121,23 +122,47 @@ def read_file(resolved: Path, roots: list[Path], *, max_bytes: int = MAX_READ_BY
         if not stat_mod.S_ISREG(st.st_mode):
             raise SourceAccessDenied("not_regular", f"not a regular file: {resolved.name}")
         # Verify what we ACTUALLY opened (the descriptor), not what we checked earlier.
+        # Linux-specific by design; FAIL CLOSED elsewhere — never silently fall back to the
+        # weaker pathname-only validation (reviewer 2026-07-20).
         fd_path = Path(f"/proc/self/fd/{fd}")
-        if fd_path.exists():
-            actual = Path(os.path.realpath(fd_path))
-            if not _within(actual, roots):
-                raise SourceAccessDenied("outside_root",
-                                         f"opened file resolved outside roots: {actual}")
-            reason = _deny_reason(actual)
-            if reason:
-                raise SourceAccessDenied(*reason)
+        if not fd_path.exists():
+            raise SourceAccessDenied(
+                "platform", "/proc descriptor revalidation unavailable — refusing to read"
+            )
+        actual = Path(os.path.realpath(fd_path))
+        if not _within(actual, roots):
+            raise SourceAccessDenied("outside_root",
+                                     f"opened file resolved outside roots: {actual}")
+        reason = _deny_reason(actual)
+        if reason:
+            raise SourceAccessDenied(*reason)
+
+        # Read the returned portion AND stream the remainder through the full-file hasher
+        # from the SAME verified descriptor. Two hashes with distinct semantics:
+        #   content_sha256  -> identity of the ENTIRE opened file (None above the hash cap)
+        #   returned_sha256 -> exact bytes supplied to the agent
+        full_hasher = hashlib.sha256()
         chunks, remaining = [], max_bytes
         while remaining > 0:
             chunk = os.read(fd, remaining)
             if not chunk:
                 break
             chunks.append(chunk)
+            full_hasher.update(chunk)
             remaining -= len(chunk)
         blob = b"".join(chunks)
+        bytes_consumed = len(blob)
+        hashed_full = True
+        if st.st_size > len(blob):
+            if st.st_size <= MAX_FULL_HASH_BYTES:
+                while True:
+                    chunk = os.read(fd, 64 * 1024)
+                    if not chunk:
+                        break
+                    full_hasher.update(chunk)
+                    bytes_consumed += len(chunk)
+            else:
+                hashed_full = False
     finally:
         os.close(fd)
 
@@ -149,8 +174,14 @@ def read_file(resolved: Path, roots: list[Path], *, max_bytes: int = MAX_READ_BY
         "size_bytes": st.st_size,
         "returned_bytes": len(blob),
         "truncated": st.st_size > len(blob),
-        "sha256_returned": hashlib.sha256(blob).hexdigest(),
+        "returned_sha256": hashlib.sha256(blob).hexdigest(),
+        "content_sha256": full_hasher.hexdigest() if hashed_full else None,
+        "content_hash_note": None if hashed_full else
+            f"file exceeds {MAX_FULL_HASH_BYTES} B full-hash cap — returned_sha256 identifies "
+            "only the returned evidence, not the file version",
+        "bytes_consumed": bytes_consumed,
         "mtime": st.st_mtime,
+        "mtime_ns": st.st_mtime_ns,
     }
     if b"\x00" in blob:
         return {**base, "binary": True, "content": "",
