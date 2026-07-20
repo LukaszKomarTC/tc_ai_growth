@@ -3,6 +3,7 @@
     python -m tc_growth.cli [--site <profile>] <command>   # e.g. --site production report
 
     python -m tc_growth.cli list-tools
+    python -m tc_growth.cli list-operations         # named-operation catalogue (Action Registry)
     python -m tc_growth.cli smoke <tool_name> '<json args>'
     python -m tc_growth.cli weekly-report
     python -m tc_growth.cli investigate "<question or anomaly>"
@@ -59,6 +60,24 @@ def _build_runtime(kind: str = "messages"):
 def cmd_list_tools() -> int:
     for tool in load_all().all():
         print(f"{tool.name:24} {tool.description.splitlines()[0]}")
+    return 0
+
+
+def cmd_list_operations() -> int:
+    """Print the Action Registry: every named operation with its governance envelope.
+
+    Validates first — a catalogue that contradicts the enforcement layer must not print
+    as if it were true.
+    """
+    from .core.actions import OPERATIONS, validate_registry
+
+    validate_registry()
+    for op in OPERATIONS:
+        state = "" if op.enabled else "  [DISABLED]"
+        binding = op.tool and f"tool:{op.tool}" or f"cli:{op.command}"
+        envs = "/".join(op.environments)
+        print(f"{op.id:26} {op.category.value:12} phase>={int(op.min_phase)}  "
+              f"approval:{op.approval.value:13} env:{envs:18} {binding}{state}")
     return 0
 
 
@@ -326,6 +345,8 @@ def main(argv: list[str] | None = None) -> int:
     cmd, rest = argv[0], argv[1:]
     if cmd == "list-tools":
         return cmd_list_tools()
+    if cmd == "list-operations":
+        return cmd_list_operations()
     if cmd == "smoke":
         return cmd_smoke(rest[0], rest[1] if len(rest) > 1 else "")
     if cmd == "weekly-report":
