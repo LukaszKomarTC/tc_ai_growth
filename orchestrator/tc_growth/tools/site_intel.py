@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from ..core.site_intel import build_snapshot, diff_snapshots, query_snapshot
+from ..core.site_intel import build_snapshot, check_expectations, diff_snapshots, query_snapshot
 from ..store import open_store
 from .base import Tool, ToolError, registry
 from .wordpress import _site_structure
@@ -28,6 +28,9 @@ def _refresh(args: dict[str, Any]) -> Any:
         prev_row = store.latest_snapshot()
         prev = json.loads(prev_row.payload) if prev_row else None
         drift = diff_snapshots(prev, snapshot)
+        # Approved-vs-observed runs against THIS snapshot (not the previous one), so defects
+        # already present at the first snapshot surface as violations, never hide as baseline.
+        drift["expectation_violations"] = check_expectations(snapshot)
         snap_id = store.save_snapshot(
             payload=json.dumps(snapshot, ensure_ascii=False),
             item_count=len(snapshot["items"]),
@@ -43,10 +46,15 @@ def _refresh(args: dict[str, Any]) -> Any:
         "menu_count": len(snapshot["menus"]),
         "drift": drift,
     }
+    if drift.get("expectation_violations"):
+        summary["note_expectations"] = (
+            "Observed state disagrees with owner-approved knowledge — cite the violation's "
+            "source and flag it for the owner; do not 'fix' structure autonomously."
+        )
     if not drift.get("baseline") and drift.get("has_drift"):
         summary["note"] = (
-            "Drift is OBSERVED, not explained. Account for it (deploy, edit, incident) in the "
-            "report or flag it for the owner; SITE_PROFILE.md remains the approved baseline."
+            "Changes are OBSERVED, not explained. Account for them (deploy, edit, incident) in "
+            "the report or flag them for the owner; SITE_PROFILE.md remains the approved baseline."
         )
     return summary
 

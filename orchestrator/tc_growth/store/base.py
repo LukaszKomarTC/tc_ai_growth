@@ -87,7 +87,7 @@ class Store(Protocol):
     # -- site snapshots (WP-06) --
     def save_snapshot(
         self, *, payload: str, item_count: int, drift: str | None = None,
-        source: str = "wp_site_structure",
+        source: str = "wp_site_structure", keep: int = 30,
     ) -> int: ...
 
     def latest_snapshot(self) -> Snapshot | None: ...

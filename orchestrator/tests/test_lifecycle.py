@@ -78,9 +78,11 @@ def test_impossible_dates_are_ignored_not_guessed():
 
 # --- Tier 4: fallbacks are explicit about being inferences --------------------------------
 
-def test_undated_page_falls_back_to_evergreen_inference():
+def test_undated_page_falls_back_to_likely_evergreen_low_confidence():
+    """Reviewer caution adopted: an inference must not wear the same label as an approved
+    rule — expired campaigns and abandoned landing pages are also 'undated pages'."""
     v = classify_lifecycle(_item("alquiler_bicicletas"), today=TODAY)
-    assert v["state"] == "evergreen" and v["tier"] == "inference"
+    assert v["state"] == "likely_evergreen" and v["tier"] == "inference" and v["confidence"] == "low"
 
 
 def test_undated_event_and_product_stay_unknown_not_guessed():
@@ -94,4 +96,6 @@ def test_approved_rules_are_the_only_hardcoded_knowledge():
     for rule in APPROVED_RULES:
         assert ("slug" in rule) or ("type" in rule)
         assert "why" in rule
+        # Governance provenance (reviewer requirement): who approved it, when, for which site.
+        assert rule.get("source") and rule.get("approved") and rule.get("scope")
         assert ("state" in rule) != ("policy" in rule)  # exactly one of the two

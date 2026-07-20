@@ -27,15 +27,26 @@ from typing import Any
 # to date evidence with the given fallback.
 APPROVED_RULES: list[dict[str, str]] = [
     {"slug": "tour_de_girona-listado", "state": "evergreen",
-     "why": "TdG hub — the permanent home of all editions (site policy; editions route here)"},
+     "why": "TdG hub — the permanent home of all editions (site policy; editions route here)",
+     "source": "WP-04 owner review 2026-07-13 + SITE_PROFILE behaviour #6",
+     "approved": "2026-07-20", "scope": "tossacycling"},
     {"type": "events", "policy": "date-governed", "fallback": "unknown",
-     "why": "event pages live and die by their date; without one we do not guess"},
+     "why": "event pages live and die by their date; without one we do not guess",
+     "source": "SITE_PROFILE behaviour #6 (lifecycle-aware event plugin)",
+     "approved": "2026-07-20", "scope": "tossacycling"},
     {"type": "product", "policy": "date-governed", "fallback": "unknown",
-     "why": "availability is not visible to structure reads — only dated editions classify"},
-    {"type": "page", "policy": "date-governed", "fallback": "evergreen",
-     "why": "pages are evergreen unless they carry explicit date evidence"},
-    {"type": "post", "policy": "date-governed", "fallback": "evergreen",
-     "why": "posts are evergreen content unless explicitly dated"},
+     "why": "availability is not visible to structure reads — only dated editions classify",
+     "source": "WP-06 spec review (owner + external reviewer)",
+     "approved": "2026-07-20", "scope": "tossacycling"},
+    {"type": "page", "policy": "date-governed", "fallback": "likely_evergreen",
+     "why": "undated pages are PROBABLY evergreen — but expired campaigns/offers exist, so "
+            "this stays an inference, never certainty",
+     "source": "WP-06 spec review (reviewer caution adopted 2026-07-20)",
+     "approved": "2026-07-20", "scope": "tossacycling"},
+    {"type": "post", "policy": "date-governed", "fallback": "likely_evergreen",
+     "why": "undated posts are PROBABLY evergreen content — same inference caveat as pages",
+     "source": "WP-06 spec review (reviewer caution adopted 2026-07-20)",
+     "approved": "2026-07-20", "scope": "tossacycling"},
 ]
 
 # Scanned independently (NOT one alternation): in a slug like "...-2026-24-06-2026" a combined
@@ -127,6 +138,5 @@ def classify_lifecycle(
 
     # Tier 4 — the rule's fallback, explicitly uncertain when it is a guess.
     fallback = (rule or {}).get("fallback", "unknown")
-    return {"state": fallback, "tier": "inference",
-            "confidence": "medium" if fallback == "evergreen" else "low",
+    return {"state": fallback, "tier": "inference", "confidence": "low",
             "basis": (rule or {}).get("why", "no rule matched; no date evidence")}

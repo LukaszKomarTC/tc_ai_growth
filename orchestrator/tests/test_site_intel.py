@@ -144,16 +144,106 @@ def test_digest_caps_drift_lists_and_labels_them_unexplained():
         "removed": [], "changed": [], "menus_changed": True, "type_changes": {},
     }
     d = format_digest("t", s, drift, max_items=10)
-    assert "UNEXPLAINED DRIFT" in d and "+2 more" in d
+    assert "OBSERVED CHANGES" in d and "NOT approved-baseline drift" in d and "+2 more" in d
     assert "menus changed" in d  # hub moves are called out
 
 
-def test_site_intel_block_empty_without_snapshot_and_populated_with_one(tmp_path):
+def test_site_intel_block_states_are_always_distinguishable(tmp_path):
+    """Reviewer correction: absence of evidence must be explicit, never an empty string.
+    Three deterministic states: unavailable (no snapshot), failed (broken read), present."""
     from tc_growth.memory import site_intel_block
     store = SqliteStore(tmp_path / "s.db")
-    assert site_intel_block(store) == ""  # no snapshot -> no block, never an error
+    missing = site_intel_block(store)
+    assert "SITE INTELLIGENCE: unavailable" in missing
+    assert "Do not make claims" in missing  # structural claims prohibited, stated in-band
+
     store.save_snapshot(payload=json.dumps(_snap([_item(1, "home", "Home")])), item_count=1,
                         drift=json.dumps({"baseline": True}))
     block = site_intel_block(store)
     assert block.startswith("## SITE INTELLIGENCE") and "baseline established" in block
     store.close()
+
+    class _Broken:
+        def latest_snapshot(self):
+            raise RuntimeError("disk on fire")
+    failed = site_intel_block(_Broken())
+    assert "SITE INTELLIGENCE: failed to load" in failed and "prohibited" in failed
+
+
+# --- Reviewer hardening round (2026-07-20) ------------------------------------------------
+
+def test_crawl_rejects_midcrawl_mutation_and_duplicates():
+    from tc_growth.core.site_intel import build_snapshot
+    total_changed = {
+        1: {"items": [_item(1, "a", "A")], "total_pages": 2, "total": 3, "menus": [], "post_types": []},
+        2: {"items": [_item(2, "b", "B")], "total_pages": 2, "total": 4, "menus": [], "post_types": []},
+    }
+    try:
+        build_snapshot(lambda p: total_changed[p])
+    except ValueError as exc:
+        assert "changed during crawl" in str(exc)
+    else:
+        raise AssertionError("total drift mid-crawl must reject the snapshot")
+
+    duplicated = {
+        1: {"items": [_item(1, "a", "A"), _item(2, "b", "B")], "total_pages": 2, "total": 3,
+            "menus": [], "post_types": []},
+        2: {"items": [_item(2, "b", "B")], "total_pages": 2, "total": 3, "menus": [], "post_types": []},
+    }
+    try:
+        build_snapshot(lambda p: duplicated[p])
+    except ValueError as exc:
+        assert "duplicate" in str(exc)
+    else:
+        raise AssertionError("offset-shift duplication must reject the snapshot")
+
+
+def test_expectation_violation_surfaces_even_at_baseline():
+    """The reviewer's key example: a defect present at the FIRST snapshot (hub missing from every
+    menu) can never appear as change — approved expectations catch it anyway."""
+    from tc_growth.core.site_intel import check_expectations, format_digest
+    snap = _snap([_item(1, "home", "Home")],
+                 menus=[{"name": "Main", "items": [{"title": "Home", "url": "/"}]}])
+    violations = check_expectations(snap)
+    kinds = {v["violation"] for v in violations}
+    assert any("tour_de_girona-listado" in k for k in kinds)  # hub page + menu both flagged
+    for v in violations:
+        assert v.get("source") and v.get("why")  # provenance rides along
+    d = format_digest("t", snap, {"baseline": True, "expectation_violations": violations})
+    assert "APPROVED-EXPECTATION VIOLATIONS" in d and "pre-existing defects surface too" in d
+
+
+def test_expectations_satisfied_produce_no_violations():
+    from tc_growth.core.site_intel import check_expectations
+    snap = _snap(
+        [_item(1, "tour_de_girona-listado", "TdG"), _item(2, "alquiler_bicicletas", "Alquiler")],
+        menus=[{"name": "Main", "items": [{"title": "TdG", "url": "https://x/tour_de_girona-listado/"}]}],
+    )
+    assert check_expectations(snap) == []
+
+
+def test_parsed_titles_ride_alongside_raw():
+    from tc_growth.core.site_intel import build_snapshot
+    pages = {1: {"items": [_item(1, "home", "[:es]Inicio[:en]Home[:]")], "total_pages": 1,
+                 "total": 1, "menus": [], "post_types": []}}
+    snap = build_snapshot(lambda p: pages[p])
+    item = snap["items"]["1"]
+    assert item["title"] == "[:es]Inicio[:en]Home[:]"  # raw truth intact
+    assert item["title_es"] == "Inicio" and item["title_en"] == "Home"
+
+
+def test_snapshot_retention_prunes_and_history_is_insert_only(tmp_path):
+    store = SqliteStore(tmp_path / "r.db")
+    ids = [store.save_snapshot(payload="{}", item_count=0, keep=2) for _ in range(4)]
+    listing = store.list_snapshots()
+    assert [s.id for s in listing] == [ids[3], ids[2]]  # oldest pruned, newest kept
+    assert len({*ids}) == 4  # every save was a NEW row — history is insert-only
+    store.close()
+
+
+def test_undated_page_is_likely_evergreen_low_confidence():
+    import datetime as dt
+    from tc_growth.core.lifecycle import classify_lifecycle
+    v = classify_lifecycle({"id": 1, "slug": "servicios", "type": "page", "title": "", "url": ""},
+                           today=dt.date(2026, 7, 20))
+    assert v["state"] == "likely_evergreen" and v["confidence"] == "low" and v["tier"] == "inference"

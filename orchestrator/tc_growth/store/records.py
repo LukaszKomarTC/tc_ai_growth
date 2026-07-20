@@ -343,11 +343,20 @@ def save_snapshot(
     item_count: int,
     drift: str | None = None,
     source: str = "wp_site_structure",
+    keep: int = 30,
 ) -> int:
+    """INSERT-only (history is immutable — there is deliberately no update path for this
+    table). Retention: after each save, rows beyond the newest `keep` are pruned so the
+    snapshot store stays bounded (weekly cadence -> ~7 months of history at the default)."""
     cur = conn.execute(
         "INSERT INTO site_snapshots (taken_at, source, item_count, payload, drift) "
         "VALUES (?, ?, ?, ?, ?);",
         (_now(), source, item_count, payload, drift),
+    )
+    conn.execute(
+        "DELETE FROM site_snapshots WHERE id NOT IN "
+        "(SELECT id FROM site_snapshots ORDER BY id DESC LIMIT ?);",
+        (max(1, keep),),
     )
     conn.commit()
     return int(cur.lastrowid)

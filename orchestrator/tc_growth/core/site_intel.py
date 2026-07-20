@@ -13,10 +13,30 @@ Three-state discipline (owner + reviewer, 2026-07-20):
 
 from __future__ import annotations
 
+import re
 from typing import Any, Callable
 
 # Fields whose change is meaningful drift (order matters only for display).
 _TRACKED_FIELDS = ("title", "slug", "parent", "template", "url", "type")
+
+_LANG_TAG = re.compile(r"\[:([a-z]{2})\]")
+
+
+def parse_multilingual(raw: str) -> dict[str, str]:
+    """Split a qTranslate-tagged string into {lang: text}. Untagged input -> {} (single-language
+    or empty — the caller keeps the raw value either way). Raw stays the ground truth; parsed
+    values exist so downstream consumers stop re-implementing language parsing."""
+    if not raw or "[:" not in raw:
+        return {}
+    parts = _LANG_TAG.split(raw)
+    # parts = [prefix, lang, text, lang, text, ..., possibly trailing after [:]]
+    out: dict[str, str] = {}
+    for i in range(1, len(parts) - 1, 2):
+        text = parts[i + 1]
+        # A closing [:] leaves a "" language-less tail handled by the regex split naturally;
+        # strip the terminator artifact if present.
+        out[parts[i]] = text.replace("[:]", "").strip()
+    return {k: v for k, v in out.items() if v}
 
 
 def build_snapshot(fetch_page: Callable[[int], dict[str, Any]], *, max_pages: int = 50) -> dict[str, Any]:
@@ -28,22 +48,93 @@ def build_snapshot(fetch_page: Callable[[int], dict[str, Any]], *, max_pages: in
     """
     first = fetch_page(1)
     items: dict[str, dict[str, Any]] = {}
+    raw_seen = 0
     for it in first.get("items", []):
         items[str(it["id"])] = it
+        raw_seen += 1
 
     total_pages = int(first.get("total_pages", 1))
+    total_reported = int(first.get("total", 0))
     if total_pages > max_pages:
         raise ValueError(f"site too large for snapshot guard: {total_pages} pages > max_pages={max_pages}")
+
     for page in range(2, total_pages + 1):
-        for it in fetch_page(page).get("items", []):
+        resp = fetch_page(page)
+        # Consistency: the collection must not change under the crawl. Offsets shift when an
+        # editor adds/deletes mid-crawl, silently duplicating or dropping items — reject and
+        # let the caller retry rather than snapshot an inconsistent site.
+        if int(resp.get("total", total_reported)) != total_reported:
+            raise ValueError(
+                f"collection changed during crawl (total {total_reported} -> {resp.get('total')}) — retry"
+            )
+        for it in resp.get("items", []):
             items[str(it["id"])] = it
+            raw_seen += 1
+
+    if raw_seen != len(items):
+        raise ValueError(
+            f"duplicate items during crawl ({raw_seen} fetched, {len(items)} unique) — "
+            "collection likely changed; retry"
+        )
+    if total_reported and len(items) != total_reported:
+        raise ValueError(
+            f"incomplete crawl ({len(items)} items vs {total_reported} reported) — retry"
+        )
+
+    for it in items.values():
+        langs = parse_multilingual(str(it.get("title", "")))
+        for lang, text in langs.items():
+            it[f"title_{lang}"] = text
 
     return {
         "post_types": first.get("post_types", []),
         "menus": first.get("menus", []),
         "items": items,
-        "total_reported": int(first.get("total", len(items))),
+        "total_reported": total_reported or len(items),
     }
+
+
+# Owner-approved STRUCTURAL EXPECTATIONS — the machine-readable slice of approved site
+# knowledge. Checked against EVERY snapshot (not against the previous one), so a defect that
+# was already present at the first snapshot still surfaces: change detection alone can never
+# see a baseline that was born wrong. Editing this list is a human act (PR review); every
+# entry carries provenance.
+EXPECTED_STRUCTURE: list[dict[str, str]] = [
+    {"kind": "menu_contains_url", "value": "/tour_de_girona-listado/",
+     "why": "the TdG hub must stay reachable from site navigation — editions route to it",
+     "source": "WP-04 owner review 2026-07-13 + SITE_PROFILE behaviour #6",
+     "approved": "2026-07-20", "scope": "tossacycling"},
+    {"kind": "slug_exists", "value": "tour_de_girona-listado",
+     "why": "the TdG hub page itself must exist",
+     "source": "WP-04 owner review 2026-07-13", "approved": "2026-07-20", "scope": "tossacycling"},
+    {"kind": "slug_exists", "value": "alquiler_bicicletas",
+     "why": "the ES rental listing is a primary commercial page",
+     "source": "SITE_PROFILE permalinks (behaviour #5)", "approved": "2026-07-20",
+     "scope": "tossacycling"},
+]
+
+
+def check_expectations(
+    snapshot: dict[str, Any], expectations: list[dict[str, str]] | None = None
+) -> list[dict[str, str]]:
+    """Approved-vs-observed comparison. Returns one violation dict per unmet expectation —
+    each carries the expectation's why/source so a report can cite the approved basis. This is
+    NOT change detection: it runs against the current snapshot alone."""
+    expectations = EXPECTED_STRUCTURE if expectations is None else expectations
+    violations = []
+    items = snapshot.get("items", {}).values()
+    menu_urls = " ".join(
+        str(e.get("url", "")) for m in snapshot.get("menus", []) for e in m.get("items", [])
+    )
+    for exp in expectations:
+        ok = True
+        if exp["kind"] == "slug_exists":
+            ok = any(i.get("slug") == exp["value"] for i in items)
+        elif exp["kind"] == "menu_contains_url":
+            ok = exp["value"] in menu_urls
+        if not ok:
+            violations.append({**exp, "violation": f"{exp['kind']}={exp['value']} not satisfied"})
+    return violations
 
 
 def diff_snapshots(old: dict[str, Any] | None, new: dict[str, Any]) -> dict[str, Any]:
@@ -133,13 +224,21 @@ def format_digest(taken_at: str, snapshot: dict[str, Any], drift: dict[str, Any]
         lines.append("- Menus (the site's own primary paths): " + "; ".join(
             f"{m.get('name', '?')} [{len(m.get('items', []))} entries]" for m in menus))
 
+    violations = (drift or {}).get("expectation_violations", [])
+    if violations:
+        lines.append("- APPROVED-EXPECTATION VIOLATIONS (observed state disagrees with "
+                     "owner-approved knowledge — checked against THIS snapshot, so pre-existing "
+                     "defects surface too):")
+        for v in violations:
+            lines.append(f"  - {v.get('violation')} — {v.get('why')} (source: {v.get('source')})")
+
     if drift is None or drift.get("baseline"):
-        lines.append("- Drift: first snapshot — baseline established, nothing to compare yet.")
+        lines.append("- Changes: first snapshot — baseline established, nothing to compare yet.")
     elif not drift.get("has_drift"):
-        lines.append("- Drift: none since the previous snapshot.")
+        lines.append("- Changes: none since the previous snapshot.")
     else:
-        lines.append("- UNEXPLAINED DRIFT since the previous snapshot (observed, not explained — "
-                     "account for it or flag it for the owner):")
+        lines.append("- OBSERVED CHANGES since the previous snapshot (change detection — "
+                     "unexplained until accounted for; this is NOT approved-baseline drift):")
         for key, label in (("added", "added"), ("removed", "removed")):
             rows = drift.get(key, [])
             if rows:

@@ -266,6 +266,7 @@ class TC_Growth_REST {
 		) );
 
 		return rest_ensure_response( array(
+			'site'        => home_url(),
 			'post_types'  => $type_inventory,
 			'menus'       => 1 === $page ? $menus : array(), // menus once, not per page
 			'items'       => $items,

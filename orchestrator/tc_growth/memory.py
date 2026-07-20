@@ -77,12 +77,28 @@ def known_cases_block(store=None, *, limit: int = 25) -> str:
     return block
 
 
-def site_intel_block(store=None) -> str:
-    """SITE INTELLIGENCE digest for task injection (WP-06 slice 4), or '' without a snapshot.
+_SITE_INTEL_UNAVAILABLE = (
+    "## SITE INTELLIGENCE: unavailable\n"
+    "No completed snapshot exists for this profile. Do not make claims that pages are "
+    "missing, new, obsolete, duplicated, or misrouted this run — structural evidence is "
+    "absent, and its absence must be stated, not implied."
+)
 
-    Same resilience contract as known_cases_block: any failure returns '' — a missing or broken
-    snapshot must never break a scheduled report. The digest stays compact by design; the model
-    queries site_map_query for detail instead of receiving the whole snapshot."""
+_SITE_INTEL_FAILED = (
+    "## SITE INTELLIGENCE: failed to load\n"
+    "The stored snapshot could not be read. Structural conclusions (new/missing/obsolete/"
+    "duplicate/misrouted) are prohibited for this run; note the failure in the report's "
+    "limitations section."
+)
+
+
+def site_intel_block(store=None) -> str:
+    """SITE INTELLIGENCE digest for task injection (WP-06 slice 4).
+
+    Resilience without silent absence (reviewer correction, 2026-07-20): the report must
+    never break, but the model must always be able to distinguish 'digest present' from
+    'no snapshot yet' from 'snapshot failed to load' — an empty string would hide the
+    absence of evidence, so each state gets an explicit deterministic marker."""
     try:
         import json
 
@@ -98,9 +114,9 @@ def site_intel_block(store=None) -> str:
             if own:
                 store.close()
         if row is None:
-            return ""
+            return _SITE_INTEL_UNAVAILABLE
         snapshot = json.loads(row.payload)
         drift = json.loads(row.drift) if row.drift else None
         return "## " + format_digest(row.taken_at, snapshot, drift)
     except Exception:
-        return ""
+        return _SITE_INTEL_FAILED

@@ -67,9 +67,9 @@ class SqliteStore:
 
     # -- lifecycle --
     def save_snapshot(self, *, payload: str, item_count: int, drift: str | None = None,
-                      source: str = "wp_site_structure") -> int:
+                      source: str = "wp_site_structure", keep: int = 30) -> int:
         return records.save_snapshot(self._conn, payload=payload, item_count=item_count,
-                                     drift=drift, source=source)
+                                     drift=drift, source=source, keep=keep)
 
     def latest_snapshot(self) -> Snapshot | None:
         return records.latest_snapshot(self._conn)
