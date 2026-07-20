@@ -49,6 +49,25 @@ feature velocity.
 | 5 | `docs/master-roadmap-capture` + `docs/evidence-platform-spec` | docs-only; may be grouped — no executable overlap; suite run once after the group |
 | 6 | `feature/action-registry` | **merges LAST**: it is stacked on source-reader and its drift tests must validate the FINAL combined command/phase surface, not an intermediate state; suite + `list-operations` output recorded |
 
+## Part 3 — Release 0.3 retrospective (after the programme completes, before ANY 1.1 work)
+
+Written to `docs/reviews/RETRO-0.3.md` once the last branch has merged and its acceptance
+is recorded. About process, not bugs. Questions fixed NOW — before the outcome exists —
+so the retro cannot drift into a victory lap or a blame exercise:
+
+1. Which governance rules prevented mistakes? (name the incident each one caught)
+2. Which review requirements turned out unnecessary? (candidates for removal — discipline
+   that catches nothing is cost, not safety)
+3. Which acceptance criteria were ambiguous when the moment came to grade them?
+4. Which architectural decisions proved especially valuable?
+5. What surprised us during integration?
+6. What would we change before the next major release?
+
+The retro is institutional memory: its answers feed the 1.1 planning directly, and no
+1.1 design work starts until it exists. The freeze-week's own lesson is pre-seeded as its
+first data point: the binding constraint stopped being code volume and became controlled
+integration and owner attention — 1.1 planning must budget for that from the start.
+
 ## SMOKE-01 — privileged diagnostic path hardening (finding, 2026-07-20)
 
 **Finding:** the `smoke` command is a privileged diagnostic execution path that bypasses
