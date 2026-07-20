@@ -43,6 +43,15 @@ reaches staging. Review each result in staging wp-admin.
       references INC-2026-02-01 (monitoring) and the closed duplicate as "merged, no separate
       action"; zero new cases opened for known topics.
 - [ ] **case_read consulted** before judging new-vs-known (visible in run tool calls).
+      **Criterion clarification (2026-07-20, BEFORE the run it applies to):** this box means
+      exactly what it says — case-memory consultation for new-vs-known judgment, evidenced by
+      the FROZEN 0.3 candidate's own tool trace (Monday scheduled run #3, or a supervised
+      validation run on the same frozen candidate if Monday's trace doesn't show it).
+      WP-06's acceptance evidence ("site map consulted before structural claims") is a
+      DIFFERENT behaviour proven on a post-merge build — it must NOT close this box, and 0.3
+      does not sign off while this box is open. Both checks together become a standing item
+      of post-merge validation reports (case memory for new-vs-known; site map for
+      structural), but the gate closes on the original criterion only.
 - [x] **Links decisions to cases** — 2026-07-06: D#6 (noindex order pages) logged as proposed,
       linked to TRK-20260706-050158.
 - [x] **Updates confidence with a basis** — 2026-07-12 re-examination of TRK-20260706-050158:
@@ -113,6 +122,19 @@ reaches staging. Review each result in staging wp-admin.
 - [ ] At gate close: tag the exact deployed commit that produced the three clean Mondays
       (`release-0.3-validated`) BEFORE merging any post-gate capability — the gate validated
       that commit, not whatever main becomes afterwards.
+
+      **Agreed close-out sequence (2026-07-20 — gate evidence and post-gate acceptance are
+      SEPARATE evidence events):**
+      1. Monday scheduled run #3 executes on the frozen candidate.
+      2. Grade it (clean-Monday criteria) AND collect genuine case_read evidence from its
+         tool trace.
+      3. Close the remaining original 0.3 boxes. If case_read is unproven, 0.3 does NOT sign
+         off — nothing merges until the box closes honestly (supervised validation run on the
+         same frozen candidate is the permitted fallback).
+      4. Tag `release-0.3-validated`.
+      5. Merge and deploy WP-06 (feature branch).
+      6. Run WP-06 live acceptance (first real snapshot + behavioural grading) — graded as
+         the FIRST POST-0.3 CAPABILITY, never as gate evidence.
 - [ ] THREE consecutive clean Mondays: **2026-07-13 ✅ (operational gate)** · **2026-07-20 ✅
       (CLEAN)** · ____-__-__
       (clean = no calibration failure, no duplicate case, no false critical, no re-proposed
