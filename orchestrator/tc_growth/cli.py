@@ -23,6 +23,7 @@
     python -m tc_growth.cli draft-test "<task>"          # supervised DRAFTS-phase run (staging)
     python -m tc_growth.cli validation                   # Release 0.3 validation report (from docs/VALIDATION.md)
     python -m tc_growth.cli dashboard [port]             # read-only web view (127.0.0.1 only)
+    python -m tc_growth.cli console [port]               # Operations Console (execute ops; 127.0.0.1 + token)
 
 `smoke` exercises a single host-side tool WITHOUT the AI runtime — the fastest way to surface
 OAuth/vault/credential problems (the usual first failure point). `weekly-report` runs the full
@@ -430,6 +431,10 @@ def main(argv: list[str] | None = None) -> int:
 
         serve(port=int(rest[0]) if rest else 8383)
         return 0
+    if cmd == "console":
+        from .console import serve as serve_console
+
+        return serve_console(port=int(rest[0]) if rest else 8385)
     print(__doc__)
     return 1
 

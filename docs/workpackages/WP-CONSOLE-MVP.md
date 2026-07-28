@@ -1,9 +1,16 @@
 # WP — AI Operations Console (MVP)
 
-**Status:** SPEC 2026-07-28 — reprioritized to NEXT after INC-2026-07-27. The incident forced
-days of manual terminal operation; the owner and independent review converged on the same
-signal: *the platform has reached the point where investing in operator UX returns more than
-another capability.* Build this before Site Intelligence / Source Reader resume.
+**Status:** SLICE 1 BUILT 2026-07-28 (SMTP Test, end to end) — reprioritized to NEXT after
+INC-2026-07-27. The incident forced days of manual terminal operation; the owner and independent
+review converged on the same signal: *the platform has reached the point where investing in
+operator UX returns more than another capability.* Build this before Site Intelligence / Source
+Reader resume.
+
+**What exists now (branch `feature/operations-console`):** the origin-agnostic Execution
+Service (`core/executor.py`), the `smtp_test` registry operation with instrumented protocol
+step events, and the loopback Console (`console.py`) — login → Preview → Execute → live streamed
+steps → pass/fail + evidence, with token→session+CSRF auth. 30 tests + a live loopback smoke
+test green. Not yet deployed behind the tunnel with real SMTP (owner acceptance pending).
 
 **Origin insight:** we were building the platform by suffering the exact pain the platform
 exists to remove (human-as-clipboard, pasting commands nobody can fully verify). The Console
@@ -40,7 +47,10 @@ next entry point:
 - **Not internet-exposed.** MVP binds `127.0.0.1` only, reached via SSH tunnel (same as the
   read dashboard). A public authenticated endpoint is a later, deliberate step.
 - **Session auth + CSRF** on every state-changing request (the dashboard audit already required
-  this before any write control shipped).
+  this before any write control shipped). *Implemented:* a shared `TC_CONSOLE_TOKEN` unlocks an
+  HMAC-signed, 12h-expiring session cookie (HttpOnly, SameSite=Strict); every execute POST also
+  carries a session-bound CSRF token. The server **fails closed** — it refuses to start without a
+  token. Self-only CSP; no off-box fetch. (A real IdP is a later, deliberate step.)
 - **Governed execution only:** the executor may run ONLY operations in the Action Registry,
   with the registry's phase gate, approval class, and allowlisted arguments enforced server-side.
   No free-form command field, ever. No shell string interpolation.
@@ -96,16 +106,18 @@ stack around **one operation, end to end**, prove it, then add operations one at
 first slice is **SMTP Test** — low blast radius (read-only-ish, no site writes), exactly the
 thing we fought with tonight, and it exercises every layer the platform needs.
 
-1. **SMTP Test — full vertical slice.** Preview → Execute button → Execution Service runs the
-   op → step events stream to the UI → pass/fail + evidence shown → audit record written. Backend
-   + streaming + evidence + tests, then the minimal loopback UI around it. When the owner can
-   click "SMTP Test" behind the tunnel and watch it succeed with no terminal, the slice is done.
+1. **SMTP Test — full vertical slice. ✅ BUILT.** Preview → Execute button → Execution Service
+   runs the op → step events stream to the UI → pass/fail + evidence shown → audit record written.
+   Backend + streaming + evidence + tests, then the minimal loopback UI around it. Remaining:
+   deploy behind the tunnel with real SMTP so the owner clicks it and watches it succeed — the
+   only step that needs the box.
 2. **Integrity Scan (Technical Inspector)** as the second op — proves a longer-running,
-   multi-step CLI operation streams and captures evidence the same way.
+   multi-step CLI operation streams and captures evidence the same way. (Next; needs the
+   inspector script surfaced as a registry `command` op — near-zero new executor code.)
 3. **Verify Backups / Restore Test** as the third — proves an op that produces a file/report
    artifact as evidence.
-4. Only after three real ops share the one engine: session auth + CSRF hardening pass and the
-   ALWAYS_ASK confirmation step, then widen to the rest (mail queue, weekly report, snapshot).
+4. Only after three real ops share the one engine: the ALWAYS_ASK in-UI confirmation step (auth +
+   CSRF already shipped in slice 1), then widen to the rest (mail queue, weekly report, snapshot).
 
 Each new operation is a registry entry + (if needed) a step-event mapping — not new executor
 code. If adding an operation needs executor changes, that's the signal the abstraction is wrong.
@@ -113,16 +125,22 @@ Then STOP at the agreed set — broader capabilities resume afterward.
 
 ## Acceptance
 
-- [ ] **Slice 1 (SMTP Test) complete:** Preview renders from the registry → Execute → step
-      events stream → pass/fail + evidence shown → audit record written. Owner clicks it behind
-      the tunnel and watches it succeed, no terminal.
-- [ ] Execution Service runs a READ_ONLY named op end-to-end with evidence logged; refuses an op
+- [x] **Slice 1 (SMTP Test) mechanism complete:** Preview renders from the registry → Execute →
+      step events stream → pass/fail + evidence shown → audit record written. Verified by a live
+      loopback smoke test (login→session→CSRF→preview→stream→result→`run#…` evidence).
+- [ ] **Owner acceptance:** deployed behind the tunnel with real SMTP; owner clicks SMTP Test and
+      watches it succeed, no terminal. *(pending the box)*
+- [x] Execution Service runs a READ_ONLY named op end-to-end with evidence logged; refuses an op
       above the current phase / with a disallowed arg (tests). Receives an *approved operation* and
       does not distinguish human vs AI origin.
 - [ ] Adding op #2 (Integrity Scan) and op #3 (Verify Backups) requires a registry entry, not
-      executor changes.
-- [ ] A write/ALWAYS_ASK op requires explicit confirmation; FORBIDDEN ops are unreachable.
-- [ ] No free-form command input anywhere; server enforces the registry, not the client.
+      executor changes. *(next)*
+- [x] Auth fails closed (no token → no serve); session is HMAC-signed + expiring; CSRF is
+      session-bound; execute without CSRF → 403 (tests + smoke).
+- [ ] A write/ALWAYS_ASK op requires explicit in-UI confirmation; FORBIDDEN ops are unreachable.
+      *(confirmation UI is the slice-4 step; today such ops show as not-runnable in preview.)*
+- [x] No free-form command input anywhere; server enforces the registry, not the client (op ids
+      validated server-side; subprocess argv is a list, no shell).
 
 ## Center of gravity — where this is heading
 
