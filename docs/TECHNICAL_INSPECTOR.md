@@ -34,14 +34,30 @@ install -m 0750 orchestrator/scripts/wp-integrity-scan.sh /usr/local/bin/wp-inte
 ```
 Config via env in the cron line if needed: `TC_SITE_DOCROOT`, `TC_ALERT_EMAIL`,
 `TC_EXPECT_ADMINS` (sorted comma-joined admin IDs — update when you legitimately add/remove an
-admin, otherwise the drift check will alert).
+admin), `TC_INSPECTOR_LOG` (default `/var/log/tc-inspector.log`).
+
+**Findings are always written to the log file and printed to stdout, and additionally emailed
+best-effort.** So a finding is never hidden by a missing MTA (the first dry-run exposed exactly
+that: `mail` was absent, and the alert would have gone nowhere). For real email delivery either
+`apt install bsd-mailx` and relay the local MTA through IONOS submission (:587, since outbound
+:25 is blocked on this host), or — preferred — wire Inspector alerts into the platform's
+existing notifier during the branch work. Until then, findings land in the log file reliably.
+
+### False-positive discipline (learned on first run)
+The v0 dry-run flagged two *benign* things, both now fixed — because a monitor that cries wolf
+gets muted:
+- **`shopkeeper-extender`** legitimately mismatches the free wp.org edition on every file. The
+  plugin check now flags **only "should not exist" (extra/planted files)**, not "does not match".
+- **Our own `zzz-tc-*` hardening mu-plugins** are allowlisted so the "PHP in mu-plugins" check
+  doesn't flag the platform's own code.
 
 ### v0 limitations (honest)
 - Single-site, hard-coded expectations (the real Inspector is per-profile, config-driven).
 - Signature/pattern-based — the incident *proved* signatures miss variants; v0 mitigates by
-  combining checksum verification (catches ANY core/repo-plugin change) with pattern scans, but
-  it is not a substitute for the snapshot-diff model below.
-- Alerts by email only; no case creation, no history, no dashboard.
+  combining core-checksum verification (catches ANY core change) with pattern scans, but
+  dropping plugin "does not match" means **modified-file injection into a repo plugin** is only
+  caught if it carries a known fingerprint. The snapshot-diff model below closes that gap.
+- Alerts are log-file + best-effort email; no case creation, no history, no dashboard.
 
 ## Toward v1 — the real Inspector (roadmap)
 

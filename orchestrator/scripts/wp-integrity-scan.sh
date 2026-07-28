@@ -19,33 +19,42 @@ set -uo pipefail
 SITE="${TC_SITE_DOCROOT:-/var/www/vhosts/tossacycling.com/httpdocs}"
 ALERT_TO="${TC_ALERT_EMAIL:-info@tossacycling.com}"
 EXPECT_ADMINS="${TC_EXPECT_ADMINS:-1,119}"   # sorted, comma-joined WP admin IDs; update on legit change
+LOGFILE="${TC_INSPECTOR_LOG:-/var/log/tc-inspector.log}"
+# mu-plugins we install ourselves (legit) — allowlisted so the monitor doesn't flag its own kind
+MU_ALLOW='index.php|zzz-tc-'
 WP="wp --path=$SITE --allow-root"
 
 cd "$SITE" 2>/dev/null || {
-  echo "Technical Inspector: docroot missing: $SITE" | mail -s "[inspector] docroot missing" "$ALERT_TO"
+  echo "$(date -u '+%F %H:%M UTC') inspector: docroot missing: $SITE" | tee -a "$LOGFILE"
+  command -v mail >/dev/null 2>&1 && echo "docroot missing: $SITE" | mail -s "[inspector] docroot missing" "$ALERT_TO"
   exit 1
 }
 
 FINDINGS=""
 add(){ FINDINGS="${FINDINGS}\n== $1 ==\n$2\n"; }
 
-# 1. WordPress core integrity (official checksums)
+# 1. WordPress core integrity (official checksums — core is authoritative, any mismatch matters)
 CORE=$($WP core verify-checksums 2>&1 | grep -iE "should not exist|does not match")
 [ -n "$CORE" ] && add "CORE checksum anomalies" "$CORE"
 
-# 2. repo-plugin integrity (premium 'not in repo' warnings are expected — filtered out)
+# 2. repo-plugin integrity — flag EXTRA files only ("should not exist"). "does not match" is
+#    dropped on purpose: premium plugins (e.g. shopkeeper-extender) legitimately mismatch the
+#    free wp.org edition on every file. Extra planted files are the real signal; modified-file
+#    injection into a repo plugin is covered by the fingerprint/hex scans (v1 adds per-file baseline).
 PLUG=$($WP plugin verify-checksums --all 2>&1 \
-        | grep -iE "does not match|should not exist" \
+        | grep -iE "should not exist" \
         | grep -viE "Could not retrieve|Couldn't fetch")
-[ -n "$PLUG" ] && add "PLUGIN checksum anomalies" "$PLUG"
+[ -n "$PLUG" ] && add "PLUGIN extra/planted files" "$PLUG"
 
 # 3. shell-name pattern: hex-suffixed PHP anywhere in wp-content (the kit's signature naming)
 HEX=$(find wp-content -type f -name "*.php" 2>/dev/null | grep -iE "[-_][0-9a-f]{6,8}\.php$")
 [ -n "$HEX" ] && add "Hex-suffixed PHP (shell naming)" "$HEX"
 
-# 4. executable PHP where none belongs
-UPL=$(find wp-content/uploads wp-content/mu-plugins -name "*.php" ! -name index.php 2>/dev/null)
-[ -n "$UPL" ] && add "PHP in uploads/mu-plugins" "$UPL"
+# 4. executable PHP where none belongs. uploads: ANY php (never legit except index guards).
+#    mu-plugins: any php that isn't our own allowlisted hardening.
+UPL=$(find wp-content/uploads -name "*.php" ! -name index.php 2>/dev/null)
+MU=$(find wp-content/mu-plugins -maxdepth 1 -name "*.php" 2>/dev/null | grep -vE "/($MU_ALLOW)")
+[ -n "$UPL$MU" ] && add "Unexpected PHP in uploads/mu-plugins" "$(printf '%s\n%s' "$UPL" "$MU" | sed '/^$/d')"
 
 # 5. known-kit fingerprints + generic dropper markers
 FP=$(grep -rlE "phpiAgloq|_wp_cuh_restore|WP_Core_Integrity|_site_transient_health_b5592a35" \
@@ -61,11 +70,15 @@ ADM=$($WP user list --role=administrator --field=ID 2>/dev/null | sort -n | past
 WPC=$(grep -nE "eval\(|base64_decode\(|WP_Core_Integrity|auto_prepend_file" wp-config.php 2>/dev/null)
 [ -n "$WPC" ] && add "wp-config anomalies" "$WPC"
 
-# --- alert only on findings ---
+# --- alert only on findings. Always log + print (visible even if mail is absent);
+#     mail is best-effort so a missing MTA never hides a finding. ---
+STAMP="$(date -u '+%F %H:%M UTC')"
 if [ -n "$FINDINGS" ]; then
-  printf 'Technical Inspector found integrity anomalies on %s at %s:\n%b\n' \
-    "$SITE" "$(date -u '+%Y-%m-%d %H:%M UTC')" "$FINDINGS" \
-    | mail -s "[inspector] INTEGRITY ALERT — $(hostname)" "$ALERT_TO"
+  MSG="$(printf 'Technical Inspector — integrity anomalies on %s at %s:\n%b' "$SITE" "$STAMP" "$FINDINGS")"
+  echo "$MSG" | tee -a "$LOGFILE"
+  command -v mail >/dev/null 2>&1 \
+    && echo "$MSG" | mail -s "[inspector] INTEGRITY ALERT — $(hostname)" "$ALERT_TO"
   exit 2
 fi
+echo "$STAMP inspector: clean" >> "$LOGFILE" 2>/dev/null
 exit 0
