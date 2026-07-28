@@ -78,6 +78,35 @@ def test_secret_reads_the_env(monkeypatch):
 # -- phase selection -----------------------------------------------------------
 
 
+def test_logs_label_findings_as_completed_and_escape_scanner_output(monkeypatch):
+    """Two guarantees in one: a findings run must read as 'completed', never 'failed'; and any
+    scanner output rendered into the logs page must be HTML-escaped (no stored XSS from a
+    filename or a log line the attacker controls)."""
+    import json
+    import types
+
+    run = types.SimpleNamespace(
+        kind="op:run_integrity_scan", status="completed", started_at="2026-07-28T06:20:00Z",
+        summary="<script>alert(1)</script> ADMIN set changed",
+        detail=json.dumps({"outcome": "findings", "severity": "attention"}),
+    )
+    fake_store = types.SimpleNamespace(list_runs=lambda: [run])
+    monkeypatch.setattr("tc_growth.store.open_store", lambda: fake_store)
+
+    html_out = console._logs_body()
+    assert "completed · findings" in html_out          # not "failed"
+    assert "<script>alert(1)</script>" not in html_out  # escaped, not live
+    assert "&lt;script&gt;" in html_out
+
+
+def test_stream_client_escapes_output_via_textcontent():
+    """The live step stream renders attacker-influenced output client-side; it must go through the
+    textContent-based escaper, never innerHTML directly. Guard against that helper being dropped."""
+    # The operations page carries the client script.
+    assert "textContent" in console._SCRIPT
+    assert "h(ev.detail)" in console._SCRIPT and "h(ev.step)" in console._SCRIPT
+
+
 def test_console_phase_defaults_read_only_and_is_overridable(monkeypatch):
     from tc_growth.core.approval import Phase
 

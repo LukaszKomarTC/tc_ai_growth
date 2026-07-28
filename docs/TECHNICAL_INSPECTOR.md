@@ -42,12 +42,28 @@ Checks: core checksums · repo-plugin checksums · hex-suffixed PHP anywhere · 
 uploads/mu-plugins · known-kit fingerprints · administrator-set drift · wp-config injection
 markers.
 
-### Install (on the VPS)
+### Source of truth & deployment (ONE script, no drift)
+
+The **repository copy `orchestrator/scripts/wp-integrity-scan.sh` is the single source of truth**,
+versioned by git. It is *deployed* atomically to a controlled release path
+(`/usr/local/bin/wp-integrity-scan.sh`), and the deployed copy is **never hand-edited** — every
+change goes through the repo and is redeployed. Record which commit a deployment came from so the
+running script is always traceable to a reviewed revision.
+
+Critically, **both consumers run the same deployed file**: the cron schedule *and* the Operations
+Console. The Console's `run_integrity_scan` op invokes the script via `TC_INSPECTOR_SCRIPT`, which
+in production **must point at the deployed path**, not a developer working tree — otherwise cron
+and the Console could run two different versions. Set it in the Console's environment:
+`TC_INSPECTOR_SCRIPT=/usr/local/bin/wp-integrity-scan.sh`.
+
 ```bash
+# Deploy the repo version atomically, stamping the commit it came from.
+COMMIT=$(git rev-parse --short HEAD)
 install -m 0750 orchestrator/scripts/wp-integrity-scan.sh /usr/local/bin/wp-integrity-scan.sh
+logger -t tc-inspector "deployed wp-integrity-scan.sh @ $COMMIT"   # traceable to a reviewed revision
 # dry-run once (should print nothing and exit 0 on a clean site)
 /usr/local/bin/wp-integrity-scan.sh; echo "exit: $?"
-# schedule daily 04:17 (root crontab)
+# schedule daily 04:17 (root crontab) — same deployed path the Console uses
 ( crontab -l 2>/dev/null; echo '17 4 * * * /usr/local/bin/wp-integrity-scan.sh' ) | crontab -
 ```
 Config via env in the cron line if needed: `TC_SITE_DOCROOT`, `TC_ALERT_EMAIL`,

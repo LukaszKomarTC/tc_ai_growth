@@ -73,8 +73,30 @@ Given an approved operation it:
 - runs it (CLI operations as governed subprocesses with timeout + captured stdout/stderr;
   tool operations via the registry dispatch);
 - emits **step events** as it goes (see Streaming); persists a run record + evidence;
-  returns a structured result (status, exit, evidence refs, duration).
+  returns a structured result (see Result semantics below).
 Reuses the existing phase gate and Action Registry — it does not invent a second authority.
+
+## Result semantics — findings are not failures
+
+An evidence-centric platform must not collapse every operation into Unix `exit 0 = success,
+nonzero = failure`. That's too primitive for diagnostics: an integrity scan that exits `2`
+**completed successfully and found something** — recording it as *failed* would poison
+reliability metrics, make operator history say the tool broke when it worked, let alerting
+confuse a security finding with an infrastructure outage, and teach a future AI that the scanner
+is unreliable. So the result model separates three axes:
+
+- **execution_status** — did the op run to a defined result? `completed | error | blocked`
+- **outcome** — the domain result it reports: `clean | findings | warnings | success | failure`
+- **severity** — operator attention: `ok | attention | warn | error`
+
+The exit-code → outcome mapping is **data on the registry operation** (`result_policy`), so the
+executor stays generic while the registry describes each op's own semantics. Integrity scan
+declares `{0: clean, 2: findings}`; a code outside the policy is a genuine execution error (a
+crash, a timeout). The ledger stores `execution_status` as the run status (so a findings scan
+counts as a *completed* run) with `outcome`/`severity` in the evidence detail for richer queries.
+The Console shows "Completed — findings" in amber, not a red "failed". Outcome labels are a
+closed vocabulary validated in CI. *This was a real correction during op #2 — the first version
+mislabelled exit 2 as failed.*
 
 ## Operation Preview — show before you run
 
@@ -114,7 +136,8 @@ thing we fought with tonight, and it exercises every layer the platform needs.
 2. **Integrity Scan (Technical Inspector). ✅ BUILT.** The second op — proves a longer-running,
    multi-step CLI operation streams and captures evidence the same way, and it did so as a pure
    **registry entry + CLI binding with ZERO executor changes** (a test asserts it has no native
-   runner). Exit 2 (anomalies found) surfaces as a red "attention" result; exit 0 is clean.
+   runner). It also forced a **result-semantics** correction (see below): exit 2 is a *completed
+   scan with findings*, not a failure.
 3. **Verify Backups / Restore Test** as the third — proves an op that produces a file/report
    artifact as evidence.
 4. Only after three real ops share the one engine: the ALWAYS_ASK in-UI confirmation step (auth +
@@ -135,7 +158,24 @@ Then STOP at the agreed set — broader capabilities resume afterward.
       above the current phase / with a disallowed arg (tests). Receives an *approved operation* and
       does not distinguish human vs AI origin.
 - [x] Adding op #2 (Integrity Scan) required a registry entry + CLI binding, **no executor
-      changes** — locked by a test asserting it has no native runner. Op #3 (Verify Backups) next.
+      changes** — locked by a test asserting it has no native runner.
+- [x] **Result semantics correct:** exit 2 (findings) is `completed / findings / attention`, not
+      `failed`; exit-code→outcome mapping is registry data (`result_policy`), validated in CI;
+      outcome/severity persisted as evidence; scanner output HTML-escaped in the UI (tests + smoke).
+
+### OP2 real-box acceptance (pending the box — needs the VPS)
+
+Repository tests are necessary but not sufficient. Before OP2 is "accepted":
+
+- [ ] Run against the real production WordPress docroot under the real `tcgrowth` permissions.
+- [ ] Confirm fixed target + no path injection (op takes no args; script path is env-pinned).
+- [ ] A clean scan produces `completed / clean`.
+- [ ] A harmless controlled fixture produces `completed / findings` (NOT `failed`); then remove it
+      and confirm `completed / clean` again.
+- [ ] Findings persist to the log even if alert delivery fails.
+- [ ] The browser safely escapes filenames and scanner output (verified in the loopback smoke; re-check on the box).
+- [ ] Establish the script **source of truth** (see docs/TECHNICAL_INSPECTOR.md): repo → deployed
+      path, cron and Console run the *same* deployed file. No hand-edited `/usr/local/bin` copy.
 - [x] Auth fails closed (no token → no serve); session is HMAC-signed + expiring; CSRF is
       session-bound; execute without CSRF → 403 (tests + smoke).
 - [ ] A write/ALWAYS_ASK op requires explicit in-UI confirmation; FORBIDDEN ops are unreachable.
@@ -152,8 +192,20 @@ client* of that platform, not the platform itself. This Console is the human cli
 path (separate, later WP) is a second client of the *same* Execution Service. Keep that framing:
 build the platform, then let each origin — human or agent — call it through the same governed door.
 
+## Branch stack & merge discipline
+
+The Console branch now carries a stack of feature layers (Action Registry, Site Intelligence,
+Source Reader, Technical Inspector, plus the Console itself). To keep a Console merge from becoming
+a **backdoor merge of several frozen branches**, the dependency map, the true-vs-co-present
+analysis, and the base-up merge order are captured in
+[`WP-CONSOLE-DEPENDENCY-MAP.md`](./WP-CONSOLE-DEPENDENCY-MAP.md). Core invariant: **the operations
+a user can click must equal the capabilities that have passed their own acceptance** — the registry
+must not advertise an operation whose backing layer is still frozen.
+
 ## What this does NOT change
 
 Merges still wait for the restarted clean-Monday gate. The Console is built now on this branch;
 it deploys with the re-baselined platform, not before. Development continues; baseline trust is
-not diluted.
+not diluted. OP3 (Verify Backups) is **explicitly paused** until OP1+OP2 have real-box owner
+acceptance and the result-semantics + source-of-truth items above are closed — three operations
+are not better than two if the outcome model is wrong or neither is accepted on the VPS.

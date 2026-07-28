@@ -73,27 +73,27 @@ def test_preview_does_not_prompt_for_confirmation():
 
 def test_unknown_operation_is_blocked_not_crashed():
     res = _exec().execute("no_such_op")
-    assert res.status == "blocked"
+    assert res.execution_status == "blocked"
     assert res.block_reason == "unknown_operation"
 
 
 def test_disallowed_argument_is_refused():
     res = _exec().execute("smtp_test", {"to": "attacker@evil.test"})
-    assert res.status == "blocked"
+    assert res.execution_status == "blocked"
     assert res.block_reason == "disallowed_arg"
 
 
 def test_operation_below_current_phase_is_blocked():
     # publish_seo_draft needs CONTROLLED_EXECUTION; a READ_ONLY executor must refuse it.
     res = _exec().execute("publish_seo_draft")
-    assert res.status == "blocked"
+    assert res.execution_status == "blocked"
     assert res.block_reason == "phase"
 
 
 def test_wrong_environment_is_blocked():
     # publish_seo_draft may target staging only.
     res = _exec(phase=Phase.CONTROLLED_EXECUTION, environment="production").execute("publish_seo_draft")
-    assert res.status == "blocked"
+    assert res.execution_status == "blocked"
     assert res.block_reason in ("environment", "phase")  # both are legitimate refusals here
 
 
@@ -102,7 +102,7 @@ def test_always_ask_op_without_confirmation_is_blocked(monkeypatch):
     monkeypatch.setenv("TC_ALLOW_WRITES", "true")
     res = Executor(phase=Phase.CONTROLLED_EXECUTION, environment="staging",
                    confirm=None, store_factory=lambda: None).execute("publish_seo_draft")
-    assert res.status == "blocked"
+    assert res.execution_status == "blocked"
     assert res.block_reason == "confirmation"
 
 
@@ -130,7 +130,8 @@ def test_smtp_test_runs_streams_steps_and_reports_success(monkeypatch):
     res = _exec().execute("smtp_test", emit=seen.append)
 
     assert isinstance(res, ExecutionResult)
-    assert res.ok and res.status == "ok"
+    assert res.completed and res.clean            # exit 0, default policy -> success/ok
+    assert res.execution_status == "completed" and res.outcome == "success"
     assert res.exit_code == 0
     # Step events streamed to the sink AND captured on the result.
     streamed = [s.step for s in seen]
@@ -139,10 +140,13 @@ def test_smtp_test_runs_streams_steps_and_reports_success(monkeypatch):
     assert "passed" in res.output
 
 
-def test_smtp_test_failure_is_a_failed_result_not_an_exception(monkeypatch):
+def test_smtp_test_failure_is_an_execution_error_not_an_exception(monkeypatch):
+    # SMTP has no result_policy, so a non-zero exit is a genuine execution error (the tool could
+    # not do its job) — distinct from a diagnostic that COMPLETES with findings.
     monkeypatch.setattr("tc_growth.report.smtp_test_steps", _fake_smtp_steps_fail)
     res = _exec().execute("smtp_test")
-    assert res.status == "failed"
+    assert res.execution_status == "error" and res.outcome == "failure"
+    assert res.severity == "error"
     assert res.exit_code == 1
     assert "FAILED" in res.output
 
@@ -156,9 +160,10 @@ def test_successful_run_is_persisted_as_evidence(monkeypatch):
     assert len(store.calls) == 1
     rec = store.calls[0]
     assert rec["kind"] == "op:smtp_test"
-    assert rec["status"] == "ok"
-    # The full step transcript is the evidence — it must be recorded, not just the summary.
+    assert rec["status"] == "completed"       # ledger status = execution_status, never a domain outcome
+    # The full step transcript + interpreted result is the evidence — recorded, not just a summary.
     assert "steps" in rec["detail"] and "auth" in rec["detail"]
+    assert '"outcome": "success"' in rec["detail"] and '"severity": "ok"' in rec["detail"]
     assert "human" in rec["detail"]
 
 
@@ -169,7 +174,7 @@ def test_actor_is_recorded_but_does_not_change_permissions(monkeypatch):
     monkeypatch.setattr("tc_growth.report.smtp_test_steps", _fake_smtp_steps_ok)
     human = _exec().execute("smtp_test", actor="human")
     ai = _exec().execute("smtp_test", actor="ai")
-    assert human.status == ai.status == "ok"
+    assert human.execution_status == ai.execution_status == "completed"
     assert ai.actor == "ai"
 
 
@@ -200,6 +205,27 @@ def test_integrity_scan_op_needs_no_executor_code():
     assert op.command == "integrity-scan" and op.tool is None
 
 
+def test_interpret_exit_uses_the_ops_result_policy():
+    from tc_growth.core.actions import get_operation
+    from tc_growth.core.executor import interpret_exit
+
+    scan = get_operation("run_integrity_scan")
+    assert interpret_exit(scan, 0) == ("completed", "clean", "ok")
+    assert interpret_exit(scan, 2) == ("completed", "findings", "attention")
+    assert interpret_exit(scan, 127) == ("error", "failure", "error")  # outside the policy
+    # An op with NO policy: 0 = success, anything else = error (the sane default).
+    smtp = get_operation("smtp_test")
+    assert interpret_exit(smtp, 0) == ("completed", "success", "ok")
+    assert interpret_exit(smtp, 1) == ("error", "failure", "error")
+
+
+def test_preview_surfaces_possible_outcomes():
+    prev = _exec().preview("run_integrity_scan")
+    labels = {o for o, _sev in prev.outcomes}
+    assert labels == {"clean", "findings"}
+    assert dict(prev.outcomes)["findings"] == "attention"
+
+
 def test_integrity_scan_previews_as_a_read_only_runnable_op():
     prev = _exec().preview("run_integrity_scan")
     assert prev.binding == "cli:integrity-scan"
@@ -207,29 +233,46 @@ def test_integrity_scan_previews_as_a_read_only_runnable_op():
     assert prev.runnable_now is True
 
 
-def test_integrity_scan_findings_surface_as_a_failed_result(monkeypatch):
-    """The inspector exits 2 when it finds anomalies. Through the generic path that becomes a
-    'failed' (attention) result with the scan output as evidence — the operator sees red."""
+def test_integrity_scan_findings_are_completed_with_findings_not_failed(monkeypatch):
+    """The inspector exits 2 when it finds anomalies. That is a COMPLETED diagnostic with a
+    'findings' outcome (severity attention) — NOT a failed execution. Recording it as failed
+    would poison reliability metrics and make the tool look broken when it worked."""
     from tc_growth.core import executor as ex
 
     lines = ["Technical Inspector — integrity anomalies:", "  - ADMIN set changed"]
     monkeypatch.setattr(ex.subprocess, "Popen",
-                        lambda *a, **k: _FakeProc([l + "\n" for l in lines], code=2))
+                        lambda *a, **k: _FakeProc([line + "\n" for line in lines], code=2))
     seen: list[StepEvent] = []
     res = _exec().execute("run_integrity_scan", emit=seen.append)
-    assert res.status == "failed"           # exit 2 = anomalies found -> attention
+    assert res.execution_status == "completed"    # the tool ran successfully...
+    assert res.outcome == "findings"              # ...and its outcome is findings...
+    assert res.severity == "attention"            # ...which warrants attention, not an error.
+    assert res.completed and not res.clean
     assert res.exit_code == 2
     assert "ADMIN set changed" in res.output
     assert any(s.step == "output" for s in seen)   # streamed line-by-line
 
 
-def test_integrity_scan_clean_is_an_ok_result(monkeypatch):
+def test_integrity_scan_clean_is_completed_clean(monkeypatch):
     from tc_growth.core import executor as ex
 
     monkeypatch.setattr(ex.subprocess, "Popen",
                         lambda *a, **k: _FakeProc(["inspector: clean exit=0\n"], code=0))
     res = _exec().execute("run_integrity_scan")
-    assert res.status == "ok" and res.exit_code == 0
+    assert res.execution_status == "completed" and res.outcome == "clean"
+    assert res.clean and res.exit_code == 0
+
+
+def test_integrity_scan_unexpected_exit_is_a_real_error(monkeypatch):
+    """A code OUTSIDE the result policy (e.g. the script crashed) IS an execution error — the
+    policy is not a licence to swallow genuine failures."""
+    from tc_growth.core import executor as ex
+
+    monkeypatch.setattr(ex.subprocess, "Popen",
+                        lambda *a, **k: _FakeProc(["bash: wp: command not found\n"], code=127))
+    res = _exec().execute("run_integrity_scan")
+    assert res.execution_status == "error" and res.outcome == "failure"
+    assert res.severity == "error" and res.exit_code == 127
 
 
 def test_cli_integrity_scan_reports_cleanly_when_script_missing(monkeypatch, capsys):

@@ -112,7 +112,7 @@ def _executor() -> Executor:
 
 _STYLE = """
 :root { color-scheme: light dark; --bg:#0d1117; --panel:#161b22; --line:#30363d; --fg:#e6edf3;
-  --muted:#8b949e; --ok:#3fb950; --err:#f85149; --accent:#2f81f7; }
+  --muted:#8b949e; --ok:#3fb950; --err:#f85149; --warn:#d29922; --accent:#2f81f7; }
 * { box-sizing: border-box; }
 body { margin:0; font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg);
   color:var(--fg); }
@@ -131,6 +131,9 @@ main { max-width:900px; margin:0 auto; padding:24px 20px; }
 .badge { font-size:11px; padding:2px 7px; border-radius:20px; border:1px solid var(--line);
   color:var(--muted); }
 .badge.write { color:#d29922; border-color:#d29922; }
+.badge.ok { color:var(--ok); border-color:color-mix(in srgb, var(--ok) 45%, var(--line)); }
+.badge.warn { color:var(--warn); border-color:color-mix(in srgb, var(--warn) 45%, var(--line)); }
+.badge.err { color:var(--err); border-color:color-mix(in srgb, var(--err) 45%, var(--line)); }
 button { font:inherit; cursor:pointer; border:1px solid var(--accent); background:var(--accent);
   color:#fff; padding:7px 14px; border-radius:6px; }
 button.ghost { background:transparent; color:var(--accent); }
@@ -152,6 +155,7 @@ ul.actions { margin:8px 0; padding-left:18px; } ul.actions li { margin:2px 0; }
 .step { display:block; } .step .ok{color:var(--ok);} .step .err{color:var(--err);}
 .step .tag{color:var(--muted);}
 .result { margin-top:10px; font-weight:600; } .result.ok{color:var(--ok);} .result.err{color:var(--err);}
+.result.warn{color:var(--warn);}
 input[type=password]{ font:inherit; padding:9px 12px; border-radius:6px; border:1px solid var(--line);
   background:var(--bg); color:var(--fg); width:100%; }
 form.login { max-width:340px; margin:12vh auto; }
@@ -278,10 +282,17 @@ function renderEvent(ev, stream){
     stream.innerHTML += "<span class='step'>"+mark+" "+h(ev.step)+
       (ev.detail?" <span class='tag'>— "+h(ev.detail)+"</span>":"")+"</span>";
   } else if(ev.type==='result'){
-    const cls = ev.status==='ok'?'ok':'err';
-    stream.innerHTML += "<div class='result "+cls+"'>"+h(ev.status.toUpperCase())+
+    // Severity, not exit code, drives the colour — and findings are 'completed', never 'failed'.
+    const sevClass = {ok:'ok', attention:'warn', warn:'warn', error:'err'}[ev.severity] || 'warn';
+    let label;
+    if(ev.block_reason){ label = 'BLOCKED — ' + ev.block_reason; }
+    else if(ev.execution_status==='error'){ label = 'EXECUTION ERROR'; }
+    else if(ev.outcome==='findings'){ label = 'COMPLETED — FINDINGS'; }
+    else if(ev.outcome==='warnings'){ label = 'COMPLETED — WARNINGS'; }
+    else { label = 'COMPLETED — ' + (ev.outcome||'').toUpperCase(); }
+    stream.innerHTML += "<div class='result "+sevClass+"'>"+h(label)+
       (ev.evidence_ref?" · evidence "+h(ev.evidence_ref):"")+
-      " · "+h(ev.duration_s)+"s</div>";
+      (ev.duration_s!=null?" · "+h(ev.duration_s)+"s":"")+"</div>";
   }
   stream.scrollTop = stream.scrollHeight;
 }
@@ -437,11 +448,13 @@ class _Handler(BaseHTTPRequestHandler):
 
         try:
             result = _executor().execute(op_id, emit=emit, actor="human")
-            frame({"type": "result", "status": result.status, "exit_code": result.exit_code,
-                   "evidence_ref": result.evidence_ref, "duration_s": result.duration_s,
-                   "block_reason": result.block_reason})
+            frame({"type": "result", "execution_status": result.execution_status,
+                   "outcome": result.outcome, "severity": result.severity,
+                   "exit_code": result.exit_code, "evidence_ref": result.evidence_ref,
+                   "duration_s": result.duration_s, "block_reason": result.block_reason})
         except Exception as exc:  # noqa: BLE001 - a stream must end with a frame, never a broken socket
-            frame({"type": "result", "status": "error", "detail": f"{type(exc).__name__}: {exc}"})
+            frame({"type": "result", "execution_status": "error", "outcome": "failure",
+                   "severity": "error", "block_reason": f"{type(exc).__name__}: {exc}"})
 
     def log_message(self, fmt, *args):  # quiet; see dashboard.py
         pass
@@ -460,13 +473,29 @@ def _logs_body() -> str:
         return ("<h2 style='font-size:15px'>Operation log</h2>"
                 "<p class='muted'>No operations have been run through the Console yet. "
                 "Each execution records actor, steps, output and result here.</p>")
+    _sev_class = {"ok": "ok", "attention": "warn", "warn": "warn", "error": "err"}
     items = []
     for r in op_runs:
-        status = _e(getattr(r, "status", "?"))
-        cls = "ok" if status == "ok" else "err"
+        exec_status = str(getattr(r, "status", "?"))   # ledger status = execution_status
+        outcome, severity = exec_status, ""
+        try:
+            detail = json.loads(getattr(r, "detail", "") or "{}")
+            outcome = detail.get("outcome") or exec_status
+            severity = detail.get("severity", "")
+        except (ValueError, TypeError):
+            pass
+        # Label reflects the DOMAIN result, not just pass/fail — 'findings' reads as a completed
+        # scan that found something, never as a broken tool.
+        if exec_status == "error":
+            label, cls = "execution error", "err"
+        elif exec_status == "blocked":
+            label, cls = "blocked", "err"
+        else:
+            label = f"completed · {outcome}"
+            cls = _sev_class.get(severity, "ok")
         items.append(
             f"<div class='op'><div><h3>{_e(getattr(r, 'kind', ''))} "
-            f"<span class='badge {cls}'>{status}</span></h3>"
+            f"<span class='badge {cls}'>{_e(label)}</span></h3>"
             f"<div class='meta'>{_e(getattr(r, 'started_at', ''))} · "
             f"{_e(getattr(r, 'summary', '') or '')}</div></div></div>")
     return "<h2 style='font-size:15px'>Operation log</h2>" + "".join(items)

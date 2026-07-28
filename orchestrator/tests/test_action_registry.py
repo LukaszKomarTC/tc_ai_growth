@@ -11,8 +11,8 @@ import pytest
 from tc_growth.core.actions import (
     OPERATIONS,
     Approval,
-    Operation,
     Category,
+    Operation,
     RegistryError,
     get_operation,
     validate_registry,
@@ -88,6 +88,39 @@ def test_phase_mismatch_rejected():
     )
     with pytest.raises(RegistryError, match="disagrees with"):
         validate_registry((liar,))
+
+
+def test_result_policy_outcomes_must_be_known_vocabulary():
+    """A result_policy that maps an exit code to an unknown outcome label is a lie the platform
+    can't interpret — CI must reject it."""
+    from tc_growth.core.actions import OUTCOME_SEVERITY
+
+    bad = Operation(
+        id="bad_policy", name="x", category=Category.DIAGNOSTICS, min_phase=Phase.READ_ONLY,
+        environments=("staging",), approval=Approval.NONE, command="noop",
+        result_policy=((0, "clean"), (2, "kaboom")),  # 'kaboom' is not a known outcome
+        verification_description="x",
+    )
+    with pytest.raises(RegistryError, match="not one of"):
+        validate_registry((bad,))
+    assert "findings" in OUTCOME_SEVERITY  # the real integrity outcome is in the vocabulary
+
+
+def test_result_policy_rejects_duplicate_exit_codes():
+    dup = Operation(
+        id="dup_codes", name="x", category=Category.DIAGNOSTICS, min_phase=Phase.READ_ONLY,
+        environments=("staging",), approval=Approval.NONE, command="noop",
+        result_policy=((0, "clean"), (0, "findings")),
+        verification_description="x",
+    )
+    with pytest.raises(RegistryError, match="duplicate exit code"):
+        validate_registry((dup,))
+
+
+def test_integrity_scan_declares_findings_semantics():
+    """The whole point of op #2's fix: exit 2 is a declared 'findings' outcome, not a failure."""
+    op = get_operation("run_integrity_scan")
+    assert dict(op.result_policy) == {0: "clean", 2: "findings"}
 
 
 def test_get_operation_roundtrip_and_missing():

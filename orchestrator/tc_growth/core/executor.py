@@ -26,7 +26,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from .actions import Approval, Operation, get_operation
+from .actions import OUTCOME_SEVERITY, Approval, Operation, get_operation
 from .approval import ALWAYS_ASK, Phase
 
 # A step-event sink. The Console pushes these onto its SSE stream; tests collect them in a list.
@@ -68,11 +68,13 @@ class OperationPreview:
     allowed_args: tuple[str, ...]
     expected_actions: str
     runnable_now: bool    # would the CURRENT phase/env permit it?
+    outcomes: tuple[tuple[str, str], ...] = ()  # (outcome, severity) this op can COMPLETE with
     block_reason: str = ""
 
     def as_dict(self) -> dict:
         return {
             "op_id": self.op_id, "name": self.name, "category": self.category,
+            "outcomes": [{"outcome": o, "severity": s} for o, s in self.outcomes],
             "min_phase": self.min_phase, "environments": list(self.environments),
             "approval": self.approval, "binding": self.binding, "writes": self.writes,
             "allowed_args": list(self.allowed_args), "expected_actions": self.expected_actions,
@@ -80,10 +82,36 @@ class OperationPreview:
         }
 
 
+# Result vocabulary — an evidence-centric platform must NOT collapse everything into Unix
+# success/failure. A diagnostic that completes and reports findings is a SUCCESSFUL execution
+# with a non-clean outcome, not a broken tool. So the model separates three axes:
+#   execution_status : did the operation RUN to a defined result?  completed | error | blocked
+#   outcome          : the DOMAIN result the op reports            clean | findings | warnings | success | failure
+#   severity         : how much operator attention it warrants     ok | attention | warn | error
+# The exit-code -> outcome mapping is DATA on the registry operation (Operation.result_policy),
+# and the outcome -> severity vocabulary lives with the registry (actions.OUTCOME_SEVERITY), so
+# the executor stays generic while the registry describes each op's own semantics.
+def interpret_exit(op: Operation, exit_code: int) -> tuple[str, str, str]:
+    """Map an exit code to (execution_status, outcome, severity) using the op's result_policy.
+
+    Default policy when the op declares none: exit 0 -> success (clean), anything else -> a real
+    execution error. An op with domain-specific codes (e.g. integrity scan: 2 = findings) declares
+    them, and those codes become COMPLETED outcomes — not failures. A code outside the policy is a
+    genuine execution error (a crash, a timeout, an unexpected state), which IS 'error'.
+    """
+    policy = dict(op.result_policy) if op.result_policy else {0: "success"}
+    if exit_code in policy:
+        outcome = policy[exit_code]
+        return "completed", outcome, OUTCOME_SEVERITY.get(outcome, "attention")
+    return "error", "failure", "error"
+
+
 @dataclass
 class ExecutionResult:
     op_id: str
-    status: str                       # ok | failed | blocked
+    execution_status: str             # completed | error | blocked
+    outcome: str = ""                 # clean | findings | warnings | success | failure ("" if blocked)
+    severity: str = "ok"              # ok | attention | warn | error
     steps: list[StepEvent] = field(default_factory=list)
     output: str = ""
     exit_code: int | None = None
@@ -91,15 +119,22 @@ class ExecutionResult:
     duration_s: float = 0.0
     started_at: str = ""
     actor: str = "human"
-    block_reason: str = ""            # set when status == "blocked"
+    block_reason: str = ""            # set when execution_status == "blocked"
 
     @property
-    def ok(self) -> bool:
-        return self.status == "ok"
+    def completed(self) -> bool:
+        """True if the operation ran to a defined result — INCLUDING 'completed with findings'.
+        Reliability metrics key off this, so a findings scan counts as a successful execution."""
+        return self.execution_status == "completed"
+
+    @property
+    def clean(self) -> bool:
+        return self.completed and self.severity == "ok"
 
     def as_dict(self) -> dict:
         return {
-            "op_id": self.op_id, "status": self.status, "exit_code": self.exit_code,
+            "op_id": self.op_id, "execution_status": self.execution_status,
+            "outcome": self.outcome, "severity": self.severity, "exit_code": self.exit_code,
             "steps": [s.as_dict() for s in self.steps], "output": self.output,
             "evidence_ref": self.evidence_ref, "duration_s": self.duration_s,
             "started_at": self.started_at, "actor": self.actor,
@@ -180,13 +215,18 @@ class Executor:
         except ExecutionBlocked as blk:
             runnable = False
             reason = blk.detail
+        # Possible COMPLETED outcomes (from the result policy) — so the operator knows, before
+        # clicking, that e.g. this scan can come back "findings" and that is a valid result.
+        policy = op.result_policy or ((0, "success"),)
+        outcomes = tuple((outcome, OUTCOME_SEVERITY.get(outcome, "attention"))
+                         for _code, outcome in policy)
         return OperationPreview(
             op_id=op.id, name=op.name, category=op.category.value,
             min_phase=int(op.min_phase), environments=op.environments,
             approval=op.approval.value, binding=binding, writes=writes,
             allowed_args=op.allowed_args,
             expected_actions=op.verification_description,
-            runnable_now=runnable, block_reason=reason,
+            runnable_now=runnable, outcomes=outcomes, block_reason=reason,
         )
 
     # -- execution ------------------------------------------------------------
@@ -217,17 +257,17 @@ class Executor:
         except KeyError:
             ev = StepEvent("resolve", _STATUS_ERROR, f"unknown operation: {op_id!r}")
             _emit(ev)
-            return ExecutionResult(op_id=op_id, status="blocked", steps=steps,
-                                   block_reason="unknown_operation", started_at=started_at,
-                                   actor=actor, output=ev.detail)
+            return ExecutionResult(op_id=op_id, execution_status="blocked", severity="error",
+                                   steps=steps, block_reason="unknown_operation",
+                                   started_at=started_at, actor=actor, output=ev.detail)
 
         # Guardrails first — nothing runs until phase, approval, environment and args all clear.
         try:
             self._check_guards(op, args, dry_run=False)
         except ExecutionBlocked as blk:
             _emit(StepEvent("guard", _STATUS_ERROR, blk.detail))
-            return ExecutionResult(op_id=op.id, status="blocked", steps=steps,
-                                   block_reason=blk.reason, started_at=started_at,
+            return ExecutionResult(op_id=op.id, execution_status="blocked", severity="error",
+                                   steps=steps, block_reason=blk.reason, started_at=started_at,
                                    actor=actor, output=blk.detail)
 
         _emit(StepEvent("start", _STATUS_INFO, f"{op.name} ({actor}) on {self.environment()}"))
@@ -238,10 +278,12 @@ class Executor:
             _emit(StepEvent("error", _STATUS_ERROR, f"{type(exc).__name__}: {exc}"))
             exit_code, output = 1, f"{type(exc).__name__}: {exc}"
 
+        # Interpret the exit code through the op's own result policy — findings != failure.
+        execution_status, outcome, severity = interpret_exit(op, exit_code)
         duration = round(time.perf_counter() - t0, 3)
-        status = "ok" if exit_code == 0 else "failed"
         result = ExecutionResult(
-            op_id=op.id, status=status, steps=steps, output=output, exit_code=exit_code,
+            op_id=op.id, execution_status=execution_status, outcome=outcome, severity=severity,
+            steps=steps, output=output, exit_code=exit_code,
             duration_s=duration, started_at=started_at, actor=actor,
         )
         result.evidence_ref = self._persist(op, result)
@@ -361,7 +403,11 @@ class Executor:
             emit(StepEvent("timeout", _STATUS_ERROR, f"exceeded {self._cli_timeout_s}s"))
             return 124, "\n".join(lines) + "\n[timed out]"
 
-        emit(StepEvent("exit", _STATUS_OK if code == 0 else _STATUS_ERROR, f"exit {code}"))
+        # Mark the exit step by the op's INTERPRETED severity, not raw code!=0 — for a scanner,
+        # exit 2 (findings) is not an error step, it's an attention result.
+        _status, outcome, severity = interpret_exit(op, code)
+        mark = _STATUS_OK if severity == "ok" else _STATUS_ERROR if severity == "error" else _STATUS_INFO
+        emit(StepEvent("exit", mark, f"exit {code} — {outcome}"))
         return code, "\n".join(lines)
 
     def _run_tool(self, op: Operation, args: dict, emit: Emit) -> tuple[int, str]:
@@ -387,13 +433,19 @@ class Executor:
             detail = json.dumps({
                 "actor": result.actor,
                 "environment": self.environment(),
+                "execution_status": result.execution_status,
+                "outcome": result.outcome,
+                "severity": result.severity,
                 "exit_code": result.exit_code,
                 "steps": [s.as_dict() for s in result.steps],
                 "output": result.output[:8000],
             }, default=str)
             run_id = store.log_run(
+                # Ledger status is the EXECUTION status (completed | error | blocked), never a
+                # domain outcome — so reliability queries treat a findings scan as a completed
+                # run, not a broken tool. Outcome/severity live in detail for richer queries.
                 kind=f"op:{op.id}",
-                status=result.status if result.status != "ok" else "ok",
+                status=result.execution_status,
                 duration_s=result.duration_s,
                 summary=(result.output.splitlines()[0][:200] if result.output else op.name),
                 detail=detail,

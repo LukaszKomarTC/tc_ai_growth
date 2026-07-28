@@ -20,6 +20,18 @@ from enum import Enum
 
 from .approval import ALWAYS_ASK, TOOL_MIN_PHASE, Phase
 
+# Outcome vocabulary an operation's result_policy may map exit codes to, with the operator
+# attention each implies. Pure data — the Execution Service reads this to interpret an exit code
+# without hard-coding Unix success/failure. Keeping it beside the registry keeps "how an op's
+# outputs are interpreted" in one governed place. severity: ok < warnings < attention < error.
+OUTCOME_SEVERITY: dict[str, str] = {
+    "success": "ok",       # exit ran, nothing to report (default for exit 0)
+    "clean": "ok",         # a diagnostic ran and found nothing
+    "findings": "attention",  # a diagnostic COMPLETED and found something — NOT a failure
+    "warnings": "warn",    # completed with non-fatal warnings
+    "failure": "error",    # the operation could not complete
+}
+
 
 class Category(str, Enum):
     ANALYSIS = "analysis"          # read + reason + report
@@ -47,6 +59,11 @@ class Operation:
     command: str | None = None         # CLI entrypoint (python -m tc_growth.cli <command>)
     allowed_args: tuple[str, ...] = () # arg keys the Execution Service will accept (allowlist;
                                        # anything else is refused server-side — no free-form input)
+    result_policy: tuple[tuple[int, str], ...] = ()  # exit_code -> outcome label. Lets the
+                                       # executor stay generic while the registry describes THIS
+                                       # op's result semantics (e.g. integrity scan: 2 = findings,
+                                       # a COMPLETED outcome, not a failure). Empty => default
+                                       # policy (0 = success, anything else = execution error).
     preconditions: tuple[str, ...] = ()
     enforced_by: tuple[str, ...] = ()  # code layers that actually refuse a bad call
     rollback_description: str = ""     # prose — NOT machine-enforced (see module docstring)
@@ -146,6 +163,9 @@ OPERATIONS: tuple[Operation, ...] = (
         approval=Approval.NONE,
         command="integrity-scan",
         allowed_args=(),
+        # The inspector exits 0 when clean and 2 when it finds anomalies. Exit 2 is a COMPLETED
+        # scan with findings (attention) — NOT a failure. Any other code is a real execution error.
+        result_policy=((0, "clean"), (2, "findings")),
         preconditions=("inspector script deployed (scripts/wp-integrity-scan.sh)",
                        "wp-cli available on the host"),
         # Runs through the Execution Service's GENERIC command path — no operation-specific
@@ -328,6 +348,17 @@ def validate_registry(ops: tuple[Operation, ...] = OPERATIONS) -> None:
             raise RegistryError(f"operation id must be lower_snake_case: {op.id}")
         if op.tool is None and op.command is None:
             raise RegistryError(f"{op.id}: not callable — needs a tool or command binding")
+        # result_policy must describe outcomes the platform understands, with no duplicate codes.
+        seen_codes: set[int] = set()
+        for code, outcome in op.result_policy:
+            if not isinstance(code, int):
+                raise RegistryError(f"{op.id}: result_policy exit code must be int, got {code!r}")
+            if code in seen_codes:
+                raise RegistryError(f"{op.id}: result_policy has duplicate exit code {code}")
+            seen_codes.add(code)
+            if outcome not in OUTCOME_SEVERITY:
+                raise RegistryError(f"{op.id}: result_policy outcome {outcome!r} is not one of "
+                                    f"{sorted(OUTCOME_SEVERITY)}")
         if not op.verification_description:
             raise RegistryError(f"{op.id}: verification_description is required")
         if op.min_phase > Phase.READ_ONLY:
