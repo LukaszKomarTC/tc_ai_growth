@@ -50,9 +50,16 @@ PLUG=$($WP plugin verify-checksums --all 2>&1 \
 HEX=$(find wp-content -type f -name "*.php" 2>/dev/null | grep -iE "[-_][0-9a-f]{6,8}\.php$")
 [ -n "$HEX" ] && add "Hex-suffixed PHP (shell naming)" "$HEX"
 
-# 4. executable PHP where none belongs. uploads: ANY php (never legit except index guards).
+# 4. executable PHP where none belongs. uploads: ANY php (never legit except index guards) —
+#    the one exception is WP All Import's functions.php, a legitimate code-exec feature that
+#    ships EMPTY; flag it only when non-empty (custom functions added, OR a shell planted).
 #    mu-plugins: any php that isn't our own allowlisted hardening.
-UPL=$(find wp-content/uploads -name "*.php" ! -name index.php 2>/dev/null)
+UPL=$(find wp-content/uploads -name "*.php" ! -name index.php 2>/dev/null | while IFS= read -r f; do
+  case "$f" in
+    */wpallimport/functions.php) [ -s "$f" ] && echo "$f (WP All Import custom-functions — non-empty, review)";;
+    *) echo "$f";;
+  esac
+done)
 MU=$(find wp-content/mu-plugins -maxdepth 1 -name "*.php" 2>/dev/null | grep -vE "/($MU_ALLOW)")
 [ -n "$UPL$MU" ] && add "Unexpected PHP in uploads/mu-plugins" "$(printf '%s\n%s' "$UPL" "$MU" | sed '/^$/d')"
 

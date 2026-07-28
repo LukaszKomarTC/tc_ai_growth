@@ -50,6 +50,13 @@ gets muted:
   plugin check now flags **only "should not exist" (extra/planted files)**, not "does not match".
 - **Our own `zzz-tc-*` hardening mu-plugins** are allowlisted so the "PHP in mu-plugins" check
   doesn't flag the platform's own code.
+- **WP All Import's `uploads/wpallimport/functions.php`** is a legit code-exec feature that ships
+  empty — now flagged **only when non-empty** (turning a false positive into a real check: an
+  attacker writing a shell there makes it non-empty, so it alerts; the empty default stays quiet).
+
+These three tuning passes are themselves the argument for the **v1 baseline model**: rather than
+maintaining a growing list of "known-legit exceptions," v1 hashes the current *clean* state and
+alerts on CHANGES — so a legit-but-unusual file is learned once, and only genuine drift fires.
 
 ### v0 limitations (honest)
 - Single-site, hard-coded expectations (the real Inspector is per-profile, config-driven).
