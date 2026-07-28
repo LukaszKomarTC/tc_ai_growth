@@ -189,6 +189,58 @@ class _FakeProc:
         self.killed = True
 
 
+def test_integrity_scan_op_needs_no_executor_code():
+    """Op #2 is proof of the claim: a new operation is a registry entry, NOT executor code.
+    run_integrity_scan must run through the generic command path — no native runner."""
+    from tc_growth.core import executor as ex
+    from tc_growth.core.actions import get_operation
+
+    assert "run_integrity_scan" not in ex.NATIVE_RUNNERS
+    op = get_operation("run_integrity_scan")
+    assert op.command == "integrity-scan" and op.tool is None
+
+
+def test_integrity_scan_previews_as_a_read_only_runnable_op():
+    prev = _exec().preview("run_integrity_scan")
+    assert prev.binding == "cli:integrity-scan"
+    assert prev.writes is False
+    assert prev.runnable_now is True
+
+
+def test_integrity_scan_findings_surface_as_a_failed_result(monkeypatch):
+    """The inspector exits 2 when it finds anomalies. Through the generic path that becomes a
+    'failed' (attention) result with the scan output as evidence — the operator sees red."""
+    from tc_growth.core import executor as ex
+
+    lines = ["Technical Inspector — integrity anomalies:", "  - ADMIN set changed"]
+    monkeypatch.setattr(ex.subprocess, "Popen",
+                        lambda *a, **k: _FakeProc([l + "\n" for l in lines], code=2))
+    seen: list[StepEvent] = []
+    res = _exec().execute("run_integrity_scan", emit=seen.append)
+    assert res.status == "failed"           # exit 2 = anomalies found -> attention
+    assert res.exit_code == 2
+    assert "ADMIN set changed" in res.output
+    assert any(s.step == "output" for s in seen)   # streamed line-by-line
+
+
+def test_integrity_scan_clean_is_an_ok_result(monkeypatch):
+    from tc_growth.core import executor as ex
+
+    monkeypatch.setattr(ex.subprocess, "Popen",
+                        lambda *a, **k: _FakeProc(["inspector: clean exit=0\n"], code=0))
+    res = _exec().execute("run_integrity_scan")
+    assert res.status == "ok" and res.exit_code == 0
+
+
+def test_cli_integrity_scan_reports_cleanly_when_script_missing(monkeypatch, capsys):
+    from tc_growth.cli import cmd_integrity_scan
+
+    monkeypatch.setenv("TC_INSPECTOR_SCRIPT", "/no/such/inspector.sh")
+    rc = cmd_integrity_scan()
+    assert rc == 1
+    assert "not found" in capsys.readouterr().out
+
+
 def test_generic_command_path_streams_stdout_lines(monkeypatch):
     """A command-bound op with no native runner streams subprocess stdout as step events and
     returns the process exit code — so adding such an op is a registry entry, not new code."""

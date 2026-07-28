@@ -9,6 +9,7 @@
     python -m tc_growth.cli investigate "<question or anomaly>"
     python -m tc_growth.cli test-email
     python -m tc_growth.cli smtp-test               # instrumented SMTP test (streams each step)
+    python -m tc_growth.cli integrity-scan          # Technical Inspector: read-only WP integrity scan
     python -m tc_growth.cli db-init                 # create the SQLite store + seed Case #1
     python -m tc_growth.cli cases [open|resolved]   # list cases
     python -m tc_growth.cli case <id-or-ref>        # show one case (with narrative)
@@ -132,6 +133,37 @@ def cmd_smtp_test() -> int:
     ok, summary = smtp_test_steps(emit=_print)
     print(summary)
     return 0 if ok else 1
+
+
+def cmd_integrity_scan() -> int:
+    """Run the Technical Inspector (read-only WP integrity scan), streaming its output.
+
+    This is the CLI binding the Action Registry points `run_integrity_scan` at. It runs the
+    standalone inspector script and passes its output and exit code straight through, so the
+    Operations Console surfaces it through the GENERIC command path — no executor code is
+    specific to this operation. Exit codes: 0 = clean, 2 = anomalies found (and logged), other
+    = the scan could not run.
+    """
+    import os
+    import subprocess
+    from pathlib import Path
+
+    from .config import BASE_DIR
+
+    script = os.environ.get("TC_INSPECTOR_SCRIPT") or str(BASE_DIR / "scripts" / "wp-integrity-scan.sh")
+    if not Path(script).is_file():
+        print(f"integrity scanner not found at {script} — set TC_INSPECTOR_SCRIPT or deploy the script.")
+        return 1
+    try:
+        proc = subprocess.Popen(["bash", script], stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True, bufsize=1)
+    except OSError as exc:
+        print(f"could not launch integrity scanner: {exc}")
+        return 1
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        print(line.rstrip("\n"), flush=True)
+    return proc.wait()
 
 
 def cmd_investigate(question: str) -> int:
@@ -382,6 +414,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_test_email()
     if cmd == "smtp-test":
         return cmd_smtp_test()
+    if cmd == "integrity-scan":
+        return cmd_integrity_scan()
     if cmd == "db-init":
         return cmd_db_init()
     if cmd == "cases":

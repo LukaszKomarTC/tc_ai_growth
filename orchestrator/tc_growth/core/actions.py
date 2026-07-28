@@ -138,6 +138,26 @@ OPERATIONS: tuple[Operation, ...] = (
                                  "streamed step event; a test message lands in the recipient inbox",
     ),
     Operation(
+        id="run_integrity_scan",
+        name="Run integrity scan (Technical Inspector)",
+        category=Category.DIAGNOSTICS,
+        min_phase=Phase.READ_ONLY,
+        environments=("staging", "production"),
+        approval=Approval.NONE,
+        command="integrity-scan",
+        allowed_args=(),
+        preconditions=("inspector script deployed (scripts/wp-integrity-scan.sh)",
+                       "wp-cli available on the host"),
+        # Runs through the Execution Service's GENERIC command path — no operation-specific
+        # executor code. Read-only: it inspects and reports, never modifies the site.
+        enforced_by=(_GATE, "read-only scan — inspects and reports, never writes"),
+        rollback_description=_READ_ROLLBACK,
+        verification_description="each check (core/plugin checksums, shell-name patterns, "
+                                 "PHP-in-uploads/mu-plugins, kit fingerprints, admin-set drift, "
+                                 "wp-config markers) streams as output; exit 2 = anomalies found "
+                                 "and logged; the run is recorded to the ledger as evidence",
+    ),
+    Operation(
         id="create_seo_draft",
         name="Create SEO draft",
         category=Category.DRAFTING,

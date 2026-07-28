@@ -111,9 +111,10 @@ thing we fought with tonight, and it exercises every layer the platform needs.
    Backend + streaming + evidence + tests, then the minimal loopback UI around it. Remaining:
    deploy behind the tunnel with real SMTP so the owner clicks it and watches it succeed — the
    only step that needs the box.
-2. **Integrity Scan (Technical Inspector)** as the second op — proves a longer-running,
-   multi-step CLI operation streams and captures evidence the same way. (Next; needs the
-   inspector script surfaced as a registry `command` op — near-zero new executor code.)
+2. **Integrity Scan (Technical Inspector). ✅ BUILT.** The second op — proves a longer-running,
+   multi-step CLI operation streams and captures evidence the same way, and it did so as a pure
+   **registry entry + CLI binding with ZERO executor changes** (a test asserts it has no native
+   runner). Exit 2 (anomalies found) surfaces as a red "attention" result; exit 0 is clean.
 3. **Verify Backups / Restore Test** as the third — proves an op that produces a file/report
    artifact as evidence.
 4. Only after three real ops share the one engine: the ALWAYS_ASK in-UI confirmation step (auth +
@@ -133,8 +134,8 @@ Then STOP at the agreed set — broader capabilities resume afterward.
 - [x] Execution Service runs a READ_ONLY named op end-to-end with evidence logged; refuses an op
       above the current phase / with a disallowed arg (tests). Receives an *approved operation* and
       does not distinguish human vs AI origin.
-- [ ] Adding op #2 (Integrity Scan) and op #3 (Verify Backups) requires a registry entry, not
-      executor changes. *(next)*
+- [x] Adding op #2 (Integrity Scan) required a registry entry + CLI binding, **no executor
+      changes** — locked by a test asserting it has no native runner. Op #3 (Verify Backups) next.
 - [x] Auth fails closed (no token → no serve); session is HMAC-signed + expiring; CSRF is
       session-bound; execute without CSRF → 403 (tests + smoke).
 - [ ] A write/ALWAYS_ASK op requires explicit in-UI confirmation; FORBIDDEN ops are unreachable.
