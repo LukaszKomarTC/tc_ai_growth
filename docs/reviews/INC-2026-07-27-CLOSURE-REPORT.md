@@ -69,11 +69,16 @@ Turning the incident into durable improvements, not just a fixed problem:
   records, restore testing, and staged authority are exactly what let us recover methodically
   and decide *when not to trust our own environment*.
 
-## Governance decision — ACCEPTED (reviewer-concurred 2026-07-28)
+## Governance decision — accepted by the owner/maintainer (2026-07-28)
+
+**Authority note:** the release authority is the **owner/maintainer**, who accepts (or rejects)
+the closure evidence and decides the gate. Independent assessments (automated or human) are
+*input* to that decision, never the authorization itself; they do not appear in the record as
+"approval." This report is that input; the acceptance below is the owner's.
 
 The 0.3 gate needed clean Monday validation reports. July 20 & 27 ran on the compromised host —
 not necessarily *wrong*, but their **trust basis changed**, and the gate certifies *trustworthy
-evidence*, not *that three Mondays happened*. Decision, concurred by review:
+evidence*, not *that three Mondays happened*. Decision accepted by the owner:
 
 - **Do not count** the July 20 & July 27 reports toward the Release 0.3 gate.
 - **Declare a new trusted production baseline** once monitoring confirms no delayed indicators.
