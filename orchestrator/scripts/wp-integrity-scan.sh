@@ -20,9 +20,20 @@ SITE="${TC_SITE_DOCROOT:-/var/www/vhosts/tossacycling.com/httpdocs}"
 ALERT_TO="${TC_ALERT_EMAIL:-info@tossacycling.com}"
 EXPECT_ADMINS="${TC_EXPECT_ADMINS:-1,119}"   # sorted, comma-joined WP admin IDs; update on legit change
 LOGFILE="${TC_INSPECTOR_LOG:-/var/log/tc-inspector.log}"
+# Command that delivers an alert via the platform's authenticated notifier: reads the finding
+# on stdin, takes the subject as $1. Empty = notifier not wired (findings still logged).
+# e.g. TC_NOTIFY_CMD='sudo -u tcgrowth /opt/tc_ai_growth/app/orchestrator/.venv/bin/python -m tc_growth.cli notify'
+NOTIFY_CMD="${TC_NOTIFY_CMD:-}"
 # mu-plugins we install ourselves (legit) — allowlisted so the monitor doesn't flag its own kind
 MU_ALLOW='index.php|zzz-tc-'
 WP="wp --path=$SITE --allow-root"
+
+# prevent overlapping runs (a slow scan must not stack on the next cron tick)
+LOCK="/tmp/tc-inspector.lock"
+exec 9>"$LOCK" || exit 0
+flock -n 9 || { echo "$(date -u '+%F %H:%M UTC') inspector: already running — skipped" >> "$LOGFILE"; exit 0; }
+
+START=$(date +%s)
 
 cd "$SITE" 2>/dev/null || {
   echo "$(date -u '+%F %H:%M UTC') inspector: docroot missing: $SITE" | tee -a "$LOGFILE"
@@ -77,15 +88,24 @@ ADM=$($WP user list --role=administrator --field=ID 2>/dev/null | sort -n | past
 WPC=$(grep -nE "eval\(|base64_decode\(|WP_Core_Integrity|auto_prepend_file" wp-config.php 2>/dev/null)
 [ -n "$WPC" ] && add "wp-config anomalies" "$WPC"
 
-# --- alert only on findings. Always log + print (visible even if mail is absent);
-#     mail is best-effort so a missing MTA never hides a finding. ---
+# --- report. A finding is ALWAYS logged + printed (never lost to a missing/broken notifier);
+#     delivery is attempted through the platform notifier and logged with a DISTINCT outcome. ---
 STAMP="$(date -u '+%F %H:%M UTC')"
+DUR=$(( $(date +%s) - START ))
+SUBJ="[inspector] INTEGRITY ALERT — $(hostname)"
+
 if [ -n "$FINDINGS" ]; then
   MSG="$(printf 'Technical Inspector — integrity anomalies on %s at %s:\n%b' "$SITE" "$STAMP" "$FINDINGS")"
-  echo "$MSG" | tee -a "$LOGFILE"
-  command -v mail >/dev/null 2>&1 \
-    && echo "$MSG" | mail -s "[inspector] INTEGRITY ALERT — $(hostname)" "$ALERT_TO"
+  echo "$MSG" | tee -a "$LOGFILE"                       # finding is retained regardless of delivery
+  if [ -n "$NOTIFY_CMD" ] && echo "$MSG" | $NOTIFY_CMD "$SUBJ"; then
+    echo "$STAMP inspector: FINDING (${DUR}s) exit=2 — alert delivered" >> "$LOGFILE"
+  elif [ -n "$NOTIFY_CMD" ]; then
+    echo "$STAMP inspector: FINDING (${DUR}s) exit=2 — !! NOTIFIER FAILED, finding retained above for operator review" >> "$LOGFILE"
+  else
+    echo "$STAMP inspector: FINDING (${DUR}s) exit=2 — no notifier configured, finding in log above" >> "$LOGFILE"
+  fi
+  command -v mail >/dev/null 2>&1 && echo "$MSG" | mail -s "$SUBJ" "$ALERT_TO"
   exit 2
 fi
-echo "$STAMP inspector: clean" >> "$LOGFILE" 2>/dev/null
+echo "$STAMP inspector: clean (${DUR}s) exit=0" >> "$LOGFILE" 2>/dev/null
 exit 0

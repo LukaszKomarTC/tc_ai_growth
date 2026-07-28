@@ -7,6 +7,7 @@
     python -m tc_growth.cli weekly-report
     python -m tc_growth.cli investigate "<question or anomaly>"
     python -m tc_growth.cli test-email
+    python -m tc_growth.cli notify "<subject>"        # send stdin body via the notifier (used by the integrity scan)
     python -m tc_growth.cli db-init                 # create the SQLite store + seed Case #1
     python -m tc_growth.cli cases [open|resolved]   # list cases
     python -m tc_growth.cli case <id-or-ref>        # show one case (with narrative)
@@ -76,6 +77,26 @@ def cmd_weekly_report(kind: str = "messages", *, validation: bool = False) -> in
     report = build_weekly_report(runtime, phase=Phase.READ_ONLY, validation=validation)
     deliver(report, validation=validation)
     return 0
+
+
+def cmd_notify(subject: str) -> int:
+    """Send a notification: SUBJECT from the arg, BODY from stdin, via the configured notifier
+    (authenticated SMTP). Lets external jobs — e.g. the Technical Inspector integrity scan —
+    route alerts through the platform's real delivery path instead of a local MTA. Exit 0 on
+    delivery, non-zero on failure (so callers can log a distinct notifier-failure)."""
+    import sys as _sys
+    from .report import send_email
+
+    body = "" if _sys.stdin.isatty() else _sys.stdin.read()
+    if not body.strip():
+        print("notify: empty body (pipe the message on stdin)")
+        return 1
+    try:
+        ok = send_email(subject or "[tc-growth] notification", body, raise_on_error=True)
+    except Exception as exc:
+        print(f"notify FAILED: {exc}")
+        return 1
+    return 0 if ok else 1
 
 
 def cmd_test_email() -> int:
@@ -337,6 +358,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_weekly_report(positional[0] if positional else "messages", validation=validation)
     if cmd == "investigate":
         return cmd_investigate(rest[0] if rest else "")
+    if cmd == "notify":
+        return cmd_notify(rest[0] if rest else "")
     if cmd == "test-email":
         return cmd_test_email()
     if cmd == "db-init":
