@@ -39,6 +39,33 @@ The script runs six phases, each of which you can verify:
 
 Rollback at any time: `sudo ./scripts/deploy-console.sh --rollback` (restores the last snapshot).
 
+The dry run prints a **deployment plan** (source commit, destination paths, files replaced, the
+systemd unit, service user, bind address, backup location, rollback command, whether it restarts a
+service, whether it touches `.env` or production WordPress) — so you review the exact delta at
+business-impact level before `--apply`, not just "preflight passed".
+
+## Redeploy & upgrade semantics
+
+The second deployment is often riskier than the first. Where this package stands today, answered
+plainly:
+
+| Question | Answer |
+|---|---|
+| Idempotent / safe to run twice? | **Yes.** Each run snapshots first, then overwrites the unit + inspector; `enable --now` is idempotent. Re-running the same commit is a no-op in effect. |
+| Versioned release directories? | **Not yet** — in-place install. Previous states are kept as timestamped **snapshots** under `/var/backups/tc-console`, which is what rollback uses. |
+| Atomic activation (symlink swap)? | **Not yet** — service restart is the activation. Blue/green with atomic symlink swap is recorded as **debt** below. |
+| Previous releases retained? | **Yes** — every run leaves a timestamped snapshot; none are deleted by the script. |
+| Rollback restores code or config? | Restores the **inspector script + systemd unit** (config) and preserves the prior **evidence store**; it does **not** roll back the orchestrator app code (that lives in `APP_DIR`, deployed separately). |
+| Health check fails after activation? | The script **aborts and points you at `--rollback`**. |
+| Are active Console sessions invalidated on redeploy? | **Yes** — the session/CSRF signature is bound to the deploy commit (`TC_BUILD_COMMIT`), so a new deploy forces re-auth. |
+| Does it modify `.env` / touch WordPress? | **No** to both — it reads the console env file, and deploys only the Console + read-only inspector. |
+
+**Debt (record, don't build under deployment pressure):** move to **versioned release directories
+with atomic symlink activation and retained N-previous releases**, so activation is atomic and
+rollback is a symlink flip. The current snapshot-and-overwrite model is safe for a single-owner
+loopback console but should be hardened before this surface grows. (Aligns with the repo audit's
+"reproducible deployment + rollback semantics" note.)
+
 ## Owner acceptance — OP1 + OP2 through the actual Console
 
 Do this in the browser over the tunnel, **not** the terminal. This is the milestone.
@@ -77,3 +104,10 @@ via `TC_BUILD_COMMIT`), `release`, `profile`, `environment`, and `binding` — s
 is always traceable to a reviewed revision on a known target. Script-backed ops additionally emit
 their script's `sha256` as the first evidence line. Verify it in the Logs panel after the first
 run.
+
+**Provenance is layered so it can't leak filesystem layout to the browser:** the full detail
+(absolute paths, hashes) lives in the **evidence store** and the server-side deploy log
+(journald records `path + sha256 + commit` at install). The **UI** shows a *reduced* view — the
+scanner is identified by **basename + sha256 + commit**, and any absolute paths in rendered
+summaries/errors are redacted to a basename. So a shared screenshot of the Logs panel does not
+expose where things live on the box, while the audit trail server-side stays complete.

@@ -161,7 +161,11 @@ def cmd_integrity_scan() -> int:
 
     sha = hashlib.sha256(Path(script).read_bytes()).hexdigest()
     commit = os.environ.get("TC_BUILD_COMMIT", "unknown")
-    print(f"scanner: {script} sha256={sha[:16]} commit={commit}", flush=True)
+    # Provenance in the evidence stream identifies the scanner by CONTENT HASH + commit, not its
+    # absolute path — the sha256 is the definitive identity, and the full deploy path stays in the
+    # server-side deploy log (journald), not in a browser-facing evidence line. (Review: don't leak
+    # filesystem layout to the UI.)
+    print(f"scanner: {Path(script).name} sha256={sha[:16]} commit={commit}", flush=True)
     try:
         proc = subprocess.Popen(["bash", script], stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, text=True, bufsize=1)

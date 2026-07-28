@@ -78,6 +78,27 @@ def test_secret_reads_the_env(monkeypatch):
 # -- phase selection -----------------------------------------------------------
 
 
+def test_redeploy_invalidates_existing_sessions(monkeypatch):
+    """A new deploy (new TC_BUILD_COMMIT) must invalidate sessions minted by the old build — a
+    code change on a privileged execution surface is a natural point to force re-auth."""
+    monkeypatch.setenv("TC_BUILD_COMMIT", "build-1")
+    tok = console.issue_session(SECRET, now=1_000_000)
+    assert console.valid_session(tok, SECRET, now=1_000_000)
+    csrf = console.csrf_for(tok, SECRET)
+    # redeploy: the epoch changes
+    monkeypatch.setenv("TC_BUILD_COMMIT", "build-2")
+    assert not console.valid_session(tok, SECRET, now=1_000_000)   # old session rejected
+    assert not console.valid_csrf(csrf, tok, SECRET)               # old CSRF rejected too
+
+
+def test_ui_redacts_absolute_paths():
+    """UI-facing text must not leak the server's filesystem layout; the full path stays in the
+    evidence store, the browser sees a basename."""
+    red = console._redact("scanner: /usr/local/bin/wp-integrity-scan.sh sha256=abc")
+    assert "/usr/local/bin/" not in red
+    assert "wp-integrity-scan.sh" in red
+
+
 def test_logs_label_findings_as_completed_and_escape_scanner_output(monkeypatch):
     """Two guarantees in one: a findings run must read as 'completed', never 'failed'; and any
     scanner output rendered into the logs page must be HTML-escaped (no stored XSS from a

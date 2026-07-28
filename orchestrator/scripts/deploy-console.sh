@@ -13,9 +13,19 @@
 # docs/TECHNICAL_INSPECTOR.md and docs/workpackages/WP-CONSOLE-DEPLOYMENT.md).
 #
 # Usage:
-#   ./deploy-console.sh                 # DRY RUN — prints what it would do, changes nothing
+#   ./deploy-console.sh                 # DRY RUN — prints the plan/delta, changes nothing
 #   ./deploy-console.sh --apply         # perform the deployment
 #   ./deploy-console.sh --rollback      # restore the most recent snapshot
+#
+# Redeploy semantics (see docs/workpackages/WP-CONSOLE-DEPLOYMENT.md for the full Q&A):
+#   * Idempotent / safe to run twice: each run snapshots first, then overwrites the unit + inspector
+#     and `enable --now` is idempotent. Re-running with the same commit is a no-op in effect.
+#   * Snapshots are timestamped and RETAINED under $SNAP_DIR (previous states kept for rollback).
+#   * A redeploy INVALIDATES active Console sessions (the session signature is bound to the deploy
+#     commit) — a code change on an execution surface forces re-auth.
+#   * Health check fails after activation -> the script aborts and points you at --rollback.
+#   * NOTE: this is in-place install, not yet versioned release-dirs with atomic symlink swap —
+#     that blue/green hardening is recorded as debt in the deployment runbook.
 set -uo pipefail
 
 # ---- configuration (override via env; confirm these match YOUR box before --apply) ----
@@ -75,7 +85,29 @@ fi
 "$VENV/bin/python" -m tc_growth.cli list-operations >/dev/null 2>&1 \
   || die "registry does not validate under the deployed venv — fix before deploying"
 if ss -ltn 2>/dev/null | grep -q ":$CONSOLE_PORT "; then die "port $CONSOLE_PORT already in use"; fi
-echo "preflight OK. release commit to deploy: $RELEASE_COMMIT"
+echo "preflight OK."
+
+# ---------------------------------------------------------------------------
+# The plan — readable at the level of business impact, printed on EVERY run (dry or apply) so the
+# owner sees the exact delta before deciding, not just "preflight passed".
+CUR_UNIT_STATE="absent"; [ -f "$UNIT" ] && CUR_UNIT_STATE="present (will be REPLACED)"
+CUR_INSP_STATE="absent"; [ -f "$INSPECTOR_DEST" ] && CUR_INSP_STATE="present (will be REPLACED)"
+NEW_HASH="$(sha256sum "$APP_DIR/scripts/wp-integrity-scan.sh" 2>/dev/null | cut -c1-16)"
+say "DEPLOYMENT PLAN — review before --apply"
+cat <<PLAN
+  Source commit pinned .......... $RELEASE_COMMIT
+  Inspector script .............. $APP_DIR/scripts/wp-integrity-scan.sh  (sha256 ${NEW_HASH}…)
+      -> installed to ........... $INSPECTOR_DEST   [$CUR_INSP_STATE]
+  systemd unit .................. $UNIT   [$CUR_UNIT_STATE]
+  Runs as user .................. $SERVICE_USER   (unprivileged; NoNewPrivileges, ProtectSystem=strict)
+  Bind address / port ........... 127.0.0.1:$CONSOLE_PORT   (loopback only — NOT internet-exposed)
+  Reads secrets from ............ $CONSOLE_ENV_FILE   (READ only — this script never writes it)
+  Backup / snapshot to .......... $SNAP
+  Restarts an existing service .. $( [ "$CUR_UNIT_STATE" = absent ] && echo "no (first install)" || echo "YES — tc-console will restart; active browser sessions are invalidated on redeploy" )
+  Modifies any .env / profiles .. NO
+  Touches production WordPress ... NO  (deploys the Console + read-only inspector only; never the site)
+  Rollback command .............. $0 --rollback
+PLAN
 
 say "Phase 2 — snapshot (so rollback is real)"
 run mkdir -p "$SNAP"

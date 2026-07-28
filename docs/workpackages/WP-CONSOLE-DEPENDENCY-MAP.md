@@ -51,23 +51,67 @@ Whichever we pick, the invariant is: **the operations a user can click == the ca
 have passed their own acceptance.** A registry that lists an op whose layer is frozen is a lie,
 and the Console would surface it.
 
-## Merge discipline (before anything reaches main)
+## The actual import DAG (evidence, not narrative)
 
-1. **No bundle merge.** The Console PR must not be the vehicle that merges WP-06, WP-07, the
-   Action Registry, and the Inspector in one shot. Each layer earns its own merge.
-2. **Independent acceptance per layer.** Each WP passes its own clean-Monday validation and owner
-   acceptance on its own terms before it is eligible to merge — see each layer's WP doc.
-3. **Merge order, base up:** Action Registry → (Site Intelligence, Source Reader as they pass) →
-   Technical Inspector → Operations Console. The Console **rebases onto whatever has actually
-   merged**, not onto the development stack.
-4. **Registry honesty check at each step:** after each merge, `validate_registry()` passes AND
-   every listed operation's backing layer is merged (or the entry is gated). CI already fails a
-   registry that contradicts the enforcement layer; extend that to availability at merge time.
-5. **Freeze still holds.** Nothing here changes the freeze: these are the *conditions* for the
-   restarted gate, not permission to merge now.
+Measured from the source, the Console's **static import closure** is small and clean:
 
-## Open decision for the owner
+```
+console.py → core/executor.py → core/actions.py → core/approval.py     (+ stdlib only)
+```
 
-Pick the registry-availability mechanism (flag / split / merge-order) before the Console is
-proposed for merge, so the "operations listed == capabilities accepted" invariant is enforced in
-code, not just intended here.
+None of these import Site Intelligence or Source Reader at module load. Verified:
+`core/actions.py` imports **only** `core/approval.py`; it references WP-06/WP-07 tools **by name,
+as data**, never importing them. The feature implementations enter only through
+`tools/load.py` — imported **lazily**, inside `executor._run_tool`, *and only when a tool-bound
+op is actually executed* — plus one registry **test** that asserts those tool names are
+registered.
+
+So the earlier claim "the registry needs those layers to describe itself" was **too strong** and
+is retracted. The coupling is **data + test + lazy-dispatch**, not imports. Consequence: a
+minimal Console (baseline + registry + gate + Inspector op) is import-clean; what blocks a clean
+extraction is (a) the WP-06/WP-07 **registry entries**, (b) their **`TOOL_MIN_PHASE`** entries in
+the gate, and (c) the **registration test**.
+
+## Architectural debt (record, do not fix under deployment pressure)
+
+> **The Action Registry couples capability *description* to implementation *availability*.** A
+> control-plane registry should be able to declare an operation as `registered / implementation
+> unavailable / acceptance pending / execution disabled` **without importing (or requiring) the
+> unaccepted feature implementation.** Today it cannot cleanly, so every future control-plane
+> feature risks inheriting the whole feature stack. Future registry versions should decouple
+> declaration from availability (a status field + a separate implementation-discovery step). This
+> is design debt, not a blocker for VPS acceptance — but it must not be quietly promoted into a
+> permanent architectural principle.
+
+## Merge discipline — needs the real DAG, not a preferred order
+
+Before merge we produce the actual **import + test dependency graph** and pick between:
+
+- **Scenario A — implementation layers first:** Site Intelligence → Source Reader → shared
+  gate/lifecycle changes → Action Registry → Technical Inspector → Console. Correct *if* we keep
+  the registry as-is (it declares WP-06/WP-07 ops, so those must exist first).
+- **Scenario B — decoupled registry first:** a minimal registry schema + validation → feature
+  layers → per-layer operation registration → Inspector → Console. Architecturally cleaner
+  (pays down the debt above), but needs the decoupling refactor. The import DAG shows this is
+  *viable*, not blocked.
+
+Do **not** assert "base-up" as if it were settled: whether the Action Registry is independently
+mergeable *before* WP-06/WP-07 depends entirely on whether we do the Scenario-B decoupling. That
+choice is made at merge time, on the evidence, not now.
+
+Fixed regardless of scenario:
+1. **No bundle merge** — the Console PR is never the vehicle that merges WP-06/WP-07 + registry +
+   Inspector in one shot.
+2. **Independent acceptance per layer** before it is eligible to merge.
+3. **Registry honesty invariant:** the operations a user can click **==** the capabilities that
+   passed their own acceptance. `validate_registry()` must pass AND every listed op's backing
+   layer is merged or its entry is gated. (This is what the debt item, once paid, enforces in code.)
+4. **Freeze still holds** — these are the conditions for the restarted gate, not permission now.
+
+## Branch decision (current operating decision)
+
+**Keep the current stacked branch for development and VPS acceptance. Do NOT reconstruct now**
+(it would delay the real milestone and risk another divergent implementation). **Do NOT formally
+approve the current stack as the permanent merge model.** Before merge: produce the real
+dependency DAG and decide Scenario A vs B — and do not merge the Console until the Action Registry
+can be shown **not** to pull unaccepted capabilities into `main`.

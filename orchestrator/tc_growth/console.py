@@ -27,6 +27,7 @@ import hmac
 import html
 import json
 import os
+import re
 import time
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -51,6 +52,16 @@ def _e(s: object) -> str:
     return html.escape(str(s), quote=True)
 
 
+_ABS_PATH = re.compile(r"(?:/[\w.\-]+)+/([\w.\-]+)")
+
+
+def _redact(text: str) -> str:
+    """Reduce operational detail before it reaches the browser. Full provenance (absolute paths,
+    etc.) stays in the evidence STORE; the UI shows a basename, not the server's filesystem layout
+    (review: provenance can leak — keep the detailed version server-side, show a reduced one)."""
+    return _ABS_PATH.sub(r"…/\1", text or "")
+
+
 # --- auth: shared token -> signed, expiring session cookie + CSRF -------------------------
 
 
@@ -63,10 +74,18 @@ def _sign(secret: bytes, msg: str) -> str:
     return hmac.new(secret, msg.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
+def _deploy_epoch() -> str:
+    """A deploy identity mixed into the session/CSRF signature so a REDEPLOY invalidates existing
+    sessions — a code change on a privileged execution surface is a natural point to force re-auth.
+    Pinned per deployment via TC_BUILD_COMMIT; stable ('dev') in a working tree."""
+    return os.environ.get("TC_BUILD_COMMIT", "dev")
+
+
 def issue_session(secret: bytes, *, now: float | None = None) -> str:
-    """A session token `<issued_ts>.<sig>` that only a holder of the shared secret can mint."""
+    """A session token `<issued_ts>.<sig>` that only a holder of the shared secret can mint.
+    The signature is bound to the deploy epoch, so a redeploy invalidates prior sessions."""
     ts = str(int(now if now is not None else time.time()))
-    return f"{ts}.{_sign(secret, 'session.' + ts)}"
+    return f"{ts}.{_sign(secret, f'session.{_deploy_epoch()}.{ts}')}"
 
 
 def valid_session(value: str | None, secret: bytes, *, now: float | None = None) -> bool:
@@ -75,7 +94,7 @@ def valid_session(value: str | None, secret: bytes, *, now: float | None = None)
     ts_str, sig = value.split(".", 1)
     if not ts_str.isdigit():
         return False
-    expected = _sign(secret, "session." + ts_str)
+    expected = _sign(secret, f"session.{_deploy_epoch()}.{ts_str}")
     if not hmac.compare_digest(sig, expected):
         return False
     age = (now if now is not None else time.time()) - int(ts_str)
@@ -83,7 +102,7 @@ def valid_session(value: str | None, secret: bytes, *, now: float | None = None)
 
 
 def csrf_for(session_value: str, secret: bytes) -> str:
-    return _sign(secret, "csrf." + session_value)
+    return _sign(secret, f"csrf.{_deploy_epoch()}.{session_value}")
 
 
 def valid_csrf(token: str | None, session_value: str, secret: bytes) -> bool:
@@ -454,7 +473,7 @@ class _Handler(BaseHTTPRequestHandler):
                    "duration_s": result.duration_s, "block_reason": result.block_reason})
         except Exception as exc:  # noqa: BLE001 - a stream must end with a frame, never a broken socket
             frame({"type": "result", "execution_status": "error", "outcome": "failure",
-                   "severity": "error", "block_reason": f"{type(exc).__name__}: {exc}"})
+                   "severity": "error", "block_reason": _redact(f"{type(exc).__name__}: {exc}")})
 
     def log_message(self, fmt, *args):  # quiet; see dashboard.py
         pass
@@ -497,7 +516,7 @@ def _logs_body() -> str:
             f"<div class='op'><div><h3>{_e(getattr(r, 'kind', ''))} "
             f"<span class='badge {cls}'>{_e(label)}</span></h3>"
             f"<div class='meta'>{_e(getattr(r, 'started_at', ''))} · "
-            f"{_e(getattr(r, 'summary', '') or '')}</div></div></div>")
+            f"{_e(_redact(getattr(r, 'summary', '') or ''))}</div></div></div>")
     return "<h2 style='font-size:15px'>Operation log</h2>" + "".join(items)
 
 
