@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 import subprocess
 import sys
 import time
@@ -150,6 +151,22 @@ class ExecutionBlocked(Exception):
         super().__init__(detail)
         self.reason = reason
         self.detail = detail
+
+
+def _provenance(op: Operation, environment: str) -> dict:
+    """Which code, on which target, produced this evidence — so 'the scan passed' is always
+    traceable to a reviewed revision months later. The commit is injected at DEPLOY time via
+    TC_BUILD_COMMIT (the deployment package pins it); op-specific provenance like a script's own
+    sha256 is emitted by the operation into its output. See docs/TECHNICAL_INSPECTOR.md."""
+    from ..config import RELEASE, active_site
+
+    return {
+        "repo_commit": os.environ.get("TC_BUILD_COMMIT", "unknown"),
+        "release": RELEASE,
+        "profile": active_site() or "default",
+        "environment": environment,
+        "binding": f"tool:{op.tool}" if op.tool else f"cli:{op.command}",
+    }
 
 
 # --- native runners -----------------------------------------------------------------------
@@ -433,6 +450,7 @@ class Executor:
             detail = json.dumps({
                 "actor": result.actor,
                 "environment": self.environment(),
+                "provenance": _provenance(op, self.environment()),
                 "execution_status": result.execution_status,
                 "outcome": result.outcome,
                 "severity": result.severity,

@@ -154,6 +154,14 @@ def cmd_integrity_scan() -> int:
     if not Path(script).is_file():
         print(f"integrity scanner not found at {script} — set TC_INSPECTOR_SCRIPT or deploy the script.")
         return 1
+    # Op-specific provenance: record WHICH scanner actually ran (path + content hash + deploy
+    # commit) as the first evidence line — so "the scan passed" is always traceable to an exact
+    # script revision, per docs/TECHNICAL_INSPECTOR.md.
+    import hashlib
+
+    sha = hashlib.sha256(Path(script).read_bytes()).hexdigest()
+    commit = os.environ.get("TC_BUILD_COMMIT", "unknown")
+    print(f"scanner: {script} sha256={sha[:16]} commit={commit}", flush=True)
     try:
         proc = subprocess.Popen(["bash", script], stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, text=True, bufsize=1)

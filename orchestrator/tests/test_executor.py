@@ -167,6 +167,24 @@ def test_successful_run_is_persisted_as_evidence(monkeypatch):
     assert "human" in rec["detail"]
 
 
+def test_evidence_records_provenance(monkeypatch):
+    """Every evidence record must be traceable to a reviewed revision + a target — 'the scan
+    passed' is useless without knowing which code ran, on which profile, in which environment."""
+    import json
+
+    monkeypatch.setattr("tc_growth.report.smtp_test_steps", _fake_smtp_steps_ok)
+    monkeypatch.setenv("TC_BUILD_COMMIT", "abc1234")
+    monkeypatch.setenv("TC_SITE", "production")
+    store = _FakeStore()
+    _exec(environment="production", store_factory=lambda: store).execute("smtp_test")
+    prov = json.loads(store.calls[0]["detail"])["provenance"]
+    assert prov["repo_commit"] == "abc1234"
+    assert prov["profile"] == "production"
+    assert prov["environment"] == "production"
+    assert prov["binding"] == "cli:smtp-test"
+    assert prov["release"]  # the platform release is stamped too
+
+
 def test_actor_is_recorded_but_does_not_change_permissions(monkeypatch):
     """Origin-agnostic: an 'ai' actor is permitted exactly where a 'human' actor is — the actor
     is audit metadata only. (The AI-trigger PATH is governed separately; the executor itself
