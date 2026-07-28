@@ -8,6 +8,7 @@
     python -m tc_growth.cli weekly-report
     python -m tc_growth.cli investigate "<question or anomaly>"
     python -m tc_growth.cli test-email
+    python -m tc_growth.cli smtp-test               # instrumented SMTP test (streams each step)
     python -m tc_growth.cli db-init                 # create the SQLite store + seed Case #1
     python -m tc_growth.cli cases [open|resolved]   # list cases
     python -m tc_growth.cli case <id-or-ref>        # show one case (with narrative)
@@ -111,6 +112,24 @@ def cmd_test_email() -> int:
         print(f"Email test FAILED: {exc}")
         return 1
     print("Email test sent — check the inbox." if ok else "Email not configured.")
+    return 0 if ok else 1
+
+
+def cmd_smtp_test() -> int:
+    """Instrumented SMTP test — prints each protocol step (connect/starttls/auth/send).
+
+    This is the CLI binding the Action Registry points `smtp_test` at. The Operations Console
+    calls the same underlying `smtp_test_steps` directly to stream the step events; here we
+    print them so the operator gets the same evidence from the terminal.
+    """
+    from .report import smtp_test_steps
+
+    def _print(step: str, status: str, detail: str = "") -> None:
+        line = f"  [{status:5}] {step}"
+        print(f"{line}: {detail}" if detail else line)
+
+    ok, summary = smtp_test_steps(emit=_print)
+    print(summary)
     return 0 if ok else 1
 
 
@@ -360,6 +379,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_investigate(rest[0] if rest else "")
     if cmd == "test-email":
         return cmd_test_email()
+    if cmd == "smtp-test":
+        return cmd_smtp_test()
     if cmd == "db-init":
         return cmd_db_init()
     if cmd == "cases":

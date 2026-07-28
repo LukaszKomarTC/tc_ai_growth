@@ -45,6 +45,8 @@ class Operation:
     approval: Approval
     tool: str | None = None            # registered tool this operation is bound to
     command: str | None = None         # CLI entrypoint (python -m tc_growth.cli <command>)
+    allowed_args: tuple[str, ...] = () # arg keys the Execution Service will accept (allowlist;
+                                       # anything else is refused server-side — no free-form input)
     preconditions: tuple[str, ...] = ()
     enforced_by: tuple[str, ...] = ()  # code layers that actually refuse a bad call
     rollback_description: str = ""     # prose — NOT machine-enforced (see module docstring)
@@ -117,6 +119,23 @@ OPERATIONS: tuple[Operation, ...] = (
                              "an environment you would not change by hand",
         verification_description="tool payload printed for operator inspection; exit code "
                                  "reflects ok flag",
+    ),
+    Operation(
+        id="smtp_test",
+        name="SMTP delivery test",
+        category=Category.DIAGNOSTICS,
+        min_phase=Phase.READ_ONLY,
+        environments=("staging", "production"),
+        approval=Approval.NONE,
+        command="smtp-test",
+        allowed_args=(),  # takes no arguments — the mail config is the input
+        preconditions=("TC_SMTP_* and TC_REPORT_RECIPIENT configured",),
+        # Sends one test message via the configured relay; changes nothing on the site. The
+        # Execution Service runs it with per-step instrumentation (connect/starttls/auth/send).
+        enforced_by=(_GATE, "reads mail config only — no site or external state is written"),
+        rollback_description=_READ_ROLLBACK,
+        verification_description="each protocol step (connect/starttls/auth/send) is reported as a "
+                                 "streamed step event; a test message lands in the recipient inbox",
     ),
     Operation(
         id="create_seo_draft",
