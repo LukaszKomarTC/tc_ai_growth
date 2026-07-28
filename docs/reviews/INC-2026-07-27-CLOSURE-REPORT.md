@@ -42,8 +42,45 @@ library false-positives. This was the platform's gating prerequisite.
 
 - **Operational:** Stable — site online, business as normal.
 - **Security:** No active indicators; every persistence class audited clean.
-- **Forensic:** All remediation, full verification, clean baseline, and restore-test COMPLETE.
-  Only the passive monitoring window remains (now automated by Inspector v0) before formal CLOSED.
+- **Forensic:** Investigation complete **to the agreed operational scope** (a business
+  WordPress incident — not a full disk/memory/network-capture forensic image). Passive
+  monitoring (Technical Inspector v0) remains in place to detect any delayed indicators.
+  *(Wording deliberately conservative: forensic work is never mathematically "complete" without
+  every artifact preserved; this states the scope honestly.)*
+
+## Lessons learned — concrete architectural outcomes
+
+Turning the incident into durable improvements, not just a fixed problem:
+
+- **Integrity monitoring is now mandatory, and shipped** — Technical Inspector v0
+  (`orchestrator/scripts/wp-integrity-scan.sh`) runs daily; would have caught this on day one.
+- **Technical Inspector priority raised** — moved from "spec" to active build; the July
+  forensics are its acceptance fixtures.
+- **Backup Guardian gains a hard requirement** — a backup is not "proven" until a **restore
+  test** passes (demonstrated here: DB import + file restore both verified, not just "a backup
+  exists").
+- **Edge WAF on the roadmap** — Cloudflare (block `/wp-json/batch/v1`, rate-limit login) as
+  perimeter defense, paired with the on-host integrity scanner for detection.
+- **Incident-response runbook is version-controlled** — `INC-2026-07-27-CLOSURE-RUNBOOK.md`
+  is reusable, not tribal knowledge.
+- **A verified security baseline is now a precondition for any release gate** — see the
+  governance decision below.
+- **Governance principle validated, not undermined** — evidence-before-conclusion, immutable
+  records, restore testing, and staged authority are exactly what let us recover methodically
+  and decide *when not to trust our own environment*.
+
+## Governance decision — ACCEPTED (reviewer-concurred 2026-07-28)
+
+The 0.3 gate needed clean Monday validation reports. July 20 & 27 ran on the compromised host —
+not necessarily *wrong*, but their **trust basis changed**, and the gate certifies *trustworthy
+evidence*, not *that three Mondays happened*. Decision, concurred by review:
+
+- **Do not count** the July 20 & July 27 reports toward the Release 0.3 gate.
+- **Declare a new trusted production baseline** once monitoring confirms no delayed indicators.
+- **Restart the validation window** — require fresh consecutive clean Mondays on the clean host.
+- Cost: ~2 weeks on the *merge*, nothing on the *build*. This **preserves** the integrity of the
+  governance process rather than eroding it.
+- **INC-2026-07-27 is filed as a permanent governance case study**, not an embarrassment.
 
 ## What still needs a decision (not a technical gap — a governance call)
 
