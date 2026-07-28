@@ -95,6 +95,29 @@ fi
 "$VENV/bin/python" -m tc_growth.cli list-operations >/dev/null 2>&1 \
   || die "registry does not validate under the deployed venv — fix before deploying"
 if ss -ltn 2>/dev/null | grep -q ":$CONSOLE_PORT "; then die "port $CONSOLE_PORT already in use"; fi
+
+# Deployment identity — what gets deployed is whatever is checked out HERE, so the plan must
+# prove it is the reviewed revision: branch, commit, clean tree, and agreement with the remote.
+# A dirty tree is REJECTED for --apply (the deployed code would not match any reviewed commit).
+REPO_DIR="$(cd "$APP_DIR/.." && pwd)"
+GIT_BRANCH="$(git -C "$REPO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
+GIT_SHA="$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
+if [ -z "$(git -C "$REPO_DIR" status --porcelain 2>/dev/null)" ]; then TREE_STATE="clean"; else TREE_STATE="DIRTY"; fi
+REMOTE_STATE="not checked (no network / no upstream)"
+if git -C "$REPO_DIR" fetch -q origin "$GIT_BRANCH" 2>/dev/null; then
+  if [ "$(git -C "$REPO_DIR" rev-parse "origin/$GIT_BRANCH" 2>/dev/null)" = "$GIT_SHA" ]; then
+    REMOTE_STATE="matches origin/$GIT_BRANCH"
+  else
+    REMOTE_STATE="DIVERGES from origin/$GIT_BRANCH"
+  fi
+fi
+if [ "$TREE_STATE" = "DIRTY" ]; then
+  if [ "$APPLY" = 1 ]; then
+    die "working tree is DIRTY — deploying it would not match any reviewed commit. Commit/stash first."
+  else
+    echo "WARNING: working tree is DIRTY — --apply will be refused until it is clean."
+  fi
+fi
 echo "preflight OK."
 
 # ---------------------------------------------------------------------------
@@ -105,6 +128,10 @@ CUR_INSP_STATE="absent"; [ -f "$INSPECTOR_DEST" ] && CUR_INSP_STATE="present (wi
 NEW_HASH="$(sha256sum "$APP_DIR/scripts/wp-integrity-scan.sh" 2>/dev/null | cut -c1-16)"
 say "DEPLOYMENT PLAN — review before --apply"
 cat <<PLAN
+  Branch ........................ $GIT_BRANCH
+  Commit ........................ $GIT_SHA
+  Working tree .................. $TREE_STATE
+  Remote state .................. $REMOTE_STATE
   Source commit pinned .......... $RELEASE_COMMIT
   Inspector script .............. $APP_DIR/scripts/wp-integrity-scan.sh  (sha256 ${NEW_HASH}…)
       -> installed to ........... $INSPECTOR_DEST   [$CUR_INSP_STATE]
