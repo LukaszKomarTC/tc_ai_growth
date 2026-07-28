@@ -91,12 +91,19 @@ def test_redeploy_invalidates_existing_sessions(monkeypatch):
     assert not console.valid_csrf(csrf, tok, SECRET)               # old CSRF rejected too
 
 
-def test_ui_redacts_absolute_paths():
-    """UI-facing text must not leak the server's filesystem layout; the full path stays in the
-    evidence store, the browser sees a basename."""
+def test_ui_redacts_server_prefix_but_keeps_meaningful_path():
+    """Redaction strips the server-mount prefix but must NOT destroy diagnostic meaning — the
+    operator still needs uploads vs mu-plugins, scanner vs WordPress root."""
+    # bare tool path with no WP marker -> basename (server layout gone)
     red = console._redact("scanner: /usr/local/bin/wp-integrity-scan.sh sha256=abc")
-    assert "/usr/local/bin/" not in red
-    assert "wp-integrity-scan.sh" in red
+    assert "/usr/local/bin/" not in red and "wp-integrity-scan.sh" in red
+    # WordPress finding paths -> mount prefix stripped, meaningful tail preserved AND distinct
+    up = console._redact("/var/www/vhosts/tossacycling.com/httpdocs/wp-content/uploads/evil.php")
+    mu = console._redact("/var/www/vhosts/tossacycling.com/httpdocs/wp-content/mu-plugins/x.php")
+    assert "/var/www/" not in up and "/var/www/" not in mu
+    assert up.endswith("wp-content/uploads/evil.php")
+    assert mu.endswith("wp-content/mu-plugins/x.php")
+    assert up != mu  # the two targets remain distinguishable — evidence is not flattened
 
 
 def test_logs_label_findings_as_completed_and_escape_scanner_output(monkeypatch):

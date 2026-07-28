@@ -167,6 +167,42 @@ def test_successful_run_is_persisted_as_evidence(monkeypatch):
     assert "human" in rec["detail"]
 
 
+def test_smtp_password_never_appears_in_evidence(monkeypatch):
+    """Acceptance requirement: the SMTP password must not appear in output, steps, or evidence.
+    Exercises the REAL smtp_test_steps against a fake SMTP server."""
+    import smtplib
+
+    from tc_growth import report
+
+    SENTINEL = "S3cr3t-PW-do-not-leak"
+    for k, v in {"TC_SMTP_HOST": "smtp.example.test", "TC_SMTP_PORT": "587",
+                 "TC_SMTP_USER": "info@example.test", "TC_SMTP_PASSWORD": SENTINEL,
+                 "TC_REPORT_RECIPIENT": "owner@example.test"}.items():
+        monkeypatch.setenv(k, v)
+    report.get_settings.cache_clear() if hasattr(report.get_settings, "cache_clear") else None
+
+    class _FakeSMTP:
+        def __init__(self, *a, **k): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def starttls(self): pass
+        def login(self, u, p): pass
+        def send_message(self, m): pass
+
+    monkeypatch.setattr(smtplib, "SMTP", _FakeSMTP)
+    seen: list[tuple] = []
+    _ok, summary = report.smtp_test_steps(emit=lambda s, st, d="": seen.append((s, st, d)))
+    blob = summary + " " + " ".join(f"{s} {st} {d}" for s, st, d in seen)
+    assert SENTINEL not in blob, "SMTP password leaked into evidence/output"
+
+
+def test_integrity_scan_target_cannot_be_overridden(monkeypatch):
+    """Acceptance requirement: the scan target is server-pinned; a client cannot redirect it.
+    The op takes no args, so any arg is refused before anything runs."""
+    res = _exec().execute("run_integrity_scan", {"docroot": "/etc"})
+    assert res.execution_status == "blocked" and res.block_reason == "disallowed_arg"
+
+
 def test_evidence_records_provenance(monkeypatch):
     """Every evidence record must be traceable to a reviewed revision + a target — 'the scan
     passed' is useless without knowing which code ran, on which profile, in which environment."""

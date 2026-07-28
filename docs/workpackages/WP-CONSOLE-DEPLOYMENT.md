@@ -66,31 +66,56 @@ rollback is a symlink flip. The current snapshot-and-overwrite model is safe for
 loopback console but should be hardened before this surface grows. (Aligns with the repo audit's
 "reproducible deployment + rollback semantics" note.)
 
-## Owner acceptance — OP1 + OP2 through the actual Console
+## Owner acceptance — the narrow, intentional checklist
 
-Do this in the browser over the tunnel, **not** the terminal. This is the milestone.
+Do OP1/OP2 in the browser over the tunnel, **not** the terminal. This is the milestone. Keep it
+narrow — validate exactly the package, OP1, OP2, rollback, and the access boundary.
+
+**Deployment**
+- [ ] Dry-run output reviewed; the printed action list == what `--apply` will run (no hidden steps).
+- [ ] Source commit shown matches the expected branch tip.
+- [ ] Backup/snapshot created before any change.
+- [ ] Service installed under the expected user (`tcgrowth`), not root.
+- [ ] Bind address is loopback only (`127.0.0.1`), confirmed with `ss -ltn`.
+- [ ] No WordPress and no `.env`/profile mutation occurred.
+- [ ] Redeploy behaves idempotently (run `--apply` twice; second run is a no-op in effect).
+- [ ] Rollback is **executable**, not merely documented (`--rollback` restores the prior state).
 
 **OP1 — SMTP Test**
-- [ ] Preview shows target/profile/expected actions before Execute.
-- [ ] Execute streams connect → starttls → auth → send live.
-- [ ] Result reads **Completed — success** (green); a real test mail arrives.
-- [ ] Logs panel shows the run as `completed · success` with evidence + provenance (commit/profile/env).
+- [ ] Preview shows the correct profile and **production** environment before Execute.
+- [ ] Execution streams connect → starttls → auth → send live.
+- [ ] A real test email arrives; result reads **Completed — success** (green).
+- [ ] `completed · success` evidence persists with provenance (commit/profile/env).
+- [ ] **No SMTP password** appears in output, logs, or evidence (guarded by a test; confirm on the box).
+- [ ] Repeated execution does not create malformed state.
 
-**OP2 — Integrity Scan** (the semantics that were corrected)
-- [ ] Runs against the real production docroot under the real `tcgrowth` permissions.
-- [ ] A clean box → **Completed — clean** (green), exit 0.
-- [ ] Add a harmless controlled fixture (e.g. a throwaway extra admin, or a benign marker file the
-      scanner keys on) → **Completed — findings** (amber), exit 2 — **NOT** "failed". Then remove
-      the fixture → **Completed — clean** again.
-- [ ] The evidence record shows the scanner's `sha256` + commit (first output line) and the
-      structured `provenance` block — you can tell exactly which scanner ran.
-- [ ] Findings persisted to the log even if alert delivery fails.
-- [ ] Filenames / scanner output render HTML-escaped in the browser (no injection from a log line).
-- [ ] The scheduled cron and the Console invoke the **same** `/usr/local/bin/wp-integrity-scan.sh`
-      (the unit pins `TC_INSPECTOR_SCRIPT` to that path; cron uses it too).
+**OP2 — Integrity Scan**
+- [ ] Console and cron invoke the **same** pinned scanner (`TC_INSPECTOR_SCRIPT` = the deployed path).
+- [ ] Clean box → `completed / clean` (green, exit 0).
+- [ ] Harmless controlled fixture → `completed / findings / attention` (amber, exit 2) — **not** failed.
+- [ ] An unexpected exit (e.g. wp-cli missing) → `error / failure`.
+- [ ] Finding output renders HTML-escaped; server paths reduced to WP-relative (`…/wp-content/uploads/…`).
+- [ ] Target cannot be overridden from the Console (op takes no args; guarded by a test).
+- [ ] Fixture removed → final scan `completed / clean` again.
+- [ ] Evidence shows the scanner `sha256` + commit, so you know exactly which scanner ran.
 
-When both operations pass here, with correct outcome semantics and traceable evidence, the Console
-MVP has earned the right to continue. Until then it stays "acceptance pending."
+**Security / access boundary**
+- [ ] Console is inaccessible without the tunnel (not reachable on a public interface).
+- [ ] Missing or bad token fails closed (no session issued).
+- [ ] Execute without a valid CSRF token → 403.
+- [ ] A session minted before the redeploy is rejected afterward.
+- [ ] The service cannot execute arbitrary commands (registry-only; no free-form field).
+- [ ] `tcgrowth` does not receive broad sudo authority as part of this.
+
+When all four groups pass, with correct outcome semantics and traceable evidence, the Console MVP
+has earned the right to continue. Until then it stays **acceptance pending**, not "live".
+
+## Keep it to five owner steps
+
+The package exists so the owner task is only: **(1)** inspect the readable plan → **(2)** approve
+`--apply` → **(3)** open the protected Console over the tunnel → **(4)** click OP1 and OP2 →
+**(5)** review the evidence. If deployment instead needs prolonged interactive repair, that is a
+**deployment-package failure** to record and fix — not "just one more terminal session."
 
 ## Do not expand scope during this
 

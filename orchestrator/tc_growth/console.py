@@ -52,14 +52,27 @@ def _e(s: object) -> str:
     return html.escape(str(s), quote=True)
 
 
-_ABS_PATH = re.compile(r"(?:/[\w.\-]+)+/([\w.\-]+)")
+_ABS_PATH = re.compile(r"(?:/[\w.\-]+){2,}")
+# Meaningful WordPress-relative markers to PRESERVE — redaction strips the server-mount prefix but
+# keeps the diagnostically important tail, so 'uploads' vs 'mu-plugins' vs 'wp-includes' survives.
+_KEEP_FROM = ("wp-content", "wp-includes", "mu-plugins", "uploads", "themes", "plugins",
+              "wp-config.php")
 
 
 def _redact(text: str) -> str:
-    """Reduce operational detail before it reaches the browser. Full provenance (absolute paths,
-    etc.) stays in the evidence STORE; the UI shows a basename, not the server's filesystem layout
-    (review: provenance can leak — keep the detailed version server-side, show a reduced one)."""
-    return _ABS_PATH.sub(r"…/\1", text or "")
+    """Reduce SERVER LAYOUT before it reaches the browser without destroying evidence. Full
+    provenance (absolute paths) stays in the evidence STORE; the UI keeps the meaningful
+    WordPress-relative tail (…/wp-content/uploads/x.php stays distinct from …/wp-content/mu-plugins/x)
+    but drops the mount prefix. A path with no marker collapses to a basename. Profile/environment
+    are shown as their own fields elsewhere, so 'production vs staging' is never lost to redaction."""
+    def _repl(m: re.Match[str]) -> str:
+        p = m.group(0)
+        for marker in _KEEP_FROM:
+            i = p.find("/" + marker)
+            if i != -1:
+                return "…" + p[i:]
+        return "…/" + p.rsplit("/", 1)[-1]
+    return _ABS_PATH.sub(_repl, text or "")
 
 
 # --- auth: shared token -> signed, expiring session cookie + CSRF -------------------------
@@ -71,13 +84,18 @@ def _secret() -> bytes | None:
 
 
 def _sign(secret: bytes, msg: str) -> str:
+    # The KEY is always the high-entropy secret (TC_CONSOLE_TOKEN). The deploy commit is only ever
+    # part of the signed MESSAGE (see below), never the key — a git commit is public and must not
+    # be a security secret. Model: HMAC(secret, data + deploy_commit). Do NOT swap these.
     return hmac.new(secret, msg.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 def _deploy_epoch() -> str:
-    """A deploy identity mixed into the session/CSRF signature so a REDEPLOY invalidates existing
-    sessions — a code change on a privileged execution surface is a natural point to force re-auth.
-    Pinned per deployment via TC_BUILD_COMMIT; stable ('dev') in a working tree."""
+    """A deploy identity mixed into the signed MESSAGE (not the key) so a REDEPLOY invalidates
+    existing sessions — a code change on a privileged execution surface is a natural point to force
+    re-auth. It is an EPOCH value, not the secret: security still rests on TC_CONSOLE_TOKEN. Pinned
+    per deployment via TC_BUILD_COMMIT; stable ('dev') in a working tree. (MVP forces logout on
+    every redeploy; a later explicit session-epoch could spare harmless redeploys.)"""
     return os.environ.get("TC_BUILD_COMMIT", "dev")
 
 

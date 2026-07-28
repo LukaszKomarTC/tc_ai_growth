@@ -48,8 +48,18 @@ case "${1:-}" in
 esac
 
 say(){ printf '\n\033[1m== %s\033[0m\n' "$*"; }
+# EVERY mutation goes through run(): in --apply it echoes then executes; in dry-run it only prints.
+# So the dry-run output IS the apply action list — there is no second, separate description of what
+# happens (review: dry-run and apply must be generated from the same plan data).
 run(){ if [ "$APPLY" = 1 ]; then echo "+ $*"; "$@"; else echo "[dry-run] $*"; fi; }
 die(){ printf '\033[31mABORT:\033[0m %s\n' "$*" >&2; exit 1; }
+
+# Mutating steps as named functions so they are single actions run() can print AND execute — no
+# apply-only command escapes the dry-run listing.
+write_console_unit(){ printf '%s\n' "$UNIT_CONTENT" > "$UNIT"; }
+record_deploy(){ local h; h="$(sha256sum "$1" | cut -c1-16)";
+  logger -t tc-inspector "deployed $1 sha256=$h commit=$RELEASE_COMMIT";
+  echo "  recorded: $1 sha256=$h commit=$RELEASE_COMMIT"; }
 
 STAMP="$(date -u '+%Y%m%d-%H%M%S')"
 SNAP="$SNAP_DIR/$STAMP"
@@ -120,11 +130,7 @@ echo "snapshot dir: $SNAP"
 
 say "Phase 3 — deploy the inspector atomically (single source of truth)"
 run install -m0750 "$APP_DIR/scripts/wp-integrity-scan.sh" "$INSPECTOR_DEST"
-if [ "$APPLY" = 1 ]; then
-  HASH="$(sha256sum "$INSPECTOR_DEST" | cut -d' ' -f1)"
-  logger -t tc-inspector "deployed $INSPECTOR_DEST sha256=${HASH:0:16} commit=$RELEASE_COMMIT"
-  echo "deployed inspector sha256=${HASH:0:16} commit=$RELEASE_COMMIT"
-fi
+run record_deploy "$INSPECTOR_DEST"
 
 say "Phase 4 — configure the Console service (loopback, token-gated)"
 UNIT_CONTENT="$(cat <<UNIT_EOF
@@ -150,13 +156,10 @@ PrivateTmp=true
 WantedBy=multi-user.target
 UNIT_EOF
 )"
-if [ "$APPLY" = 1 ]; then
-  printf '%s\n' "$UNIT_CONTENT" > "$UNIT"
-  systemctl daemon-reload
-  systemctl enable --now tc-console.service
-else
-  echo "[dry-run] would write $UNIT:"; printf '%s\n' "$UNIT_CONTENT" | sed 's/^/    /'
-fi
+echo "  unit to be written to $UNIT:"; printf '%s\n' "$UNIT_CONTENT" | sed 's/^/    | /'
+run write_console_unit                       # writes $UNIT (printed as a step in dry-run too)
+run systemctl daemon-reload
+run systemctl enable --now tc-console.service
 
 say "Phase 5 — health check"
 if [ "$APPLY" = 1 ]; then
