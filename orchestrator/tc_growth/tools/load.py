@@ -20,5 +20,7 @@ def load_all() -> ToolRegistry:
     from . import pagespeed  # noqa: F401       performance
     from . import budget  # noqa: F401          ad-budget recommendations (dry-run)
     from . import cases  # noqa: F401           case memory (agent-maintained institutional memory)
+    from . import site_intel  # noqa: F401      Site Intelligence snapshots (WP-06)
+    from . import source_reader  # noqa: F401   read-only source access (WP-07)
 
     return registry

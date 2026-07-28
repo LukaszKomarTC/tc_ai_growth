@@ -75,3 +75,48 @@ def known_cases_block(store=None, *, limit: int = 25) -> str:
             "duplicating it.\n\n" + dlines
         )
     return block
+
+
+_SITE_INTEL_UNAVAILABLE = (
+    "## SITE INTELLIGENCE: unavailable\n"
+    "No completed snapshot exists for this profile. Do not make claims that pages are "
+    "missing, new, obsolete, duplicated, or misrouted this run — structural evidence is "
+    "absent, and its absence must be stated, not implied."
+)
+
+_SITE_INTEL_FAILED = (
+    "## SITE INTELLIGENCE: failed to load\n"
+    "The stored snapshot could not be read. Structural conclusions (new/missing/obsolete/"
+    "duplicate/misrouted) are prohibited for this run; note the failure in the report's "
+    "limitations section."
+)
+
+
+def site_intel_block(store=None) -> str:
+    """SITE INTELLIGENCE digest for task injection (WP-06 slice 4).
+
+    Resilience without silent absence (reviewer correction, 2026-07-20): the report must
+    never break, but the model must always be able to distinguish 'digest present' from
+    'no snapshot yet' from 'snapshot failed to load' — an empty string would hide the
+    absence of evidence, so each state gets an explicit deterministic marker."""
+    try:
+        import json
+
+        from .core.site_intel import format_digest
+        from .store import open_store
+
+        own = store is None
+        if own:
+            store = open_store()
+        try:
+            row = store.latest_snapshot()
+        finally:
+            if own:
+                store.close()
+        if row is None:
+            return _SITE_INTEL_UNAVAILABLE
+        snapshot = json.loads(row.payload)
+        drift = json.loads(row.drift) if row.drift else None
+        return "## " + format_digest(f"id {row.id} · {row.taken_at}", snapshot, drift)
+    except Exception:
+        return _SITE_INTEL_FAILED

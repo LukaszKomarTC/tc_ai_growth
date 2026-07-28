@@ -174,6 +174,7 @@ def _nav(ctx: ProfileCtx) -> str:
     return ("<nav>"
             f"<a href='{_u(ctx, '/today')}'>Today</a>"
             f"<a href='{_u(ctx, '/activity')}'>Activity</a>"
+            f"<a href='{_u(ctx, '/site')}'>Site</a>"
             f"<a href='{_u(ctx, '/')}'>Overview</a>"
             f"<a href='{_u(ctx, '/validation')}'>Validation</a>"
             "</nav>")
@@ -451,6 +452,91 @@ def render_activity(s: Store, ctx: ProfileCtx) -> str:
     return _page("Activity", body, ctx)
 
 
+
+def render_site(s: Store, ctx: ProfileCtx) -> str:
+    """WP-06 slice 5 — DISPLAY-ONLY snapshot view. Deliberately narrow: no approve/dismiss/
+    investigate buttons (workflow semantics belong to the Console package). One hard UI rule:
+    an observed CHANGE is never displayed with the visual severity of an approved-expectation
+    VIOLATION — a new page may be ordinary editorial work; a missing required hub is not."""
+    import json as _json
+
+    row = s.latest_snapshot()
+    if row is None:
+        return _page("Site", "<p class='muted'>No snapshot yet. Run "
+                             "<code>tc-growth smoke site_snapshot_refresh '{}'</code> "
+                             "to build the first one.</p>", ctx)
+
+    snapshot = _json.loads(row.payload)
+    drift = _json.loads(row.drift) if row.drift else {}
+    violations = drift.get("expectation_violations", [])
+
+    meta = (f"<p class='muted'>Snapshot <b>#{row.id}</b> · {_e(row.taken_at)} · "
+            f"{row.item_count} items · source {_e(row.source)}"
+            + (" · <b>initial observation (baseline)</b>" if drift.get("baseline") else "")
+            + "</p>")
+
+    if violations:
+        rows = "".join(
+            f"<li><b>{_e(v.get('violation'))}</b> — {_e(v.get('why'))}"
+            f"<br><span class='muted'>source: {_e(v.get('source'))} · approved {_e(v.get('approved'))}</span></li>"
+            for v in violations)
+        vio = ("<h2 style='color:#b32d2e'>Approved-expectation violations</h2>"
+               "<p class='muted'>Observed state disagrees with owner-approved knowledge — "
+               "checked against THIS snapshot, so pre-existing defects surface too.</p>"
+               f"<ul style='border-left:4px solid #b32d2e;padding-left:1.2rem'>{rows}</ul>")
+    else:
+        vio = ("<h2>Approved-expectation violations</h2>"
+               "<p class='muted'>None — observed state satisfies every approved expectation.</p>")
+
+    if drift.get("baseline"):
+        chg = "<h2>Observed changes</h2><p class='muted'>First snapshot — nothing to compare yet.</p>"
+    elif not drift.get("has_drift"):
+        chg = "<h2>Observed changes</h2><p class='muted'>None since the previous snapshot.</p>"
+    else:
+        parts = []
+        for key in ("added", "removed"):
+            items = drift.get(key, [])
+            if items:
+                parts.append(f"<li>{key}: " + ", ".join(
+                    _e(i.get("slug", i.get("id"))) for i in items[:15]) +
+                    (f" +{len(items)-15} more" if len(items) > 15 else "") + "</li>")
+        changed = drift.get("changed", [])
+        if changed:
+            parts.append("<li>changed: " + ", ".join(
+                f"{_e(c.get('slug', c.get('id')))} [{_e('/'.join(c.get('changes', {}).keys()))}]"
+                for c in changed[:15]) + (f" +{len(changed)-15} more" if len(changed) > 15 else "") + "</li>")
+        if drift.get("menus_changed"):
+            parts.append("<li>navigation menus changed</li>")
+        chg = ("<h2>Observed changes <span class='muted' style='font-weight:400'>"
+               "(change detection — not approved-baseline drift; unexplained until accounted for)"
+               "</span></h2><ul>" + "".join(parts) + "</ul>")
+
+    import datetime as _dt
+    from zoneinfo import ZoneInfo as _ZoneInfo
+
+    from .core.lifecycle import classify_lifecycle
+    today = _dt.datetime.now(_ZoneInfo("Europe/Madrid")).date()
+    states: dict[str, int] = {}
+    for item in snapshot.get("items", {}).values():
+        st = classify_lifecycle(item, today=today)["state"]
+        states[st] = states.get(st, 0) + 1
+    life = ("<h2>Lifecycle summary</h2><div class='tiles'>" + "".join(
+        f"<div class='tile'><div class='k'>{_e(k)}</div><div class='v'>{v}</div></div>"
+        for k, v in sorted(states.items())) +
+        "</div><p class='muted'>Classified by the approved evidence ladder; 'unknown' means "
+        "evidence is incomplete or conflicting — by design, never guessed.</p>")
+
+    hist_rows = "".join(
+        f"<tr><td>#{h.id}</td><td>{_e(h.taken_at)}</td><td>{h.item_count}</td>"
+        f"<td>{_e(h.source)}</td></tr>"
+        for h in s.list_snapshots(limit=15))
+    hist = ("<h2>Snapshot history</h2><table><tr><th>id</th><th>taken</th><th>items</th>"
+            f"<th>source</th></tr>{hist_rows}</table>"
+            "<p class='muted'>History is insert-only; retention keeps the newest 30.</p>")
+
+    return _page("Site", meta + vio + chg + life + hist, ctx)
+
+
 def render_decision(s: Store, key: str, ctx: ProfileCtx | None = None) -> str | None:
     """Decision detail — the 'why am I seeing this?' page: what was decided, on what basis,
     by whom, with what outcome, linked to its case. Read-only; acting stays in the CLI until
@@ -543,6 +629,8 @@ class _Handler(BaseHTTPRequestHandler):
                 doc = render_today(s, ctx)
             elif path == "/activity":
                 doc = render_activity(s, ctx)
+            elif path == "/site":
+                doc = render_site(s, ctx)
             elif path == "/validation":
                 doc = render_validation(ctx)
             elif path.startswith("/case/"):

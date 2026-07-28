@@ -323,3 +323,42 @@ def test_weekly_report_runs_read_only_and_draft_tools_stay_gated(monkeypatch):
     for tool in ("wp_create_seo_draft", "wp_create_product_revision"):
         assert not is_tool_allowed(tool, Phase.READ_ONLY)
         assert is_tool_allowed(tool, Phase.DRAFTS)
+
+
+# --- Rule (WP-09, adopted early 2026-07-20): SEO title and visible H1 are different surfaces ---
+
+def test_rule_seo_title_and_visible_h1_optimised_independently():
+    """A keyword-rich SERP title must not be forced into the on-page H1: long visible headings
+    wrap on mobile and push the CTA below the fold. Drafts optimise the two surfaces separately
+    and route visible-heading changes to a separate recommendation."""
+    c = _coordinator()
+    assert "seo title and visible h1 are different surfaces" in c
+    assert "optimise them independently" in c
+    assert "push the primary cta below the fold" in c
+    assert "keep the h1 clean" in c
+
+
+# --- Rule (WP-06 slice 4): consult the site map before structural judgments ---
+
+def test_rule_consult_site_map_before_structural_judgments():
+    """Run #2's watch item (recommending routing the event plugin already renders) was site-
+    structure blindness. The rule requires consulting the map + lifecycle evidence, admitting
+    unknown on incomplete/conflicting evidence, and citing the snapshot date."""
+    c = _coordinator()
+    assert "consult the site map before structural judgments" in c
+    assert "incomplete or conflicting" in c and "never guess a lifecycle state" in c
+    assert "cite the snapshot date" in c
+    assert "if no snapshot exists, say so" in c
+
+
+# --- Rule (WP-07): source code is not runtime behaviour ---
+
+def test_rule_source_code_is_not_runtime_behaviour():
+    """Source Intelligence explains implementation; it never by itself proves what production
+    does. The rule demands conditional phrasing, citation identity, and pairing with runtime
+    verification — and keeps source evidence distinct from empirical observation."""
+    cal = _norm(prompts.CALIBRATION)
+    assert "source code is not runtime behaviour" in cal
+    assert "the source implements x under conditions y" in cal
+    assert "different evidence classes" in cal
+    assert "runtime verification" in cal

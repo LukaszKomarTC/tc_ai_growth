@@ -286,3 +286,33 @@ def test_activity_feed_merges_decisions_runs_and_journal(monkeypatch, tmp_path):
     finally:
         httpd.shutdown()
         httpd.server_close()
+
+
+def test_site_page_severity_distinction_and_display_only(tmp_path):
+    """WP-06 slice 5: violations wear the alarm colour, observed changes never do; the page
+    carries zero forms/buttons (workflow semantics belong to the Console package)."""
+    import json
+
+    from tc_growth.dashboard import profile_ctx, render_site
+
+    s = store.open_store(tmp_path / "site.db")
+    snap = {"items": {"1": {"id": 1, "slug": "home", "title": "Home", "type": "page",
+                            "parent": 0, "template": "", "url": "https://x/"}},
+            "menus": [], "post_types": [{"type": "page", "published": 1}]}
+    drift = {"baseline": True, "expectation_violations": [
+        {"kind": "menu_contains_url", "value": "/tour_de_girona-listado/",
+         "violation": "menu_contains_url=/tour_de_girona-listado/ not satisfied",
+         "why": "hub must stay reachable", "source": "WP-04", "approved": "2026-07-20"}]}
+    s.save_snapshot(payload=json.dumps(snap), item_count=1, drift=json.dumps(drift))
+    page = render_site(s, profile_ctx("default"))
+    s.close()
+
+    assert "initial observation (baseline)" in page      # first snapshot marked explicitly
+    assert "Approved-expectation violations" in page and "#b32d2e" in page
+    assert "hub must stay reachable" in page and "WP-04" in page
+    # Changes section never wears the alarm colour: every red marker sits BEFORE the
+    # "Observed changes" heading (violations block); nothing after it is red.
+    assert "#b32d2e" not in page.split("Observed changes")[1]
+    assert "nothing to compare yet" in page
+    assert "<form" not in page and "<button" not in page  # display-only, no workflow
+    assert "Lifecycle summary" in page and "never guessed" in page
