@@ -55,7 +55,8 @@ deferred rows ride along with the first post-acceptance redeploy. Next: merge st
 | F2 | Environment badge says STAGING (profile `env_kind` unset) while operating production-adjacent services — set `env_kind` explicitly and give the header an unmistakable color-coded badge | config + UI polish |
 | F3 | Scanner's own header line prints the absolute docroot path into the browser stream (finding paths themselves are WP-relative) — redact stream detail like log summaries, or print the docroot relative | polish |
 | F4 | Console token was displayed in a pasted terminal session during acceptance — rotate token + restart service now that acceptance is done | hygiene |
-| F5 | `tc-autodeploy.timer` is `enabled` (inactive) and the box shows "System restart required" — decide autodeploy's fate BEFORE any reboot | operational decision |
+| F5 | `tc-autodeploy.timer` is `enabled` (inactive) and the box shows "System restart required" — decide autodeploy's fate BEFORE any reboot | ✅ RESOLVED 2026-07-29: disabled (`systemctl disable --now`) until its role is deliberately reviewed — an auto-deployer must not alter a commit-pinned accepted surface outside the reviewed process |
+| F6 | Operation cards read `targets staging/production` (the op's *availability*) while the header states the actual environment — reword to `available in: staging / production` or show the current target, so card and badge can't be misread together | minor wording polish |
 
 Row-failure protocol unchanged: recorded here → fixed in Git → redeployed from the start. Never
 patch the server directly.
