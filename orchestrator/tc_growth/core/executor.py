@@ -407,6 +407,9 @@ class Executor:
             emit(StepEvent("spawn", _STATUS_ERROR, str(exc)))
             return 1, str(exc)
 
+        # Per-operation budget (registry F1) beats the generic executor default — a legitimately
+        # long-running op declares its own timeout instead of squeezing under one global cap.
+        timeout_s = op.timeout_s or self._cli_timeout_s
         try:
             assert proc.stdout is not None
             for raw in proc.stdout:
@@ -414,10 +417,10 @@ class Executor:
                 if line:
                     lines.append(line)
                     emit(StepEvent("output", _STATUS_INFO, line))
-            code = proc.wait(timeout=self._cli_timeout_s)
+            code = proc.wait(timeout=timeout_s)
         except subprocess.TimeoutExpired:
             proc.kill()
-            emit(StepEvent("timeout", _STATUS_ERROR, f"exceeded {self._cli_timeout_s}s"))
+            emit(StepEvent("timeout", _STATUS_ERROR, f"exceeded {timeout_s}s"))
             return 124, "\n".join(lines) + "\n[timed out]"
 
         # Mark the exit step by the op's INTERPRETED severity, not raw code!=0 — for a scanner,

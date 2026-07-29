@@ -243,6 +243,7 @@ def test_snapshot_retention_prunes_and_history_is_insert_only(tmp_path):
 
 def test_undated_page_is_likely_evergreen_low_confidence():
     import datetime as dt
+
     from tc_growth.core.lifecycle import classify_lifecycle
     v = classify_lifecycle({"id": 1, "slug": "servicios", "type": "page", "title": "", "url": ""},
                            today=dt.date(2026, 7, 20))
@@ -268,7 +269,6 @@ def test_report_task_wiring_carries_digest_with_snapshot_identity(tmp_path, monk
     """Integration fixture (reviewer): prove the PROMPT ASSEMBLY is wired — the task handed to
     the runtime contains the digest, the snapshot identity for traceability, and the violation
     with its basis. (Whether the MODEL then obeys is the live acceptance run's job.)"""
-    import tc_growth.store as store_pkg
     from tc_growth.memory import site_intel_block
 
     store = SqliteStore(tmp_path / "w.db")

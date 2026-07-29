@@ -240,12 +240,29 @@ class _FakeProc:
         self.stdout = iter(lines)
         self._code = code
         self.killed = False
+        self.wait_timeout = None  # records the timeout the executor asked for
 
     def wait(self, timeout=None):
+        self.wait_timeout = timeout
         return self._code
 
     def kill(self):
         self.killed = True
+
+
+def test_per_operation_timeout_beats_the_generic_cap(monkeypatch):
+    """F1 (VPS acceptance): the integrity scan ran ~98-100s against the generic 120s cap. An op's
+    registry timeout_s must be what the executor actually enforces."""
+    from tc_growth.core import executor as ex
+    from tc_growth.core.actions import get_operation
+
+    op = get_operation("run_integrity_scan")
+    assert op.timeout_s == 300.0
+    proc = _FakeProc(["clean\n"], code=0)
+    monkeypatch.setattr(ex.subprocess, "Popen", lambda *a, **k: proc)
+    res = _exec().execute("run_integrity_scan")
+    assert res.execution_status == "completed"
+    assert proc.wait_timeout == 300.0            # the registry budget, not the 120s default
 
 
 def test_integrity_scan_op_needs_no_executor_code():

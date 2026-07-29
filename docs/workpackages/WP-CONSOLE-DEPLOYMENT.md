@@ -51,6 +51,20 @@ sudo -u tcgrowth git -C /opt/tc_ai_growth/console fetch origin feature/operation
 sudo -u tcgrowth git -C /opt/tc_ai_growth/console checkout --detach <new-reviewed-sha>
 ```
 
+### First redeploy (post-acceptance fix batch D4/F1/F2/F3)
+
+This redeploy doubles as the deferred acceptance rows (idempotency; old session rejected;
+optional rollback test). Before applying, add the explicit environment label to the console's
+env copy (F2 — the badge derives from it):
+```bash
+echo 'TC_ENV_KIND=production' >> /opt/tc_ai_growth/console/orchestrator/.env
+```
+Then advance the worktree (above), dry-run, review the plan (expect the new commit; everything
+else unchanged), apply once. Verify in the browser: red **PRODUCTION** badge; Execute →
+Running… → **Run again** (button now resets — D4); your PRE-redeploy session was signed out.
+Ledger rows to close: redeploy idempotency (run `--apply` a second time — no-op in effect),
+and optionally `--rollback` followed by a final re-apply.
+
 The script runs six phases, each of which you can verify:
 
 | Phase | What it does | How you know it worked |

@@ -39,10 +39,10 @@ class _FakeEventsAPI:
         self._events = events
         self._sent = sent
 
-    def stream(self, *, session_id: str):  # noqa: ARG002
+    def stream(self, *, session_id: str):
         return iter(self._events)
 
-    def send(self, *, session_id: str, events: list[dict]):  # noqa: ARG002
+    def send(self, *, session_id: str, events: list[dict]):
         self._sent.extend(events)
 
 
@@ -50,7 +50,7 @@ class _FakeSessionsAPI:
     def __init__(self, events: list[Any], sent: list[dict]):
         self.events = _FakeEventsAPI(events, sent)
 
-    def create(self, *, agent: str, environment_id: str):  # noqa: ARG002
+    def create(self, *, agent: str, environment_id: str):
         return SimpleNamespace(id="sesn_test")
 
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import os
 
-import tc_growth.config as config
+from tc_growth import config
 
 
 def test_load_env_exports_to_process_environment(tmp_path, monkeypatch):

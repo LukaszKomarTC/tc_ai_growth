@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import tc_growth.report as report
+from tc_growth import report
 from tc_growth.config import Settings
 
 

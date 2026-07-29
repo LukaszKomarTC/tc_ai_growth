@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-import tc_growth.config as config
+from tc_growth import config
 from tc_growth.config import Settings, load_env, resolved_env_path, site_label, writes_allowed
 from tc_growth.core.approval import Phase, is_tool_allowed
 

@@ -64,6 +64,10 @@ class Operation:
                                        # op's result semantics (e.g. integrity scan: 2 = findings,
                                        # a COMPLETED outcome, not a failure). Empty => default
                                        # policy (0 = success, anything else = execution error).
+    timeout_s: float | None = None     # per-operation execution timeout. VPS acceptance F1: the
+                                       # integrity scan runs ~100s against the executor's generic
+                                       # 120s cap — too thin a margin. An op that legitimately
+                                       # runs long declares its own budget; None => executor default.
     preconditions: tuple[str, ...] = ()
     enforced_by: tuple[str, ...] = ()  # code layers that actually refuse a bad call
     rollback_description: str = ""     # prose — NOT machine-enforced (see module docstring)
@@ -166,6 +170,9 @@ OPERATIONS: tuple[Operation, ...] = (
         # The inspector exits 0 when clean and 2 when it finds anomalies. Exit 2 is a COMPLETED
         # scan with findings (attention) — NOT a failure. Any other code is a real execution error.
         result_policy=((0, "clean"), (2, "findings")),
+        # VPS acceptance measured ~98-100s per scan (core + 24 plugin checksums); 300s gives the
+        # slow-day headroom the generic 120s default lacks (F1).
+        timeout_s=300.0,
         preconditions=("inspector script deployed (scripts/wp-integrity-scan.sh)",
                        "wp-cli available on the host"),
         # Runs through the Execution Service's GENERIC command path — no operation-specific
@@ -359,6 +366,8 @@ def validate_registry(ops: tuple[Operation, ...] = OPERATIONS) -> None:
             if outcome not in OUTCOME_SEVERITY:
                 raise RegistryError(f"{op.id}: result_policy outcome {outcome!r} is not one of "
                                     f"{sorted(OUTCOME_SEVERITY)}")
+        if op.timeout_s is not None and not (isinstance(op.timeout_s, (int, float)) and op.timeout_s > 0):
+            raise RegistryError(f"{op.id}: timeout_s must be a positive number, got {op.timeout_s!r}")
         if not op.verification_description:
             raise RegistryError(f"{op.id}: verification_description is required")
         if op.min_phase > Phase.READ_ONLY:

@@ -107,7 +107,7 @@ def test_decision_add_records_human_policy_and_enters_memory(tmp_path, monkeypat
 
 
 def test_dashboard_validation_page_renders(tmp_path, monkeypatch):
-    import tc_growth.validate as validate
+    from tc_growth import validate
     from tc_growth.dashboard import render_validation
 
     doc = tmp_path / "VALIDATION.md"

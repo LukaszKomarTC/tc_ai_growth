@@ -102,10 +102,10 @@ def test_today_page_and_api(monkeypatch, tmp_path):
     data as JSON. Read-only shell slice 1 (2026-07-13)."""
     import json
     import urllib.request
+    from http.server import ThreadingHTTPServer
 
     from tc_growth import store as store_mod
     from tc_growth.dashboard import _Handler
-    from http.server import ThreadingHTTPServer
 
     db = tmp_path / "today.db"
     monkeypatch.setenv("TC_DB_PATH", str(db))
@@ -200,10 +200,10 @@ def test_profile_scoped_routes(monkeypatch, tmp_path):
 def test_decision_detail_view(monkeypatch, tmp_path):
     """Console slice 2: /decision/<id> is the 'why am I seeing this?' page — basis, status,
     outcome, linked case — and D#ids across Today/overview/case pages link to it."""
+    import threading
     import urllib.error
     import urllib.request
     from http.server import ThreadingHTTPServer
-    import threading
 
     from tc_growth import store as store_mod
     from tc_growth.dashboard import _Handler
@@ -248,9 +248,9 @@ def test_decision_detail_view(monkeypatch, tmp_path):
 def test_activity_feed_merges_decisions_runs_and_journal(monkeypatch, tmp_path):
     """Console slice 3: /activity is one chronological stream over existing store data —
     decisions (+outcomes), runs, and case-journal entries — newest first, no new schema."""
+    import threading
     import urllib.request
     from http.server import ThreadingHTTPServer
-    import threading
 
     from tc_growth import store as store_mod
     from tc_growth.dashboard import _Handler, activity_feed

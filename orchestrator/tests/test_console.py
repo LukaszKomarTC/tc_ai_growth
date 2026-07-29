@@ -91,6 +91,28 @@ def test_redeploy_invalidates_existing_sessions(monkeypatch):
     assert not console.valid_csrf(csrf, tok, SECRET)               # old CSRF rejected too
 
 
+def test_environment_badge_is_unmissable():
+    """F2: PRODUCTION renders as a distinct filled badge; staging gets its own class — the
+    environment must be impossible to misread on an execution surface."""
+    prod = console._shell("t", "operations", "x", site_name="Tossa Cycling", env_kind="production")
+    assert "envbadge prod" in prod and ">PRODUCTION<" in prod
+    stag = console._shell("t", "operations", "x", site_name="Tossa Cycling", env_kind="staging")
+    assert "envbadge stag" in stag and ">STAGING<" in stag
+    # unset/blank env falls back to staging, never silently blank
+    dflt = console._shell("t", "operations", "x", site_name="TC", env_kind="")
+    assert ">STAGING<" in dflt
+
+
+def test_redact_reduces_docroot_header_but_keeps_wp_relative_findings():
+    """F3: the scanner's header names the absolute docroot — the stream must reduce it, while
+    WP-relative finding paths keep their diagnostic meaning."""
+    header = console._redact(
+        "Technical Inspector — integrity anomalies on /var/www/vhosts/tossacycling.com/httpdocs at ...")
+    assert "/var/www/" not in header and "httpdocs" in header
+    finding = console._redact("wp-content/uploads/tc-acceptance-fixture.php")
+    assert finding == "wp-content/uploads/tc-acceptance-fixture.php"  # relative path untouched
+
+
 def test_ui_redacts_server_prefix_but_keeps_meaningful_path():
     """Redaction strips the server-mount prefix but must NOT destroy diagnostic meaning — the
     operator still needs uploads vs mu-plugins, scanner vs WordPress root."""

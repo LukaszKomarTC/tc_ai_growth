@@ -52,7 +52,9 @@ def _e(s: object) -> str:
     return html.escape(str(s), quote=True)
 
 
-_ABS_PATH = re.compile(r"(?:/[\w.\-]+){2,}")
+# Absolute paths only: the lookbehind stops the pattern matching the middle of a RELATIVE path
+# (wp-content/uploads/x.php must pass through untouched — F3 regression).
+_ABS_PATH = re.compile(r"(?<![\w.\-])(?:/[\w.\-]+){2,}")
 # Meaningful WordPress-relative markers to PRESERVE — redaction strips the server-mount prefix but
 # keeps the diagnostically important tail, so 'uploads' vs 'mu-plugins' vs 'wp-includes' survives.
 _KEEP_FROM = ("wp-content", "wp-includes", "mu-plugins", "uploads", "themes", "plugins",
@@ -157,6 +159,9 @@ header { padding:14px 20px; border-bottom:1px solid var(--line); display:flex; g
   align-items:baseline; }
 header h1 { font-size:15px; margin:0; font-weight:600; }
 header .env { color:var(--muted); font-size:12px; }
+.envbadge { font-size:11px; font-weight:700; letter-spacing:.06em; padding:3px 10px; border-radius:6px; }
+.envbadge.prod { background:var(--err); color:#fff; }
+.envbadge.stag { background:var(--warn); color:#0d1117; }
 nav { display:flex; gap:4px; padding:8px 16px; border-bottom:1px solid var(--line); }
 nav a { color:var(--muted); text-decoration:none; padding:6px 12px; border-radius:6px; font-size:13px; }
 nav a.on { color:var(--fg); background:var(--panel); }
@@ -202,7 +207,10 @@ kbd{font:11px ui-monospace,monospace;background:var(--bg);border:1px solid var(-
 """
 
 
-def _shell(title: str, active: str, body: str, *, env_label: str) -> str:
+def _shell(title: str, active: str, body: str, *, site_name: str, env_kind: str) -> str:
+    """Page chrome. F2 (VPS acceptance): the environment must be impossible to misread on an
+    execution surface — PRODUCTION renders as a filled red badge, anything else amber. The badge
+    derives from the profile's env_kind; set TC_ENV_KIND explicitly in the console's .env."""
     def _tab(name: str, href: str) -> str:
         on = " on" if active == name.lower() else ""
         return f'<a class="{on.strip()}" href="{href}">{name}</a>'
@@ -210,11 +218,14 @@ def _shell(title: str, active: str, body: str, *, env_label: str) -> str:
         _tab("Operations", "/"), _tab("Evidence", "/logs"),
         _tab("Cases", "/cases"), _tab("Logs", "/logs"),
     ])
+    kind = (env_kind or "staging").strip().lower()
+    badge_cls = "prod" if kind == "production" else "stag"
+    badge = f"<span class='envbadge {badge_cls}'>{_e(kind.upper())}</span>"
     return (
         "<!doctype html><html><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
         f"<title>{_e(title)} — TC Operations Console</title><style>{_STYLE}</style></head><body>"
-        f"<header><h1>TC Operations Console</h1><span class='env'>{_e(env_label)}</span></header>"
+        f"<header><h1>TC Operations Console</h1><span class='env'>{_e(site_name)}</span>{badge}</header>"
         f"<nav>{nav}</nav><main>{body}</main></body></html>"
     )
 
@@ -293,24 +304,31 @@ async function openPreview(op){
 }
 function closeModal(){ document.getElementById('modal').classList.remove('on'); }
 async function execOp(){
+  // Button lifecycle (D4): Execute -> Running… -> Run again. The server closes the connection
+  // after the final frame, so the read loop terminates; a network error also restores the button.
   const btn = document.getElementById('mExec'); btn.disabled=true; btn.textContent='Running…';
   const stream = document.getElementById('stream'); stream.style.display='block'; stream.innerHTML='';
-  const res = await fetch('/api/execute', {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
-    body:'op='+encodeURIComponent(currentOp)+'&csrf='+encodeURIComponent(window.__CSRF__)});
-  const reader = res.body.getReader(); const dec = new TextDecoder(); let buf='';
-  while(true){
-    const {value, done} = await reader.read(); if(done) break;
-    buf += dec.decode(value, {stream:true});
-    let idx;
-    while((idx = buf.indexOf('\\n\\n')) >= 0){
-      const frame = buf.slice(0, idx); buf = buf.slice(idx+2);
-      const line = frame.split('\\n').find(l=>l.startsWith('data:'));
-      if(!line) continue;
-      const ev = JSON.parse(line.slice(5).trim());
-      renderEvent(ev, stream);
+  try {
+    const res = await fetch('/api/execute', {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
+      body:'op='+encodeURIComponent(currentOp)+'&csrf='+encodeURIComponent(window.__CSRF__)});
+    const reader = res.body.getReader(); const dec = new TextDecoder(); let buf='';
+    while(true){
+      const {value, done} = await reader.read(); if(done) break;
+      buf += dec.decode(value, {stream:true});
+      let idx;
+      while((idx = buf.indexOf('\\n\\n')) >= 0){
+        const frame = buf.slice(0, idx); buf = buf.slice(idx+2);
+        const line = frame.split('\\n').find(l=>l.startsWith('data:'));
+        if(!line) continue;
+        const ev = JSON.parse(line.slice(5).trim());
+        renderEvent(ev, stream);
+      }
     }
+  } catch (err) {
+    stream.innerHTML += "<div class='result err'>CONNECTION LOST — "+h(String(err))+"</div>";
+  } finally {
+    btn.textContent='Run again'; btn.disabled=false;
   }
-  btn.textContent='Execute'; btn.disabled=false;
 }
 function renderEvent(ev, stream){
   if(ev.type==='step'){
@@ -412,21 +430,22 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(404, {"error": "unknown operation"})
             return
 
-        from .config import site_label
-        env_label = site_label()
+        from .config import active_site, get_settings
+        s = get_settings()
+        chrome = {"site_name": s.site_name or (active_site() or "Tossa Cycling"),
+                  "env_kind": s.env_kind}
         if path in ("/", ""):
             csrf = csrf_for(session, secret)
             body = f"<script>window.__CSRF__={json.dumps(csrf)};</script>" + _operations_body()
-            self._html(200, _shell("Operations", "operations", body, env_label=env_label))
+            self._html(200, _shell("Operations", "operations", body, **chrome))
         elif path == "/logs":
-            self._html(200, _shell("Logs", "logs",
-                                   _logs_body(), env_label=env_label))
+            self._html(200, _shell("Logs", "logs", _logs_body(), **chrome))
         elif path == "/cases":
             self._html(200, _shell("Cases", "cases",
                                    _placeholder_panel("Cases",
                                        "Case detail lives in the read-only dashboard "
                                        "(python -m tc_growth.cli dashboard). Wired into the "
-                                       "Console in a later slice."), env_label=env_label))
+                                       "Console in a later slice."), **chrome))
         else:
             self._send(404, b"not found", "text/plain; charset=utf-8")
 
@@ -468,20 +487,29 @@ class _Handler(BaseHTTPRequestHandler):
 
     # ---- streaming execution ----
     def _stream_execute(self, op_id: str) -> None:
-        """Run the operation and stream step events as chunked `data: {json}` frames.
+        """Run the operation and stream step events as `data: {json}` frames, then CLOSE.
 
         The op id is validated by the Execution Service (unknown -> a 'blocked' result event);
         the Console never accepts a free-form command, only a registry op id from the listing.
+
+        D4 (VPS acceptance): the response has no Content-Length, so the ONLY end-of-body signal
+        the browser gets is the connection closing. The first deployment kept the connection
+        alive after the final frame, so the client's read loop never resolved and the Execute
+        button stayed on "Running…" forever. Declare `Connection: close` and actually close.
         """
         self._headers(200, "text/event-stream; charset=utf-8",
-                      extra=[("Cache-Control", "no-cache"), ("X-Accel-Buffering", "no")])
+                      extra=[("Cache-Control", "no-cache"), ("X-Accel-Buffering", "no"),
+                             ("Connection", "close")])
 
         def frame(obj: dict) -> None:
             self.wfile.write(f"data: {json.dumps(obj, default=str)}\n\n".encode())
             self.wfile.flush()
 
         def emit(ev: StepEvent) -> None:
-            frame({"type": "step", "step": ev.step, "status": ev.status, "detail": ev.detail})
+            # F3: step detail can carry scanner output including server paths — reduce them the
+            # same way the Logs panel does (WP-relative tails survive; mount prefixes do not).
+            frame({"type": "step", "step": ev.step, "status": ev.status,
+                   "detail": _redact(ev.detail)})
 
         try:
             result = _executor().execute(op_id, emit=emit, actor="human")
@@ -492,6 +520,9 @@ class _Handler(BaseHTTPRequestHandler):
         except Exception as exc:  # noqa: BLE001 - a stream must end with a frame, never a broken socket
             frame({"type": "result", "execution_status": "error", "outcome": "failure",
                    "severity": "error", "block_reason": _redact(f"{type(exc).__name__}: {exc}")})
+        finally:
+            # End of body = end of connection; the client's reader resolves and resets the button.
+            self.close_connection = True
 
     def log_message(self, fmt, *args):  # quiet; see dashboard.py
         pass
