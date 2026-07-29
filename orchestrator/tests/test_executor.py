@@ -338,6 +338,52 @@ def test_cli_integrity_scan_reports_cleanly_when_script_missing(monkeypatch, cap
     assert "not found" in capsys.readouterr().out
 
 
+class _ArgvCapture:
+    """Fake Popen that records the argv it was launched with."""
+
+    def __init__(self):
+        self.argv = None
+
+    def popen(self, argv, **_kw):
+        self.argv = list(argv)
+        proc = type("P", (), {})()
+        proc.stdout = iter([])
+        proc.wait = lambda: 0
+        return proc
+
+
+def test_cli_integrity_scan_uses_sudo_when_configured(monkeypatch, tmp_path):
+    """D2: with TC_INSPECTOR_SUDO=true the scanner runs via `sudo -n -- <script>` — matching the
+    zero-argument sudoers allowlist the deploy package installs. No extra args may be appended."""
+    import subprocess
+
+    from tc_growth.cli import cmd_integrity_scan
+
+    script = tmp_path / "scan.sh"
+    script.write_text("#!/bin/bash\nexit 0\n")
+    monkeypatch.setenv("TC_INSPECTOR_SCRIPT", str(script))
+    monkeypatch.setenv("TC_INSPECTOR_SUDO", "true")
+    cap = _ArgvCapture()
+    monkeypatch.setattr(subprocess, "Popen", cap.popen)
+    assert cmd_integrity_scan() == 0
+    assert cap.argv == ["sudo", "-n", "--", str(script)]
+
+
+def test_cli_integrity_scan_default_stays_direct(monkeypatch, tmp_path):
+    import subprocess
+
+    from tc_growth.cli import cmd_integrity_scan
+
+    script = tmp_path / "scan.sh"
+    script.write_text("#!/bin/bash\nexit 0\n")
+    monkeypatch.setenv("TC_INSPECTOR_SCRIPT", str(script))
+    monkeypatch.delenv("TC_INSPECTOR_SUDO", raising=False)
+    cap = _ArgvCapture()
+    monkeypatch.setattr(subprocess, "Popen", cap.popen)
+    assert cmd_integrity_scan() == 0
+    assert cap.argv == ["bash", str(script)]
+
+
 def test_generic_command_path_streams_stdout_lines(monkeypatch):
     """A command-bound op with no native runner streams subprocess stdout as step events and
     returns the process exit code — so adding such an op is a registry entry, not new code."""

@@ -166,8 +166,15 @@ def cmd_integrity_scan() -> int:
     # server-side deploy log (journald), not in a browser-facing evidence line. (Review: don't leak
     # filesystem layout to the UI.)
     print(f"scanner: {Path(script).name} sha256={sha[:16]} commit={commit}", flush=True)
+    # TC_INSPECTOR_SUDO=true: run the deployed, root-owned scanner via sudo, because the service
+    # user cannot read the WP docroot (VPS recon, defect D2). The sudoers drop-in installed by the
+    # deploy package allowlists EXACTLY this path with ZERO arguments — and sudo's env_reset strips
+    # the caller's TC_* environment, so the scan target is pinned to the script's baked defaults
+    # even if the Console's environment were compromised. Script must be executable (deployed 0755).
+    use_sudo = os.environ.get("TC_INSPECTOR_SUDO", "").strip().lower() in ("1", "true", "yes")
+    argv = ["sudo", "-n", "--", script] if use_sudo else ["bash", script]
     try:
-        proc = subprocess.Popen(["bash", script], stdout=subprocess.PIPE,
+        proc = subprocess.Popen(argv, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, text=True, bufsize=1)
     except OSError as exc:
         print(f"could not launch integrity scanner: {exc}")

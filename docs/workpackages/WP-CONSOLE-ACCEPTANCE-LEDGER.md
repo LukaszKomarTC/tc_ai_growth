@@ -1,9 +1,18 @@
 # Operations Console — Acceptance Ledger
 
 **Repository freeze:** `feature/operations-console` is FROZEN (2026-07-28) until VPS acceptance
-completes. **Code is frozen as of `edce3c8`**; this ledger is the only commit on top of it and is
-docs-only. The stable check at the box is: *working tree clean, tip matches
-`origin/feature/operations-console`, no code changes since `edce3c8`.* During acceptance: no feature work, no refactoring, no "while we're here,"
+completes. The freeze admits exactly one kind of change: **defect fixes recorded in the Defect
+log below**, per the protocol (stop → record → fix in Git → redeploy cleanly). The stable check
+at the box is: *working tree clean, release checkout pinned at the reviewed commit, and that
+commit on `origin/feature/operations-console`.*
+
+## Defect log (found in VPS preflight recon 2026-07-29 — before any deployment)
+
+| ID | Defect | Fix (in Git) |
+|---|---|---|
+| D1 | Package defaulted to deploying from the live app checkout — which is dirty and drives `tc-weekly-report` / `tc-autodeploy`; switching it would have changed production-scheduled code and tainted the Monday gate | Release-directory deployment: the script deploys **the checkout it lives in**; preflight **refuses** an `APP_DIR` referenced by the production schedule units; identity check supports **detached worktrees pinned at the reviewed commit** (verifies the pin against `origin/feature/operations-console`) |
+| D2 | Package assumed the service user could run the integrity scan; recon proved `tcgrowth` cannot read the WP docroot | One narrowly-scoped, **visudo-validated** sudoers drop-in: exact root-owned script path, **zero arguments**, NOPASSWD, shown verbatim in the deploy plan; CLI runs `sudo -n -- <script>` when `TC_INSPECTOR_SUDO=true`; sudo's `env_reset` pins the scan target against env override; scanner deployed 0755 root-owned (readable for provenance hashing, root-writable only); unit drops `NoNewPrivileges` (blocks setuid) and uses `ProtectSystem=full` (strict broke sudo's `/run` timestamps + the scanner log) — rationale in the unit comments |
+| D3 | `--rollback` routed every restore through the dry-run wrapper with apply unset — **rollback printed instead of executing** (found by re-review) | Rollback sets apply mode explicitly, restores unit + inspector + sudoers state (or removes what a first install created), and still echoes every action | During acceptance: no feature work, no refactoring, no "while we're here,"
 no "one quick fix." Only **observe · diagnose · record · decide**. If a package bug appears:
 stop → record it here → fix in Git → redeploy cleanly. **Never patch the server directly.**
 

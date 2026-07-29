@@ -10,20 +10,45 @@ by default** and changes nothing until you pass `--apply`. Read it before you ru
 
 ## Prerequisites (one-time, on the VPS)
 
-1. A console token, stored 0600, never printed to a shell that logs history:
+1. **Bootstrap an isolated release checkout** (D1: never deploy from the checkout that
+   `tc-weekly-report` / `tc-autodeploy` run from — preflight refuses it). As the service user,
+   detached at the exact reviewed commit:
+   ```bash
+   cd /opt/tc_ai_growth/app
+   sudo -u tcgrowth git fetch origin feature/operations-console
+   sudo -u tcgrowth git worktree add --detach /opt/tc_ai_growth/console <reviewed-sha>
+   install -m 600 -o tcgrowth -g tcgrowth /opt/tc_ai_growth/app/orchestrator/.env \
+       /opt/tc_ai_growth/console/orchestrator/.env
+   ```
+2. A console token, stored 0600, never printed to a shell that logs history:
    ```bash
    umask 077; printf 'TC_CONSOLE_TOKEN=%s\n' "$(openssl rand -base64 32)" >> /etc/tc-console.env
    ```
-2. Confirm the config block at the top of `deploy-console.sh` matches your box (`TC_APP_DIR`,
-   `TC_VENV`, `TC_SERVICE_USER`, `TC_CONSOLE_PORT`). Override via env if not.
+3. The shared venv: release checkouts have no `.venv`, so `TC_VENV` must point at the main
+   install's (editable-install + `WorkingDirectory` means the service still runs the release
+   checkout's code — cwd wins on `sys.path`).
 
 ## Deploy (the one operation)
 
 ```bash
-cd <repo>/orchestrator
-./scripts/deploy-console.sh                 # DRY RUN — prints every action, changes nothing
-# review the printed systemd unit, paths, and pinned commit, then:
-sudo TC_BUILD_COMMIT=$(git rev-parse --short HEAD) ./scripts/deploy-console.sh --apply
+cd /opt/tc_ai_growth/console/orchestrator     # the release checkout — you deploy what you run from
+export TC_VENV=/opt/tc_ai_growth/app/orchestrator/.venv
+./scripts/deploy-console.sh                   # DRY RUN — prints every action, changes nothing
+# review the plan: pinned commit, sudoers rule, unit, paths — then:
+sudo TC_VENV=$TC_VENV TC_BUILD_COMMIT=$(git rev-parse --short HEAD) ./scripts/deploy-console.sh --apply
+```
+
+**Scan permission (D2), shown in the plan before you apply:** the deploy installs one
+visudo-validated sudoers drop-in — `tcgrowth ALL=(root) NOPASSWD: /usr/local/bin/wp-integrity-scan.sh ""`
+— exact root-owned script, zero arguments, nothing else. `sudo`'s `env_reset` also strips the
+caller's environment, so the Console cannot redirect the scan target even in principle. The unit
+consequently runs without `NoNewPrivileges` and with `ProtectSystem=full`; the rationale for each
+relaxation is written in the unit itself.
+
+**To deploy a newer reviewed commit:** advance the detached worktree, then re-run:
+```bash
+sudo -u tcgrowth git -C /opt/tc_ai_growth/console fetch origin feature/operations-console
+sudo -u tcgrowth git -C /opt/tc_ai_growth/console checkout --detach <new-reviewed-sha>
 ```
 
 The script runs six phases, each of which you can verify:
