@@ -51,6 +51,15 @@ sudo -u tcgrowth git -C /opt/tc_ai_growth/console fetch origin feature/operation
 sudo -u tcgrowth git -C /opt/tc_ai_growth/console checkout --detach <new-reviewed-sha>
 ```
 
+**Worktree ownership rule (D5, learned the hard way):** ALL manual git commands in the release
+worktree run as the service user (`sudo -u tcgrowth git -C …`) — never as root. Root's
+`git status` rewrites the index file root-owned, which breaks the owner's next fetch/checkout
+with `index file open failed: Permission denied`. Recovery if it happens:
+```bash
+chown -R tcgrowth:tcgrowth /opt/tc_ai_growth/app/.git/worktrees/console /opt/tc_ai_growth/console
+```
+(The deploy script itself now runs its git checks as the checkout's owner automatically.)
+
 ### First redeploy (post-acceptance fix batch D4/F1/F2/F3)
 
 This redeploy doubles as the deferred acceptance rows (idempotency; old session rejected;

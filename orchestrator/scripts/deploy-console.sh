@@ -27,8 +27,9 @@
 # script from <release-dir>/orchestrator.
 #
 # Redeploy semantics (see docs/workpackages/WP-CONSOLE-DEPLOYMENT.md for the full Q&A):
-#   * Idempotent / safe to run twice: each run snapshots first, then overwrites the unit + inspector
-#     and `enable --now` is idempotent. Re-running with the same commit is a no-op in effect.
+#   * Idempotent / safe to run twice: each run snapshots first, overwrites the unit + inspector,
+#     and RESTARTS the service (enable+restart — `enable --now` alone would leave old code live
+#     on a running service, D5b). Re-running with the same commit redeploys identical state.
 #   * Snapshots are timestamped and RETAINED under $SNAP_DIR (previous states kept for rollback).
 #   * A redeploy INVALIDATES active Console sessions (the session signature is bound to the deploy
 #     commit) — a code change on an execution surface forces re-auth.
@@ -143,7 +144,15 @@ if [ ! -f "$CONSOLE_ENV_FILE" ] || ! grep -q '^TC_CONSOLE_TOKEN=' "$CONSOLE_ENV_
 fi
 "$VENV/bin/python" -m tc_growth.cli list-operations >/dev/null 2>&1 \
   || die "registry does not validate under the deployed venv — fix before deploying"
-if ss -ltn 2>/dev/null | grep -q ":$CONSOLE_PORT "; then die "port $CONSOLE_PORT already in use"; fi
+# D5: on a REDEPLOY the port is legitimately held by the running tc-console itself (it gets
+# restarted in phase 4). Only a FOREIGN listener is a conflict.
+if ss -ltn 2>/dev/null | grep -q ":$CONSOLE_PORT "; then
+  if systemctl is-active --quiet tc-console.service; then
+    echo "port $CONSOLE_PORT is held by the running tc-console service — this deploy will restart it."
+  else
+    die "port $CONSOLE_PORT is in use by something OTHER than tc-console — investigate before deploying"
+  fi
+fi
 
 # Deployment identity — what gets deployed is whatever is checked out HERE, so the plan must
 # prove it is the reviewed revision: branch/commit, clean tree, and agreement with the remote.
@@ -151,20 +160,29 @@ if ss -ltn 2>/dev/null | grep -q ":$CONSOLE_PORT "; then die "port $CONSOLE_PORT
 # Release checkouts are DETACHED worktrees pinned at the reviewed sha, so the check verifies the
 # pinned commit against origin/$RELEASE_BRANCH rather than assuming a local branch.
 REPO_DIR="$(cd "$APP_DIR/.." && pwd)"
-GIT_BRANCH="$(git -C "$REPO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
-GIT_SHA="$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
-if [ -z "$(git -C "$REPO_DIR" status --porcelain 2>/dev/null)" ]; then TREE_STATE="clean"; else TREE_STATE="DIRTY"; fi
+# D5 hardening: NEVER run git as root inside a service-user-owned checkout — `git status` can
+# rewrite the index root-owned, breaking the owner's future fetch/checkout (this exact failure
+# happened on the first redeploy). All identity-check git runs as the checkout's OWNER.
+REPO_OWNER="$(stat -c %U "$REPO_DIR" 2>/dev/null || echo root)"
+rgit(){ if [ "$(id -u)" -eq 0 ] && [ "$REPO_OWNER" != "root" ]; then
+          sudo -n -u "$REPO_OWNER" git -C "$REPO_DIR" "$@"
+        else
+          git -C "$REPO_DIR" "$@"
+        fi; }
+GIT_BRANCH="$(rgit rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
+GIT_SHA="$(rgit rev-parse HEAD 2>/dev/null || echo unknown)"
+if [ -z "$(rgit status --porcelain 2>/dev/null)" ]; then TREE_STATE="clean"; else TREE_STATE="DIRTY"; fi
 REMOTE_STATE="not checked (no network / no upstream)"
 CHECK_BRANCH="$GIT_BRANCH"
 if [ "$GIT_BRANCH" = "HEAD" ]; then
   GIT_BRANCH="(detached — release checkout pinned at commit)"
   CHECK_BRANCH="$RELEASE_BRANCH"
 fi
-if git -C "$REPO_DIR" fetch -q origin "$CHECK_BRANCH" 2>/dev/null; then
-  ORIGIN_TIP="$(git -C "$REPO_DIR" rev-parse "origin/$CHECK_BRANCH" 2>/dev/null || echo none)"
+if rgit fetch -q origin "$CHECK_BRANCH" 2>/dev/null; then
+  ORIGIN_TIP="$(rgit rev-parse "origin/$CHECK_BRANCH" 2>/dev/null || echo none)"
   if [ "$ORIGIN_TIP" = "$GIT_SHA" ]; then
     REMOTE_STATE="matches origin/$CHECK_BRANCH tip"
-  elif git -C "$REPO_DIR" merge-base --is-ancestor "$GIT_SHA" "$ORIGIN_TIP" 2>/dev/null; then
+  elif rgit merge-base --is-ancestor "$GIT_SHA" "$ORIGIN_TIP" 2>/dev/null; then
     REMOTE_STATE="on origin/$CHECK_BRANCH but BEHIND its tip — confirm this older commit is the reviewed release"
   else
     REMOTE_STATE="NOT on origin/$CHECK_BRANCH — do not deploy unreviewed code"
@@ -274,7 +292,10 @@ echo "  unit to be written to $UNIT:"; printf '%s\n' "$UNIT_CONTENT" | sed 's/^/
 run install -d -o "$SERVICE_USER" -g "$SERVICE_USER" "$APP_DIR/var"   # default store/evidence dir
 run write_console_unit                       # writes $UNIT (printed as a step in dry-run too)
 run systemctl daemon-reload
-run systemctl enable --now tc-console.service
+run systemctl enable tc-console.service
+# D5b: `enable --now` does NOT restart an already-running service, so a redeploy would keep the
+# OLD code live. restart covers both cases: starts a stopped service, restarts a running one.
+run systemctl restart tc-console.service
 
 say "Phase 5 — health check"
 if [ "$APPLY" = 1 ]; then
