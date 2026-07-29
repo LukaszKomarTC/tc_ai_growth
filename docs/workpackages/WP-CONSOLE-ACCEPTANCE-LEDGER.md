@@ -36,8 +36,9 @@ Fill the table in during the acceptance session. This document IS the acceptance
 | Cleanup | Fixture removed → `completed / clean` again | `COMPLETED — CLEAN · run#4 · 98.214s` | `run#4` | ✅ |
 | Script identity | Console and cron invoke the SAME deployed scanner | Every run logged identical `sha256=7368b48c5a536023 commit=bda3111`; cron (`17 4 * * *`) calls the same `/usr/local/bin/wp-integrity-scan.sh` the unit pins | runs #2–#4; root crontab | ✅ |
 | Evidence in Logs panel | Runs visible with correct domain labels | `completed · success`, `completed · clean`, `completed · findings` (amber), `completed · clean` — in order, each with scanner provenance | Logs panel 06:41 UTC | ✅ |
-| Redeploy (idempotency + session invalidation) | Second `--apply` no-op in effect; prior session rejected after redeploy | — deferred: will be exercised by the D4-fix redeploy | | ⏳ |
-| Rollback test (optional) | `--rollback` restores prior state | — not exercised (optional) | | ⏳ |
+| Redeploy (idempotency + session invalidation) | Second `--apply` no-op in effect; prior session rejected after redeploy | Redeploy to `94c945a` succeeded after the D5 fix (running-service port allowed; enable+restart loads new code); pre-redeploy session rejected (owner re-authenticated); second `--apply` produced an identical plan, fresh snapshot `20260729-071037`, replace-not-duplicate on unit/inspector/sudoers, health check OK | apply outputs 07:05 + 07:10 UTC; owner sign-out | ✅ |
+| Fix-batch verification (D4/F1/F2/F3) | Button resets; 300s scan budget; PRODUCTION badge; paths reduced | Button ends on **Run again** (SMTP `run#5 · 0.179s` on production); badge renders PRODUCTION filled red; scan budget 300s in registry; stream redaction live | browser session 07:10 UTC; screenshot | ✅ |
+| Rollback test (optional) | `--rollback` restores prior state | — deferred to a separately planned test window with defined expected results (per review: not casually on the live accepted Console) | | ⏳ planned |
 
 **Acceptance decision (2026-07-29): the Operations Console MVP is OPERATIONALLY ACCEPTED.**
 Both operations proven on the production VPS with correct outcome semantics, streamed evidence,
