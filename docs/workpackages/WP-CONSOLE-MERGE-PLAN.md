@@ -84,6 +84,42 @@ minimal; introduce the three-state model deliberately afterward, with acceptance
 8. **Only then** reopen OP3 and the queued WP-06/WP-07 branches, each rebased onto the new `main`
    and merged with its own acceptance.
 
+## Pre-merge review checks (added this round)
+
+Approved as the Scenario-B merge source, subject to three checks — all satisfied without any
+behaviour/API/UI change:
+
+1. **Every layer independently green.** CI at each layer tip: Registry Foundation (142), +Execution
+   Service (169), +Console UI (182). Every merge point stands alone, not just the combined tip.
+2. **Command-binding invariant.** `validate_registry` only checks a command is non-empty; a new
+   test (`test_registry_cli_bindings.py`) proves every registry `command` has a real `cli.py`
+   dispatch branch — closing the drift gap where the registry could name a CLI command that
+   doesn't exist. Belongs to the Execution-Service layer (needs registry + CLI). No CLI redesign.
+3. **Evidence-persistence policy recorded (below).**
+
+## Evidence-persistence policy — read-only vs write (prerequisite for write ops)
+
+The Execution Service persists evidence **best-effort**: an operation completes even if the store
+is missing or logging fails (it prints a degraded-evidence note and returns a null evidence ref).
+That is acceptable **only** for the current read-only diagnostics. The governing rule, to be
+enforced in code BEFORE any production write-capable operation ships:
+
+> **Read-only operations** may complete with a *visible degraded-evidence* state (result stands,
+> evidence ref absent, warning surfaced). **Write-capable operations MUST fail closed** if durable
+> evidence cannot be created — no external state may change without a persisted audit record.
+
+Not implemented in this extraction (no write ops here); it is a hard prerequisite for the first
+write operation's acceptance.
+
+## Housekeeping (non-blocking)
+
+- The accepted baseline (`94c945a`) should get a durable remote tag / release marker for
+  auditability (a SHA suffices technically). Tag push is blocked by the git proxy; to be created
+  server-side.
+- `Operation.enabled` stays in the schema as an emergency kill switch. It is NOT expanded into the
+  three-state (`declared`/`available`/`accepted`) catalogue during this merge — that remains a
+  separate, later work package.
+
 ## What this explicitly is NOT
 
 - Not a bundle merge of `feature/operations-console`.
