@@ -3,10 +3,13 @@
     python -m tc_growth.cli [--site <profile>] <command>   # e.g. --site production report
 
     python -m tc_growth.cli list-tools
+    python -m tc_growth.cli list-operations         # named-operation catalogue (Action Registry)
     python -m tc_growth.cli smoke <tool_name> '<json args>'
     python -m tc_growth.cli weekly-report
     python -m tc_growth.cli investigate "<question or anomaly>"
     python -m tc_growth.cli test-email
+    python -m tc_growth.cli smtp-test               # instrumented SMTP test (streams each step)
+    python -m tc_growth.cli integrity-scan          # Technical Inspector: read-only WP integrity scan
     python -m tc_growth.cli db-init                 # create the SQLite store + seed Case #1
     python -m tc_growth.cli cases [open|resolved]   # list cases
     python -m tc_growth.cli case <id-or-ref>        # show one case (with narrative)
@@ -21,6 +24,7 @@
     python -m tc_growth.cli draft-test "<task>"          # supervised DRAFTS-phase run (staging)
     python -m tc_growth.cli validation                   # Release 0.3 validation report (from docs/VALIDATION.md)
     python -m tc_growth.cli dashboard [port]             # read-only web view (127.0.0.1 only)
+    python -m tc_growth.cli console [port]               # Operations Console (execute ops; 127.0.0.1 + token)
 
 `smoke` exercises a single host-side tool WITHOUT the AI runtime — the fastest way to surface
 OAuth/vault/credential problems (the usual first failure point). `weekly-report` runs the full
@@ -62,6 +66,24 @@ def cmd_list_tools() -> int:
     return 0
 
 
+def cmd_list_operations() -> int:
+    """Print the Action Registry: every named operation with its governance envelope.
+
+    Validates first — a catalogue that contradicts the enforcement layer must not print
+    as if it were true.
+    """
+    from .core.actions import OPERATIONS, validate_registry
+
+    validate_registry()
+    for op in OPERATIONS:
+        state = "" if op.enabled else "  [DISABLED]"
+        binding = op.tool and f"tool:{op.tool}" or f"cli:{op.command}"
+        envs = "/".join(op.environments)
+        print(f"{op.id:26} {op.category.value:12} phase>={int(op.min_phase)}  "
+              f"approval:{op.approval.value:13} env:{envs:18} {binding}{state}")
+    return 0
+
+
 def cmd_smoke(name: str, raw_args: str) -> int:
     args = json.loads(raw_args) if raw_args else {}
     payload = load_all().dispatch(name, args)
@@ -93,6 +115,74 @@ def cmd_test_email() -> int:
         return 1
     print("Email test sent — check the inbox." if ok else "Email not configured.")
     return 0 if ok else 1
+
+
+def cmd_smtp_test() -> int:
+    """Instrumented SMTP test — prints each protocol step (connect/starttls/auth/send).
+
+    This is the CLI binding the Action Registry points `smtp_test` at. The Operations Console
+    calls the same underlying `smtp_test_steps` directly to stream the step events; here we
+    print them so the operator gets the same evidence from the terminal.
+    """
+    from .report import smtp_test_steps
+
+    def _print(step: str, status: str, detail: str = "") -> None:
+        line = f"  [{status:5}] {step}"
+        print(f"{line}: {detail}" if detail else line)
+
+    ok, summary = smtp_test_steps(emit=_print)
+    print(summary)
+    return 0 if ok else 1
+
+
+def cmd_integrity_scan() -> int:
+    """Run the Technical Inspector (read-only WP integrity scan), streaming its output.
+
+    This is the CLI binding the Action Registry points `run_integrity_scan` at. It runs the
+    standalone inspector script and passes its output and exit code straight through, so the
+    Operations Console surfaces it through the GENERIC command path — no executor code is
+    specific to this operation. Exit codes: 0 = clean, 2 = anomalies found (and logged), other
+    = the scan could not run.
+    """
+    import os
+    import subprocess
+    from pathlib import Path
+
+    from .config import BASE_DIR
+
+    script = os.environ.get("TC_INSPECTOR_SCRIPT") or str(BASE_DIR / "scripts" / "wp-integrity-scan.sh")
+    if not Path(script).is_file():
+        print(f"integrity scanner not found at {script} — set TC_INSPECTOR_SCRIPT or deploy the script.")
+        return 1
+    # Op-specific provenance: record WHICH scanner actually ran (path + content hash + deploy
+    # commit) as the first evidence line — so "the scan passed" is always traceable to an exact
+    # script revision, per docs/TECHNICAL_INSPECTOR.md.
+    import hashlib
+
+    sha = hashlib.sha256(Path(script).read_bytes()).hexdigest()
+    commit = os.environ.get("TC_BUILD_COMMIT", "unknown")
+    # Provenance in the evidence stream identifies the scanner by CONTENT HASH + commit, not its
+    # absolute path — the sha256 is the definitive identity, and the full deploy path stays in the
+    # server-side deploy log (journald), not in a browser-facing evidence line. (Review: don't leak
+    # filesystem layout to the UI.)
+    print(f"scanner: {Path(script).name} sha256={sha[:16]} commit={commit}", flush=True)
+    # TC_INSPECTOR_SUDO=true: run the deployed, root-owned scanner via sudo, because the service
+    # user cannot read the WP docroot (VPS recon, defect D2). The sudoers drop-in installed by the
+    # deploy package allowlists EXACTLY this path with ZERO arguments — and sudo's env_reset strips
+    # the caller's TC_* environment, so the scan target is pinned to the script's baked defaults
+    # even if the Console's environment were compromised. Script must be executable (deployed 0755).
+    use_sudo = os.environ.get("TC_INSPECTOR_SUDO", "").strip().lower() in ("1", "true", "yes")
+    argv = ["sudo", "-n", "--", script] if use_sudo else ["bash", script]
+    try:
+        proc = subprocess.Popen(argv, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True, bufsize=1)
+    except OSError as exc:
+        print(f"could not launch integrity scanner: {exc}")
+        return 1
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        print(line.rstrip("\n"), flush=True)
+    return proc.wait()
 
 
 def cmd_investigate(question: str) -> int:
@@ -326,6 +416,8 @@ def main(argv: list[str] | None = None) -> int:
     cmd, rest = argv[0], argv[1:]
     if cmd == "list-tools":
         return cmd_list_tools()
+    if cmd == "list-operations":
+        return cmd_list_operations()
     if cmd == "smoke":
         return cmd_smoke(rest[0], rest[1] if len(rest) > 1 else "")
     if cmd == "weekly-report":
@@ -339,6 +431,10 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_investigate(rest[0] if rest else "")
     if cmd == "test-email":
         return cmd_test_email()
+    if cmd == "smtp-test":
+        return cmd_smtp_test()
+    if cmd == "integrity-scan":
+        return cmd_integrity_scan()
     if cmd == "db-init":
         return cmd_db_init()
     if cmd == "cases":
@@ -388,6 +484,10 @@ def main(argv: list[str] | None = None) -> int:
 
         serve(port=int(rest[0]) if rest else 8383)
         return 0
+    if cmd == "console":
+        from .console import serve as serve_console
+
+        return serve_console(port=int(rest[0]) if rest else 8385)
     print(__doc__)
     return 1
 

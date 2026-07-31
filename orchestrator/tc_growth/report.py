@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime as dt
 import time
+from collections.abc import Callable
 
 from .config import get_settings, model_for, site_label
 from .core.approval import Phase
@@ -254,6 +255,69 @@ def send_email(subject: str, body: str, *, raise_on_error: bool = False) -> bool
         return False
 
 
+
+
+def smtp_test_steps(emit: Callable[[str, str, str], None] | None = None) -> tuple[bool, str]:
+    """Instrumented SMTP delivery test that reports each protocol step as it happens.
+
+    Unlike `send_email` (one opaque success/failure), this walks the connection explicitly —
+    connect → starttls → auth → send → quit — and calls `emit(step, status, detail)` at each
+    boundary so the Operations Console can stream real step events instead of a spinner. It is
+    the first operation surfaced by the Execution Service: low blast radius (sends one test mail,
+    changes nothing on the site) yet it exercises config, network, TLS, and auth end to end.
+
+    `emit` takes (step, status, detail) where status is 'start' | 'ok' | 'error' | 'info'.
+    Returns (ok, human_readable_summary). Never raises — a failure is a step event + False,
+    because a diagnostic that crashes tells the operator nothing.
+    """
+    import smtplib
+    from email.message import EmailMessage
+
+    def _emit(step: str, status: str, detail: str = "") -> None:
+        if emit is not None:
+            emit(step, status, detail)
+
+    s = get_settings()
+    if not s.smtp_host or not s.report_recipient:
+        _emit("config", "error", "SMTP not configured (TC_SMTP_HOST / TC_REPORT_RECIPIENT)")
+        return False, "SMTP not configured (set TC_SMTP_HOST and TC_REPORT_RECIPIENT)."
+
+    recipient = s.report_recipient
+    sender = s.report_sender or s.smtp_user or recipient
+    _emit("config", "ok", f"host={s.smtp_host}:{s.smtp_port} starttls={s.smtp_starttls} -> {recipient}")
+
+    msg = EmailMessage()
+    msg["Subject"] = "Tossa Cycling — SMTP step test"
+    msg["From"] = sender
+    msg["To"] = recipient
+    msg.set_content(
+        "Instrumented SMTP test from the TC Operations Console.\n\n"
+        "If you can read this, connect/starttls/auth/send all succeeded.\n"
+    )
+
+    try:
+        _emit("connect", "start", f"{s.smtp_host}:{s.smtp_port}")
+        with smtplib.SMTP(s.smtp_host, s.smtp_port, timeout=30) as smtp:
+            _emit("connect", "ok", "TCP connection established")
+            if s.smtp_starttls:
+                _emit("starttls", "start", "upgrading to TLS")
+                smtp.starttls()
+                _emit("starttls", "ok", "TLS negotiated")
+            if s.smtp_user:
+                _emit("auth", "start", f"user={s.smtp_user}")
+                smtp.login(s.smtp_user, s.smtp_password)
+                _emit("auth", "ok", "authenticated")
+            else:
+                _emit("auth", "info", "no SMTP user set — skipping auth")
+            _emit("send", "start", f"to={recipient}")
+            smtp.send_message(msg)
+            _emit("send", "ok", "message accepted by server")
+        _emit("quit", "ok", "connection closed cleanly")
+        return True, f"SMTP test passed — test message sent to {recipient}."
+    except Exception as exc:  # noqa: BLE001 - a diagnostic must report the failure, never crash on it
+        # Which step failed is already the last 'start' the caller saw; label it on the failing verb.
+        _emit("error", "error", f"{type(exc).__name__}: {exc}")
+        return False, f"SMTP test FAILED: {type(exc).__name__}: {exc}"
 
 
 def _deliver_telegram(report: str) -> None:
