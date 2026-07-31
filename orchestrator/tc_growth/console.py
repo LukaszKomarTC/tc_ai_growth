@@ -1,0 +1,593 @@
+"""Operations Console — the loopback UI half of WP-CONSOLE-MVP slice 1.
+
+The Console is the HUMAN client of the origin-agnostic Execution Service (`core.executor`).
+It lists the Action Registry's operations, previews one, and executes it with the step-by-step
+output streamed live — getting the operator off the terminal for the exact workflows the
+2026-07-27 incident forced by hand (SMTP test, integrity scan, backup verify...).
+
+Security posture — this is a privileged EXECUTION surface, built the week of a breach:
+- **Loopback only.** Binds 127.0.0.1; remote access is an SSH tunnel, never a public port.
+- **Fail closed.** Refuses to start unless TC_CONSOLE_TOKEN is set — an execution surface with
+  no auth secret must not run.
+- **Session auth + CSRF.** A shared token unlocks a signed, expiring session cookie
+  (HttpOnly, SameSite=Strict); every state-changing POST also carries a CSRF token.
+- **Registry-governed.** The executor may run ONLY Action Registry operations, under the phase
+  gate; there is no free-form command field anywhere and op ids are validated server-side.
+- **Everything logged.** Each execution writes a run record (actor, op, steps, output) via the
+  Execution Service — the Console adds no second execution authority.
+
+No chat. No "Ask AI." The panels are Operations · Evidence · Cases · Logs (the read panels defer
+to the existing read-only dashboard). Run: python -m tc_growth.cli console [port]
+"""
+
+from __future__ import annotations
+
+import hashlib
+import hmac
+import html
+import json
+import os
+import re
+import time
+from http.cookies import SimpleCookie
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, unquote
+
+from .core.actions import OPERATIONS, validate_registry
+from .core.approval import Phase
+from .core.executor import Executor, StepEvent
+
+_SESSION_COOKIE = "tc_console"
+_SESSION_MAX_AGE = 12 * 3600  # a shift; re-auth after that
+_TOKEN_ENV = "TC_CONSOLE_TOKEN"
+
+# Self-only CSP: no external scripts, styles, fonts, images, or connections — the console must
+# not be able to fetch anything off-box (defence for a surface that runs privileged operations).
+_CSP = ("default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
+        "img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'self'; "
+        "frame-ancestors 'none'")
+
+
+def _e(s: object) -> str:
+    return html.escape(str(s), quote=True)
+
+
+# Absolute paths only: the lookbehind stops the pattern matching the middle of a RELATIVE path
+# (wp-content/uploads/x.php must pass through untouched — F3 regression).
+_ABS_PATH = re.compile(r"(?<![\w.\-])(?:/[\w.\-]+){2,}")
+# Meaningful WordPress-relative markers to PRESERVE — redaction strips the server-mount prefix but
+# keeps the diagnostically important tail, so 'uploads' vs 'mu-plugins' vs 'wp-includes' survives.
+_KEEP_FROM = ("wp-content", "wp-includes", "mu-plugins", "uploads", "themes", "plugins",
+              "wp-config.php")
+
+
+def _redact(text: str) -> str:
+    """Reduce SERVER LAYOUT before it reaches the browser without destroying evidence. Full
+    provenance (absolute paths) stays in the evidence STORE; the UI keeps the meaningful
+    WordPress-relative tail (…/wp-content/uploads/x.php stays distinct from …/wp-content/mu-plugins/x)
+    but drops the mount prefix. A path with no marker collapses to a basename. Profile/environment
+    are shown as their own fields elsewhere, so 'production vs staging' is never lost to redaction."""
+    def _repl(m: re.Match[str]) -> str:
+        p = m.group(0)
+        for marker in _KEEP_FROM:
+            i = p.find("/" + marker)
+            if i != -1:
+                return "…" + p[i:]
+        return "…/" + p.rsplit("/", 1)[-1]
+    return _ABS_PATH.sub(_repl, text or "")
+
+
+# --- auth: shared token -> signed, expiring session cookie + CSRF -------------------------
+
+
+def _secret() -> bytes | None:
+    tok = os.environ.get(_TOKEN_ENV, "").strip()
+    return tok.encode("utf-8") if tok else None
+
+
+def _sign(secret: bytes, msg: str) -> str:
+    # The KEY is always the high-entropy secret (TC_CONSOLE_TOKEN). The deploy commit is only ever
+    # part of the signed MESSAGE (see below), never the key — a git commit is public and must not
+    # be a security secret. Model: HMAC(secret, data + deploy_commit). Do NOT swap these.
+    return hmac.new(secret, msg.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _deploy_epoch() -> str:
+    """A deploy identity mixed into the signed MESSAGE (not the key) so a REDEPLOY invalidates
+    existing sessions — a code change on a privileged execution surface is a natural point to force
+    re-auth. It is an EPOCH value, not the secret: security still rests on TC_CONSOLE_TOKEN. Pinned
+    per deployment via TC_BUILD_COMMIT; stable ('dev') in a working tree. (MVP forces logout on
+    every redeploy; a later explicit session-epoch could spare harmless redeploys.)"""
+    return os.environ.get("TC_BUILD_COMMIT", "dev")
+
+
+def issue_session(secret: bytes, *, now: float | None = None) -> str:
+    """A session token `<issued_ts>.<sig>` that only a holder of the shared secret can mint.
+    The signature is bound to the deploy epoch, so a redeploy invalidates prior sessions."""
+    ts = str(int(now if now is not None else time.time()))
+    return f"{ts}.{_sign(secret, f'session.{_deploy_epoch()}.{ts}')}"
+
+
+def valid_session(value: str | None, secret: bytes, *, now: float | None = None) -> bool:
+    if not value or "." not in value:
+        return False
+    ts_str, sig = value.split(".", 1)
+    if not ts_str.isdigit():
+        return False
+    expected = _sign(secret, f"session.{_deploy_epoch()}.{ts_str}")
+    if not hmac.compare_digest(sig, expected):
+        return False
+    age = (now if now is not None else time.time()) - int(ts_str)
+    return 0 <= age <= _SESSION_MAX_AGE
+
+
+def csrf_for(session_value: str, secret: bytes) -> str:
+    return _sign(secret, f"csrf.{_deploy_epoch()}.{session_value}")
+
+
+def valid_csrf(token: str | None, session_value: str, secret: bytes) -> bool:
+    return bool(token) and hmac.compare_digest(token, csrf_for(session_value, secret))
+
+
+# --- executor wiring ----------------------------------------------------------------------
+
+
+def _console_phase() -> Phase:
+    """Phase the Console runs the Execution Service at. READ_ONLY by default — slice 1 surfaces
+    diagnostics (SMTP test, integrity scan); write/ALWAYS_ASK ops show as not-runnable in preview
+    until the confirmation-step slice ships. Override with TC_CONSOLE_PHASE for supervised use."""
+    raw = os.environ.get("TC_CONSOLE_PHASE", "").strip().lower()
+    return {"drafts": Phase.DRAFTS, "controlled_execution": Phase.CONTROLLED_EXECUTION}.get(
+        raw, Phase.READ_ONLY)
+
+
+def _executor() -> Executor:
+    # No confirm hook in the MVP: ALWAYS_ASK ops are refused (shown as needs-confirmation in the
+    # preview) until the in-UI confirmation step is built. Never silently auto-confirm.
+    return Executor(phase=_console_phase(), confirm=None)
+
+
+# --- HTML ---------------------------------------------------------------------------------
+
+_STYLE = """
+:root { color-scheme: light dark; --bg:#0d1117; --panel:#161b22; --line:#30363d; --fg:#e6edf3;
+  --muted:#8b949e; --ok:#3fb950; --err:#f85149; --warn:#d29922; --accent:#2f81f7; }
+* { box-sizing: border-box; }
+body { margin:0; font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg);
+  color:var(--fg); }
+header { padding:14px 20px; border-bottom:1px solid var(--line); display:flex; gap:18px;
+  align-items:baseline; }
+header h1 { font-size:15px; margin:0; font-weight:600; }
+header .env { color:var(--muted); font-size:12px; }
+.envbadge { font-size:11px; font-weight:700; letter-spacing:.06em; padding:3px 10px; border-radius:6px; }
+.envbadge.prod { background:var(--err); color:#fff; }
+.envbadge.stag { background:var(--warn); color:#0d1117; }
+nav { display:flex; gap:4px; padding:8px 16px; border-bottom:1px solid var(--line); }
+nav a { color:var(--muted); text-decoration:none; padding:6px 12px; border-radius:6px; font-size:13px; }
+nav a.on { color:var(--fg); background:var(--panel); }
+main { max-width:900px; margin:0 auto; padding:24px 20px; }
+.op { border:1px solid var(--line); border-radius:8px; padding:14px 16px; margin-bottom:10px;
+  background:var(--panel); display:flex; justify-content:space-between; align-items:center; gap:12px; }
+.op .meta { color:var(--muted); font-size:12px; margin-top:3px; }
+.op h3 { margin:0; font-size:14px; }
+.badge { font-size:11px; padding:2px 7px; border-radius:20px; border:1px solid var(--line);
+  color:var(--muted); }
+.badge.write { color:#d29922; border-color:#d29922; }
+.badge.ok { color:var(--ok); border-color:color-mix(in srgb, var(--ok) 45%, var(--line)); }
+.badge.warn { color:var(--warn); border-color:color-mix(in srgb, var(--warn) 45%, var(--line)); }
+.badge.err { color:var(--err); border-color:color-mix(in srgb, var(--err) 45%, var(--line)); }
+button { font:inherit; cursor:pointer; border:1px solid var(--accent); background:var(--accent);
+  color:#fff; padding:7px 14px; border-radius:6px; }
+button.ghost { background:transparent; color:var(--accent); }
+button:disabled { opacity:.4; cursor:not-allowed; }
+.muted { color:var(--muted); }
+.modal { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none; align-items:center;
+  justify-content:center; padding:20px; }
+.modal.on { display:flex; }
+.card { background:var(--panel); border:1px solid var(--line); border-radius:10px; width:560px;
+  max-width:100%; max-height:86vh; overflow:auto; }
+.card header { border-bottom:1px solid var(--line); }
+.card .body { padding:16px 18px; }
+.card .foot { padding:14px 18px; border-top:1px solid var(--line); display:flex; gap:10px;
+  justify-content:flex-end; }
+ul.actions { margin:8px 0; padding-left:18px; } ul.actions li { margin:2px 0; }
+#stream { font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace; background:#0a0d12;
+  border:1px solid var(--line); border-radius:8px; padding:12px; margin-top:12px; min-height:60px;
+  white-space:pre-wrap; }
+.step { display:block; } .step .ok{color:var(--ok);} .step .err{color:var(--err);}
+.step .tag{color:var(--muted);}
+.result { margin-top:10px; font-weight:600; } .result.ok{color:var(--ok);} .result.err{color:var(--err);}
+.result.warn{color:var(--warn);}
+input[type=password]{ font:inherit; padding:9px 12px; border-radius:6px; border:1px solid var(--line);
+  background:var(--bg); color:var(--fg); width:100%; }
+form.login { max-width:340px; margin:12vh auto; }
+form.login h1 { font-size:16px; }
+kbd{font:11px ui-monospace,monospace;background:var(--bg);border:1px solid var(--line);
+  border-radius:4px;padding:1px 5px;}
+"""
+
+
+def _shell(title: str, active: str, body: str, *, site_name: str, env_kind: str) -> str:
+    """Page chrome. F2 (VPS acceptance): the environment must be impossible to misread on an
+    execution surface — PRODUCTION renders as a filled red badge, anything else amber. The badge
+    derives from the profile's env_kind; set TC_ENV_KIND explicitly in the console's .env."""
+    def _tab(name: str, href: str) -> str:
+        on = " on" if active == name.lower() else ""
+        return f'<a class="{on.strip()}" href="{href}">{name}</a>'
+    nav = "".join([
+        _tab("Operations", "/"), _tab("Evidence", "/logs"),
+        _tab("Cases", "/cases"), _tab("Logs", "/logs"),
+    ])
+    kind = (env_kind or "staging").strip().lower()
+    badge_cls = "prod" if kind == "production" else "stag"
+    badge = f"<span class='envbadge {badge_cls}'>{_e(kind.upper())}</span>"
+    return (
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        f"<title>{_e(title)} — TC Operations Console</title><style>{_STYLE}</style></head><body>"
+        f"<header><h1>TC Operations Console</h1><span class='env'>{_e(site_name)}</span>{badge}</header>"
+        f"<nav>{nav}</nav><main>{body}</main></body></html>"
+    )
+
+
+def _login_page(*, error: str = "") -> str:
+    err = f"<p class='result err'>{_e(error)}</p>" if error else ""
+    return (
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        f"<title>Sign in — TC Operations Console</title><style>{_STYLE}</style></head><body>"
+        "<form class='login' method='post' action='/login'>"
+        "<h1>TC Operations Console</h1>"
+        "<p class='muted'>Privileged execution surface. Enter the console token.</p>"
+        f"{err}"
+        "<input type='password' name='token' placeholder='Console token' autofocus autocomplete='off'>"
+        "<p><button type='submit'>Sign in</button></p>"
+        "<p class='muted' style='font-size:12px'>Loopback only · reached via SSH tunnel.</p>"
+        "</form></body></html>"
+    )
+
+
+def _operations_body() -> str:
+    ex = _executor()
+    rows = []
+    for op in OPERATIONS:
+        if not op.enabled:
+            continue
+        prev = ex.preview(op.id)
+        badge = "<span class='badge write'>writes</span>" if prev.writes else "<span class='badge'>read-only</span>"
+        approval = "" if prev.approval == "none" else f"<span class='badge'>{_e(prev.approval)}</span>"
+        btn = (f"<button onclick=\"openPreview('{_e(op.id)}')\">Preview</button>"
+               if prev.runnable_now
+               else f"<button class='ghost' disabled title=\"{_e(prev.block_reason)}\">Unavailable</button>")
+        rows.append(
+            f"<div class='op'><div><h3>{_e(op.name)} {badge} {approval}</h3>"
+            f"<div class='meta'>{_e(op.category)} · targets {_e('/'.join(op.environments))} · "
+            f"<code>{_e(prev.binding)}</code></div></div><div>{btn}</div></div>"
+        )
+    listing = "".join(rows) or "<p class='muted'>No operations available.</p>"
+    modal = """
+<div class='modal' id='modal'><div class='card'>
+  <header><h1 id='mTitle'>Operation</h1></header>
+  <div class='body' id='mBody'></div>
+  <div id='stream' style='display:none'></div>
+  <div class='foot'>
+    <button class='ghost' onclick='closeModal()'>Close</button>
+    <button id='mExec' onclick='execOp()'>Execute</button>
+  </div>
+</div></div>"""
+    return listing + modal + _SCRIPT
+
+
+_SCRIPT = """
+<script>
+let currentOp = null;
+function h(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
+async function openPreview(op){
+  currentOp = op;
+  const r = await fetch('/api/preview?op='+encodeURIComponent(op));
+  const p = await r.json();
+  document.getElementById('mTitle').textContent = p.name;
+  const actions = (p.expected_actions||'').split(';').map(s=>s.trim()).filter(Boolean);
+  document.getElementById('mBody').innerHTML =
+    "<p class='muted'>Target: <b>"+h(p.environments.join(' / '))+"</b> · "+
+    (p.writes?"<b style='color:#d29922'>changes state</b>":"read-only, changes nothing")+"</p>"+
+    "<p>Expected actions / verification:</p><ul class='actions'>"+
+    actions.map(a=>"<li>"+h(a)+"</li>").join('')+"</ul>"+
+    "<p class='muted' style='font-size:12px'>Binding: <code>"+h(p.binding)+"</code> · "+
+    "approval: "+h(p.approval)+"</p>";
+  const stream = document.getElementById('stream');
+  stream.style.display='none'; stream.innerHTML='';
+  const btn = document.getElementById('mExec');
+  btn.disabled = !p.runnable_now; btn.textContent='Execute';
+  if(!p.runnable_now){ btn.title = p.block_reason || 'not runnable now'; }
+  document.getElementById('modal').classList.add('on');
+}
+function closeModal(){ document.getElementById('modal').classList.remove('on'); }
+async function execOp(){
+  // Button lifecycle (D4): Execute -> Running… -> Run again. The server closes the connection
+  // after the final frame, so the read loop terminates; a network error also restores the button.
+  const btn = document.getElementById('mExec'); btn.disabled=true; btn.textContent='Running…';
+  const stream = document.getElementById('stream'); stream.style.display='block'; stream.innerHTML='';
+  try {
+    const res = await fetch('/api/execute', {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
+      body:'op='+encodeURIComponent(currentOp)+'&csrf='+encodeURIComponent(window.__CSRF__)});
+    const reader = res.body.getReader(); const dec = new TextDecoder(); let buf='';
+    while(true){
+      const {value, done} = await reader.read(); if(done) break;
+      buf += dec.decode(value, {stream:true});
+      let idx;
+      while((idx = buf.indexOf('\\n\\n')) >= 0){
+        const frame = buf.slice(0, idx); buf = buf.slice(idx+2);
+        const line = frame.split('\\n').find(l=>l.startsWith('data:'));
+        if(!line) continue;
+        const ev = JSON.parse(line.slice(5).trim());
+        renderEvent(ev, stream);
+      }
+    }
+  } catch (err) {
+    stream.innerHTML += "<div class='result err'>CONNECTION LOST — "+h(String(err))+"</div>";
+  } finally {
+    btn.textContent='Run again'; btn.disabled=false;
+  }
+}
+function renderEvent(ev, stream){
+  if(ev.type==='step'){
+    const mark = ev.status==='ok'?"<span class='ok'>✓</span>":
+      ev.status==='error'?"<span class='err'>✗</span>":"<span class='tag'>·</span>";
+    stream.innerHTML += "<span class='step'>"+mark+" "+h(ev.step)+
+      (ev.detail?" <span class='tag'>— "+h(ev.detail)+"</span>":"")+"</span>";
+  } else if(ev.type==='result'){
+    // Severity, not exit code, drives the colour — and findings are 'completed', never 'failed'.
+    const sevClass = {ok:'ok', attention:'warn', warn:'warn', error:'err'}[ev.severity] || 'warn';
+    let label;
+    if(ev.block_reason){ label = 'BLOCKED — ' + ev.block_reason; }
+    else if(ev.execution_status==='error'){ label = 'EXECUTION ERROR'; }
+    else if(ev.outcome==='findings'){ label = 'COMPLETED — FINDINGS'; }
+    else if(ev.outcome==='warnings'){ label = 'COMPLETED — WARNINGS'; }
+    else { label = 'COMPLETED — ' + (ev.outcome||'').toUpperCase(); }
+    stream.innerHTML += "<div class='result "+sevClass+"'>"+h(label)+
+      (ev.evidence_ref?" · evidence "+h(ev.evidence_ref):"")+
+      (ev.duration_s!=null?" · "+h(ev.duration_s)+"s":"")+"</div>";
+  }
+  stream.scrollTop = stream.scrollHeight;
+}
+</script>"""
+
+
+def _placeholder_panel(name: str, note: str) -> str:
+    return (f"<h2 style='font-size:15px'>{_e(name)}</h2><p class='muted'>{_e(note)}</p>"
+            "<p><a href='/'>← Operations</a></p>")
+
+
+# --- request handler ----------------------------------------------------------------------
+
+
+class _Handler(BaseHTTPRequestHandler):
+    # HTTP/1.1 so we can stream the execution with chunked transfer encoding.
+    protocol_version = "HTTP/1.1"
+
+    # ---- low-level helpers ----
+    def _headers(self, status: int, content_type: str, *, extra: list[tuple[str, str]] | None = None,
+                 body_len: int | None = None) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Security-Policy", _CSP)
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        for k, v in (extra or []):
+            self.send_header(k, v)
+        if body_len is not None:
+            self.send_header("Content-Length", str(body_len))
+        self.end_headers()
+
+    def _send(self, status: int, payload: bytes, content_type: str,
+              extra: list[tuple[str, str]] | None = None) -> None:
+        self._headers(status, content_type, extra=extra, body_len=len(payload))
+        self.wfile.write(payload)
+
+    def _html(self, status: int, doc: str) -> None:
+        self._send(status, doc.encode("utf-8"), "text/html; charset=utf-8")
+
+    def _json(self, status: int, obj: dict) -> None:
+        self._send(status, json.dumps(obj, default=str).encode("utf-8"),
+                   "application/json; charset=utf-8")
+
+    # ---- auth ----
+    def _session_value(self) -> str | None:
+        raw = self.headers.get("Cookie")
+        if not raw:
+            return None
+        jar = SimpleCookie(raw)
+        c = jar.get(_SESSION_COOKIE)
+        return c.value if c else None
+
+    def _authed(self, secret: bytes) -> str | None:
+        val = self._session_value()
+        return val if (val and valid_session(val, secret)) else None
+
+    # ---- GET ----
+    def do_GET(self):
+        secret = _secret()
+        if secret is None:
+            self._send(503, b"console token not configured", "text/plain; charset=utf-8")
+            return
+        path = unquote(self.path.split("?", 1)[0])
+        session = self._authed(secret)
+        if session is None:
+            self._html(200, _login_page())
+            return
+
+        if path == "/api/operations":
+            self._json(200, {"operations": [
+                {"id": op.id, "name": op.name} for op in OPERATIONS if op.enabled]})
+            return
+        if path == "/api/preview":
+            op_id = parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "").get("op", [""])[0]
+            try:
+                self._json(200, _executor().preview(op_id).as_dict())
+            except KeyError:
+                self._json(404, {"error": "unknown operation"})
+            return
+
+        from .config import active_site, get_settings
+        s = get_settings()
+        chrome = {"site_name": s.site_name or (active_site() or "Tossa Cycling"),
+                  "env_kind": s.env_kind}
+        if path in ("/", ""):
+            csrf = csrf_for(session, secret)
+            body = f"<script>window.__CSRF__={json.dumps(csrf)};</script>" + _operations_body()
+            self._html(200, _shell("Operations", "operations", body, **chrome))
+        elif path == "/logs":
+            self._html(200, _shell("Logs", "logs", _logs_body(), **chrome))
+        elif path == "/cases":
+            self._html(200, _shell("Cases", "cases",
+                                   _placeholder_panel("Cases",
+                                       "Case detail lives in the read-only dashboard "
+                                       "(python -m tc_growth.cli dashboard). Wired into the "
+                                       "Console in a later slice."), **chrome))
+        else:
+            self._send(404, b"not found", "text/plain; charset=utf-8")
+
+    # ---- POST ----
+    def do_POST(self):
+        secret = _secret()
+        if secret is None:
+            self._send(503, b"console token not configured", "text/plain; charset=utf-8")
+            return
+        path = unquote(self.path.split("?", 1)[0])
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        raw = self.rfile.read(length).decode("utf-8") if length else ""
+        form = {k: v[0] for k, v in parse_qs(raw).items()}
+
+        if path == "/login":
+            if hmac.compare_digest(form.get("token", ""), secret.decode("utf-8")):
+                cookie = (f"{_SESSION_COOKIE}={issue_session(secret)}; Path=/; HttpOnly; "
+                          f"SameSite=Strict; Max-Age={_SESSION_MAX_AGE}")
+                self._headers(303, "text/html; charset=utf-8",
+                              extra=[("Location", "/"), ("Set-Cookie", cookie)], body_len=0)
+                return
+            self._html(401, _login_page(error="Invalid token."))
+            return
+
+        # Everything below requires a valid session.
+        session = self._authed(secret)
+        if session is None:
+            self._json(401, {"error": "not authenticated"})
+            return
+
+        if path == "/api/execute":
+            if not valid_csrf(form.get("csrf"), session, secret):
+                self._json(403, {"error": "bad csrf token"})
+                return
+            self._stream_execute(form.get("op", ""))
+            return
+
+        self._send(404, b"not found", "text/plain; charset=utf-8")
+
+    # ---- streaming execution ----
+    def _stream_execute(self, op_id: str) -> None:
+        """Run the operation and stream step events as `data: {json}` frames, then CLOSE.
+
+        The op id is validated by the Execution Service (unknown -> a 'blocked' result event);
+        the Console never accepts a free-form command, only a registry op id from the listing.
+
+        D4 (VPS acceptance): the response has no Content-Length, so the ONLY end-of-body signal
+        the browser gets is the connection closing. The first deployment kept the connection
+        alive after the final frame, so the client's read loop never resolved and the Execute
+        button stayed on "Running…" forever. Declare `Connection: close` and actually close.
+        """
+        self._headers(200, "text/event-stream; charset=utf-8",
+                      extra=[("Cache-Control", "no-cache"), ("X-Accel-Buffering", "no"),
+                             ("Connection", "close")])
+
+        def frame(obj: dict) -> None:
+            self.wfile.write(f"data: {json.dumps(obj, default=str)}\n\n".encode())
+            self.wfile.flush()
+
+        def emit(ev: StepEvent) -> None:
+            # F3: step detail can carry scanner output including server paths — reduce them the
+            # same way the Logs panel does (WP-relative tails survive; mount prefixes do not).
+            frame({"type": "step", "step": ev.step, "status": ev.status,
+                   "detail": _redact(ev.detail)})
+
+        try:
+            result = _executor().execute(op_id, emit=emit, actor="human")
+            frame({"type": "result", "execution_status": result.execution_status,
+                   "outcome": result.outcome, "severity": result.severity,
+                   "exit_code": result.exit_code, "evidence_ref": result.evidence_ref,
+                   "duration_s": result.duration_s, "block_reason": result.block_reason})
+        except Exception as exc:  # noqa: BLE001 - a stream must end with a frame, never a broken socket
+            frame({"type": "result", "execution_status": "error", "outcome": "failure",
+                   "severity": "error", "block_reason": _redact(f"{type(exc).__name__}: {exc}")})
+        finally:
+            # End of body = end of connection; the client's reader resolves and resets the button.
+            self.close_connection = True
+
+    def log_message(self, fmt, *args):  # quiet; see dashboard.py
+        pass
+
+
+def _logs_body() -> str:
+    """Recent operation runs from the ledger — the Console's Evidence/Logs view."""
+    try:
+        from .store import open_store
+
+        rows = open_store().list_runs()
+    except Exception:  # noqa: BLE001 - no store yet is fine; show an empty state, never 500
+        rows = []
+    op_runs = [r for r in rows if str(getattr(r, "kind", "")).startswith("op:")]
+    if not op_runs:
+        return ("<h2 style='font-size:15px'>Operation log</h2>"
+                "<p class='muted'>No operations have been run through the Console yet. "
+                "Each execution records actor, steps, output and result here.</p>")
+    _sev_class = {"ok": "ok", "attention": "warn", "warn": "warn", "error": "err"}
+    items = []
+    for r in op_runs:
+        exec_status = str(getattr(r, "status", "?"))   # ledger status = execution_status
+        outcome, severity = exec_status, ""
+        try:
+            detail = json.loads(getattr(r, "detail", "") or "{}")
+            outcome = detail.get("outcome") or exec_status
+            severity = detail.get("severity", "")
+        except (ValueError, TypeError):
+            pass
+        # Label reflects the DOMAIN result, not just pass/fail — 'findings' reads as a completed
+        # scan that found something, never as a broken tool.
+        if exec_status == "error":
+            label, cls = "execution error", "err"
+        elif exec_status == "blocked":
+            label, cls = "blocked", "err"
+        else:
+            label = f"completed · {outcome}"
+            cls = _sev_class.get(severity, "ok")
+        items.append(
+            f"<div class='op'><div><h3>{_e(getattr(r, 'kind', ''))} "
+            f"<span class='badge {cls}'>{_e(label)}</span></h3>"
+            f"<div class='meta'>{_e(getattr(r, 'started_at', ''))} · "
+            f"{_e(_redact(getattr(r, 'summary', '') or ''))}</div></div></div>")
+    return "<h2 style='font-size:15px'>Operation log</h2>" + "".join(items)
+
+
+def serve(host: str = "127.0.0.1", port: int = 8385) -> int:
+    """Blocking server. Loopback by default on purpose — see the module docstring.
+
+    Fails closed: without TC_CONSOLE_TOKEN there is no auth, and an execution surface must not
+    run unauthenticated. Returns a non-zero exit in that case so the CLI surfaces it.
+    """
+    if _secret() is None:
+        print(f"REFUSING TO START: {_TOKEN_ENV} is not set.")
+        print("The Operations Console runs privileged operations; it will not run without a token.")
+        print(f"Set one first, e.g.:  export {_TOKEN_ENV}=\"$(python -c 'import secrets;print(secrets.token_urlsafe(32))')\"")
+        return 1
+    validate_registry()  # never serve a catalogue that contradicts the enforcement layer
+    httpd = ThreadingHTTPServer((host, port), _Handler)
+    print(f"TC Operations Console on http://{host}:{port}  — Ctrl+C to stop")
+    print(f"Remote access: ssh -L {port}:127.0.0.1:{port} <user>@<vps>  then open http://localhost:{port}")
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        httpd.server_close()
+    return 0
