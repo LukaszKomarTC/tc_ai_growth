@@ -258,7 +258,7 @@ def test_validation_run_is_labelled_and_ledgered_separately(monkeypatch):
     recorded = {}
     monkeypatch.setattr(
         "tc_growth.report.persist_run",
-        lambda kind, result, *, started_at, duration_s: recorded.setdefault("kind", kind),
+        lambda kind, result, *, started_at, duration_s, status="ok", detail=None: recorded.setdefault("kind", kind),
     )
     rt = _FakeRuntime()
     out = build_weekly_report(rt, persist=True, validation=True)

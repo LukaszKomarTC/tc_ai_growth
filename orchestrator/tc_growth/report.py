@@ -53,9 +53,14 @@ def _first_line(text: str, limit: int = 200) -> str:
     return ""
 
 
-def persist_run(kind: str, result: RuntimeResult, *, started_at: str, duration_s: float) -> None:
+def persist_run(kind: str, result: RuntimeResult, *, started_at: str, duration_s: float,
+                status: str = "ok", detail: str | None = None) -> None:
     """Log a completed agent run to the store. Best-effort: a persistence problem (missing/RO DB)
-    must NEVER break the report or investigation, so every failure is swallowed with a note."""
+    must NEVER break the report or investigation, so every failure is swallowed with a note.
+
+    `status` lets the caller record an artifact-level verdict (e.g. a weekly report that finished
+    but produced no valid report — see validate_report_artifact): the run EXECUTED but the ledger
+    must not call it 'ok'."""
     try:
         from .store import open_store
 
@@ -65,11 +70,50 @@ def persist_run(kind: str, result: RuntimeResult, *, started_at: str, duration_s
             prompt_tokens=result.prompt_tokens,
             completion_tokens=result.completion_tokens,
             duration_s=duration_s,
+            status=status,
+            detail=detail,
             summary=_first_line(result.text),
             started_at=started_at,
         )
     except Exception as exc:  # noqa: BLE001 - logging must never break the run
         print(f"[run not logged: {exc}]")
+
+
+# Report concepts (tolerant substring groups) — a finished weekly report covers most of these.
+_REPORT_SECTION_GROUPS: tuple[tuple[str, ...], ...] = (
+    ("seo", "search console", "impressions", "organic"),
+    ("ads", "advertis", "campaign", "spend"),
+    ("revenue", "booking", "orders", "conversion", "woocommerce"),
+    ("recommend", "action", "next step", "priorit"),
+)
+_NARRATION_MARKERS = (
+    "i'll now", "now i'll", "i will now", "i'll write", "next, i'll", "then i'll",
+    "before writing the report", "all the data i need", "i have all the data",
+    "let me write", "let me compile",
+)
+
+
+def validate_report_artifact(text: str) -> tuple[bool, str]:
+    """Fail-closed structural check: is `text` a FINISHED weekly report, or planning narration /
+    truncated output? Semantic and tolerant (not four exact heading strings, per review): a real
+    report is substantive, structured, and covers most of the four report concepts. Born from the
+    2026-07-31 manual validation run #19, which finished 'ok' having emailed only the sentence
+    "Now I'll file the case notes... before writing the report." — narration accepted as a report.
+
+    Returns (ok, reason). A read-only run may still be delivered with the reason surfaced; a
+    write-capable operation must treat a False here as fail-closed (see the merge-plan policy)."""
+    stripped = (text or "").strip()
+    if len(stripped) < 250:
+        return False, "incomplete_report_artifact:too_short"
+    low = stripped.lower()
+    structure = sum(low.count(tok) for tok in ("\n#", "\n- ", "\n* ", "\n1.", "\n2.", "\n**"))
+    # Narration that mentions section words but has no structure is planning, not a report.
+    if structure < 3 and any(m in low for m in _NARRATION_MARKERS):
+        return False, "incomplete_report_artifact:narration_without_structure"
+    covered = sum(1 for group in _REPORT_SECTION_GROUPS if any(k in low for k in group))
+    if covered < 3:
+        return False, "incomplete_report_artifact:missing_sections"
+    return True, ""
 
 def _report_dates() -> tuple[str, str, str]:
     """(run_date, window_start, window_end) computed in code, Europe/Madrid.
@@ -184,11 +228,6 @@ def build_weekly_report(
         phase=phase,
         model=model_for("weekly-report"),
     )
-    if persist:
-        # Distinct ledger kind: manual validation runs must be machine-distinguishable from the
-        # scheduled runs that count toward the release gate.
-        run_kind = "weekly-report-validation" if validation else "weekly-report"
-        persist_run(run_kind, result, started_at=started_at, duration_s=round(time.perf_counter() - t0, 2))
     mode_line = ("**Report mode:** MANUAL VALIDATION — does not count toward the acceptance gate\n"
                  if validation else "")
     header = (f"# Tossa Cycling — Growth Report ({run_date})\n"
@@ -199,17 +238,36 @@ def build_weekly_report(
     if result.blocked_calls:
         names = sorted({c["tool"] for c in result.blocked_calls})
         footer = "\n\n---\n_Blocked (need higher phase / human approval): " + ", ".join(names) + "_"
-    return header + _lint_report(_mask_transactional_ids(_strip_preamble(result.text))) + footer
+    body = header + _lint_report(_mask_transactional_ids(_strip_preamble(result.text))) + footer
+    # Fail-closed on the LEDGER: a run that executed but produced no valid report must not be
+    # recorded 'ok' (run #19 governance defect). The returned string is unchanged so the operator
+    # still receives whatever the agent produced, clearly marked failed by the caller.
+    artifact_ok, reason = validate_report_artifact(body)
+    if persist:
+        # Distinct ledger kind: manual validation runs must be machine-distinguishable from the
+        # scheduled runs that count toward the release gate.
+        run_kind = "weekly-report-validation" if validation else "weekly-report"
+        persist_run(run_kind, result, started_at=started_at,
+                    duration_s=round(time.perf_counter() - t0, 2),
+                    status="ok" if artifact_ok else "failed",
+                    detail=None if artifact_ok else reason)
+    return body
 
 
-def deliver(report: str, *, validation: bool = False) -> None:
+def deliver(report: str, *, validation: bool = False, ok: bool = True) -> None:
     """Send the report via the configured channel. Both paths are best-effort and never raise
-    in a way that would break a scheduled run."""
+    in a way that would break a scheduled run.
+
+    `ok=False` marks the subject `[REPORT FAILED]` so an invalid artifact is never delivered as if
+    it were a successful report — the operator still receives the raw output (for diagnosis) but
+    cannot mistake it for a real report."""
     s = get_settings()
     if s.report_channel == "telegram":
         _deliver_telegram(report)
     else:
         subject = "Tossa Cycling — Growth Report"
+        if not ok:
+            subject = "[REPORT FAILED] " + subject
         if validation:
             subject = "[MANUAL VALIDATION] " + subject
         send_email(subject, report, raise_on_error=False)

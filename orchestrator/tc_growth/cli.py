@@ -92,12 +92,17 @@ def cmd_smoke(name: str, raw_args: str) -> int:
 
 
 def cmd_weekly_report(kind: str = "messages", *, validation: bool = False) -> int:
-    from .report import build_weekly_report, deliver
+    from .report import build_weekly_report, deliver, validate_report_artifact
 
     runtime = _build_runtime(kind)
     report = build_weekly_report(runtime, phase=Phase.READ_ONLY, validation=validation)
-    deliver(report, validation=validation)
-    return 0
+    # Fail-closed: if the agent produced no valid report artifact, deliver it as a clearly-marked
+    # FAILURE (not a success) and exit non-zero so the scheduler records the run as failed.
+    ok, reason = validate_report_artifact(report)
+    deliver(report, validation=validation, ok=ok)
+    if not ok:
+        print(f"weekly report artifact INVALID ({reason}) — delivered as failure, run marked failed")
+    return 0 if ok else 1
 
 
 def cmd_test_email() -> int:
