@@ -96,3 +96,22 @@ def test_a_report_missing_most_sections_is_rejected():
     ok, reason = validate_report_artifact(partial)
     assert ok is False
     assert "missing_sections" in reason
+
+
+def test_genuine_run20_report_is_accepted():
+    """The first captured REAL report body (accelerated validation run #20, 2026-08-01, graded
+    PASS by the owner) — the verbatim-structure fixture the review required before the validator
+    may deploy. Whitespace reconstructed from the email paste; content unaltered.
+
+    Recorded lint debt (not this validator): run #20's platform lint flagged robots.txt advice
+    that was CORRECT — the negation exemption matches the literal " not " with surrounding
+    spaces, so the table row's "(NOT robots.txt)" slipped past it. Fix is a word-boundary match
+    (\\bnot\\b) in report._lint_report's negation check, to be made alongside this branch's
+    deployment round, never mid-validation."""
+    import pathlib
+
+    body = (pathlib.Path(__file__).parent / "fixtures" / "weekly_report_run20.md").read_text(
+        encoding="utf-8")
+    assert len(body) > 5000              # a real report, not a stub
+    ok, reason = validate_report_artifact(body)
+    assert ok is True, f"validator rejected the owner-graded PASS report: {reason}"
