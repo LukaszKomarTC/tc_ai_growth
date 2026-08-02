@@ -1,11 +1,38 @@
 # Weekly-report validator — deployment plan (reviewed)
 
-**Status: awaiting owner authorization + server recon. Nothing has been merged or deployed.**
+**Status: DEPLOYED AND VERIFIED 2026-08-02.** Production checkout `/opt/tc_ai_growth/app` is on
+`b6779cc` (main tip at deploy time); the fail-closed validator is live on the weekly-report path.
 
-This is the reviewed plan the closure record (WP-REPORT-VALIDATION-CLOSURE.md, step 2) requires
-before the fail-closed artifact validator touches the production app checkout the weekly timer
-runs from. It changes the code that emails the owner every Monday, so it is owner-authorized and
+This is the reviewed plan the closure record (WP-REPORT-VALIDATION-CLOSURE.md, step 2) required
+before the fail-closed artifact validator touched the production app checkout the weekly timer
+runs from. It changes the code that emails the owner every Monday, so it was owner-authorized and
 Git-only (freeze protocol: never patch the server by hand).
+
+## Execution record (2026-08-02, owner-run on the VPS, all Git as `tcgrowth`)
+
+The recon corrected two assumptions before anything moved: autodeploy was **disabled** (so a
+merge to `main` delivers nothing on its own), and the checkout sat 7 commits behind at `527fdea`
+with a staged `cli.py` `notify` hotfix. Both were resolved; delivery was a controlled manual
+fast-forward, not GitOps.
+
+1. **Hotfix resolved** — the staged `cmd_notify` was the Technical Inspector's, already committed
+   on `feature/technical-inspector` and only comment-referenced on `main`. Captured to
+   `orchestrator/data/staged-notify-hotfix-2026-08-02.patch` (insurance), then the working tree was
+   cleaned. It re-enters `main` when Inspector merges properly. Live `notify` dependency checks ran
+   first and cleared.
+2. **Converge → clean main** — clean fast-forward `527fdea → 7655159` (the Console foundation,
+   dormant), `pip install -e`, **183 passed** on the VPS, imports OK, ledger intact, timer unchanged.
+3. **Validator merge** — `main` fast-forwarded `7655159 → b6779cc` (3 validator commits + these
+   deployment records), pushed.
+4. **Converge → validator tip** — clean fast-forward `7655159 → b6779cc`, `pip install -e`,
+   **190 passed** on the VPS. Validator smoke on the deployed code: run #20 genuine body → `True`,
+   run #19 narration → `(False, 'incomplete_report_artifact:too_short')`. `tc-weekly-report.timer`
+   unchanged (Mon 05:00 UTC, armed).
+
+Rollback markers left on the server: `backup/pre-converge-527fdea`, `backup/pre-validator-7655159`.
+**Autodeploy remains disabled by decision** — re-enabling GitOps auto-deploy is a separate
+operational review, not part of this round. The controlled manual fast-forward above is the
+current delivery process. The steps below are retained as the plan-of-record that was followed.
 
 ## What deploys
 
