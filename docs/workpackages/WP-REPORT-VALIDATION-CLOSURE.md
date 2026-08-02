@@ -10,12 +10,18 @@ in WP-CONSOLE-MERGE-RECORD.md).
 | Run | Trigger | Ledger | When | Cost | Grade |
 |---|---|---|---|---|---|
 | #1 | temporary systemd timer (OnActiveSec) | `weekly-report-validation` #20 | 2026-08-01 13:26 UTC | $1.6179 | PASS — full 4-section report, provenance table, observation/hypothesis discipline, D#9/D#10 proposed |
-| #2 | temporary systemd timer, ~24h later | `weekly-report-validation` | 2026-08-02 ~18:00 CEST | — | PASS — full report; caught /shop/ pos-2 SERP anomaly, ES/EN conversion-gap analysis, proposed D#11 |
+| #2 | temporary systemd timer, ~24h later | `weekly-report-validation` #21 | 2026-08-02 15:55 UTC | $0.6996 | PASS — full report; caught /shop/ pos-2 SERP anomaly, ES/EN conversion-gap analysis, proposed D#11 |
 
 Both proved: timer→service handoff · unattended execution · production context (tcgrowth, real
 cwd, real unit semantics) · email delivery · complete substantive artifact · human review. Run #2
 additionally proved repeatability after ~24h of normal operation — the distinct question separation
 was designed to answer.
+
+**Run #2 technical evidence (verified 2026-08-02).** `tc-weekly-report-validation.service` finished
+`status=0/SUCCESS` (start 15:55:03 → deactivated 16:01:24 UTC), `TriggeredBy` the timer; ledger row
+`#21 … weekly-report-validation ok $0.6996`. Both the quality grade (email) and the technical result
+(exit 0 + ledger `ok`) are now confirmed for both runs — the gate is formally closed on evidence,
+not just on the email read.
 
 Contrast: run #19 (2026-07-31) finished `ok` having emailed only planning narration — the defect
 that motivated the fail-closed validator (fix/weekly-report-artifact-validation).

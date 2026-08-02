@@ -38,29 +38,37 @@ There is ONE production checkout, `/opt/tc_ai_growth/app`, and two timers read f
 - **`tc-weekly-report.timer`** (Mon 07:00 Europe/Madrid): runs `python -m tc_growth.cli
   weekly-report` from `/opt/tc_ai_growth/app/orchestrator` — the same checkout autodeploy maintains.
 
-**Therefore the deploy IS the merge to `main`.** Autodeploy is the delivery mechanism and its
-server-side test-gate + auto-rollback is the safety net. This is the right shape for this change:
-small, tested, no infra. The weekly report picks up the new code on the following Monday.
+**Autodeploy is the DESIGNED delivery mechanism — but it is currently DISABLED.** The owner ran
+`systemctl disable --now tc-autodeploy.timer` earlier in the freeze, so merging to `main` right now
+delivers *nothing* to `/opt/tc_ai_growth/app`. The GitOps path (merge → server-side test-gate →
+restart-or-rollback) is the right shape for this change and the target end-state, but it is not the
+current reality. So the deploy is a two-part decision, not a one-line merge:
+- **Delivery:** either re-enable `tc-autodeploy.timer` (preferred — it is the tested, self-rolling
+  path) *after* the checkout is clean and aligned with `main`, or perform a one-time manual
+  pull+install+test+restart under this reviewed plan and re-arm autodeploy after.
+- **Trigger:** the merge to `main` only matters once delivery is live.
 
-This corrects an earlier assumption that production tracks the `claude/wordpress-ai-growth-agent-*`
-branch and would need a surgical back-port. It does not — autodeploy tracks `main`. (A back-port
-onto that branch was proven clean as a fallback, but it is not the production path and would only
-deepen divergence.)
+This also corrects an earlier assumption that production tracks the `claude/wordpress-ai-growth-agent-*`
+branch and would need a surgical back-port. It does not — autodeploy (when enabled) tracks `main`.
+(A back-port onto that branch was proven clean as a fallback, but it is not the production path and
+would only deepen divergence.)
 
 ## Why recon must come first
 
 The server was last observed at commit `527fdea` (owner-authored, 2026-07-20) with a *staged,
-uncommitted* `cli.py` notify hotfix. If autodeploy were healthy the checkout would already be at
-main's tip (`7655159`), so **it is probably stuck** — most likely because the working tree is dirty
-(`git pull --ff-only` refuses to run over local changes) or HEAD is not on `main`. Two things must
-be true before merging, and only recon can confirm them:
+uncommitted* `cli.py` notify hotfix, and **autodeploy disabled** — which fully explains why the
+checkout never advanced to main's tip (`7655159`): with the timer off, nothing pulls. On top of
+that the working tree is dirty (a `git pull --ff-only` would refuse over local changes even if the
+timer were re-armed). Three things must be established before merging, and only recon can confirm
+the live state of each:
 
-1. **The staged notify hotfix is captured in Git, or deliberately discarded.** An uncommitted fix
+1. **Autodeploy's actual state** — disabled (owner's recollection) vs. re-enabled-but-stuck. This
+   decides the whole delivery path; do not assume, verify (`systemctl is-enabled/is-active`, log).
+2. **The staged notify hotfix is captured in Git, or deliberately discarded.** An uncommitted fix
    that lives only on the server violates the freeze protocol and would be destroyed by a reset. If
    it matters, it lands as a commit first; if it is stale, it is cleared on purpose.
-2. **Autodeploy can actually fast-forward `main`.** If it is stuck/dirty/disabled, merging to main
-   deploys nothing (or deploys unpredictably). The checkout must be on a clean `main` that
-   ff-tracks `origin/main` before the merge, or we deploy manually and re-arm autodeploy after.
+3. **The checkout can reach a clean `main` that ff-tracks `origin/main`** before any delivery —
+   whether that delivery is a re-enabled autodeploy or a manual pull.
 
 ## STEP 0 — server recon (owner runs; strictly read-only)
 
@@ -100,11 +108,12 @@ Chosen after reading STEP 0 output. Likely one of:
   a one-time manual pull+install+test+restart, then re-arm.
 
 Goal state before STEP 2: `/opt/tc_ai_growth/app` on a **clean** `main`, working tree not dirty,
-`tc-autodeploy.timer` enabled and known-good.
+and a **deliberately chosen delivery path** (autodeploy re-enabled, or manual). Do not leave
+autodeploy half-on: either it is enabled and known-good, or it stays disabled and we deliver by hand.
 
-## STEP 2 — merge validator to `main` (the deploy trigger; owner-authorized)
+## STEP 2 — merge validator to `main` (owner-authorized)
 
-Fast-forward merge (validator branch is `main` + 3 commits — no merge commit needed), consistent
+Fast-forward merge (validator branch is `main` + 3 code commits — no merge commit needed), consistent
 with prior practice:
 
 ```bash
@@ -113,21 +122,34 @@ git merge --ff-only fix/weekly-report-artifact-validation
 git push origin main
 ```
 
-At this point `origin/main` advances by 3 commits and the next autodeploy tick (≤5 min) picks it up.
+The merge advances `origin/main` by the validator commits. **It does not itself deploy** — with
+autodeploy disabled, `origin/main` and the server checkout are decoupled. Delivery is STEP 3.
 
-## STEP 3 — observe autodeploy carry it (do not touch the server)
+## STEP 3 — deliver to the server (path chosen in STEP 1)
 
-Within ~5 minutes, on the server:
+**Path A — re-enable autodeploy (preferred; the tested, self-rolling path).** Only once the checkout
+is clean `main`:
 
 ```bash
+sudo systemctl enable --now tc-autodeploy.timer     # owner runs
+# within ~5 min, observe (read-only):
 tail -n 30 /opt/tc_ai_growth/app/orchestrator/data/autodeploy.log
 cat /opt/tc_ai_growth/app/orchestrator/data/last_deploy.json   # expect result:"deployed", tests green
 git -C /opt/tc_ai_growth/app rev-parse HEAD                    # expect main tip
 ```
 
-Autodeploy runs the 190-test suite on the server itself; a green run is the deploy's own proof.
-If tests fail there, autodeploy auto-rolls-back and `last_deploy.json` shows `result:"rolled-back"`
-— main is then the thing to fix, not the server.
+**Path B — one-time manual deploy (if autodeploy stays disabled).** Mirror what autodeploy does, by
+hand, so the server test-gate still runs before anything serves:
+
+```bash
+cd /opt/tc_ai_growth/app && git pull --ff-only origin main
+.venv/bin/pip install -q -e 'orchestrator[anthropic,google,dev]'
+(cd orchestrator && ../.venv/bin/python -m pytest -q)          # MUST be green before proceeding
+# no dashboard restart needed for the weekly-report path; it re-reads code each run
+```
+
+Either way, autodeploy runs (or we run) the full test suite on the server itself; a green run is the
+deploy's own proof. On failure, do not advance — roll back (below) and fix `main`.
 
 ## STEP 4 — post-deploy verification
 
@@ -146,12 +168,15 @@ instead of silently `ok`.
 
 ## Rollback
 
-- **Automatic:** server test failure → autodeploy reverts to the prior commit and reinstalls.
-- **Manual:** `git revert` the merge on `main` and push; autodeploy pulls the revert and redeploys
-  the previous good state. No direct server edits.
+- **Path A (autodeploy on):** server test failure → autodeploy reverts to the prior commit and
+  reinstalls automatically. To undo a *green* deploy, `git revert` the merge on `main` and push;
+  autodeploy pulls the revert.
+- **Path B (manual):** `git revert` the merge on `main`, push, then `git pull --ff-only` + reinstall
+  on the server. No direct server edits either way — rollback is a Git operation.
 
 ## Governance
 
-Owner is release authority; this plan is authorized before STEP 2 runs. All changes reach the
-server through `origin/main` and autodeploy — never a hand-edit on the box. The staged hotfix is the
-one open thread that must be resolved into Git during STEP 1.
+Owner is release authority; this plan is authorized before STEP 2 runs. Autodeploy is currently
+**disabled** — so the delivery path (re-enable vs. manual) is itself an owner decision, made from
+recon, not assumed. All changes reach the server through `origin/main` — never a hand-edit on the
+box. The staged `cli.py` hotfix is the one open thread that must be resolved into Git during STEP 1.
