@@ -187,11 +187,15 @@ def _lint_report(text: str) -> str:
     # Any negative cue exempts the line: rerun #3 phrased correct advice as "robots.txt
     # Disallow is not the correct method", which the previous fixed-phrase list missed. A
     # warning-level lint prefers a rare false negative over recurring false positives.
-    _negations = (" not ", "never", "cannot", "can not", "avoid", "would hide", "hides",
+    # "not" is matched on WORD BOUNDARIES, not as " not " with literal spaces: accelerated
+    # validation run #20 wrote the correct advice as "(NOT robots.txt)" in a table row, and the
+    # parenthesis defeated the space-delimited match — the lint scolded a correct report.
+    _negations = ("never", "cannot", "can not", "avoid", "would hide", "hides",
                   "instead of robots.txt")
     for line in text.splitlines():
         low = line.lower()
-        if "robots.txt" in low and "noindex" in low and not any(n in low for n in _negations):
+        negated = re.search(r"\bnot\b", low) or any(n in low for n in _negations)
+        if "robots.txt" in low and "noindex" in low and not negated:
             warnings.append("mentions robots.txt alongside noindex — robots.txt CANNOT noindex; "
                             "use a meta robots tag or X-Robots-Tag and keep the page crawlable")
             break

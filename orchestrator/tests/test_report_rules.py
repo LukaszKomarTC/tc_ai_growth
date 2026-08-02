@@ -323,3 +323,21 @@ def test_weekly_report_runs_read_only_and_draft_tools_stay_gated(monkeypatch):
     for tool in ("wp_create_seo_draft", "wp_create_product_revision"):
         assert not is_tool_allowed(tool, Phase.READ_ONLY)
         assert is_tool_allowed(tool, Phase.DRAFTS)
+
+
+def test_rule8_lint_handles_run20_parenthesized_negation():
+    """Accelerated validation run #20 (2026-08-01): the Recommended Actions table row wrote the
+    CORRECT advice as '(NOT robots.txt)' and the lint fired anyway — the space-delimited ' not '
+    match missed a parenthesized negation. 'not' now matches on word boundaries."""
+    rt = _FakeRuntime(
+        text="# R\n| 7 | Low | **Wishlist noindex**: propose adding `<meta name=\"robots\" "
+             "content=\"noindex, follow\">` to `/en/wishlist/` via Yoast/wp_robots "
+             "(NOT robots.txt). Requires separate human approval | Human | — |"
+    )
+    out = build_weekly_report(rt, persist=False)
+    assert "Platform lint" not in out
+    # The genuinely-bad advice still fires — the exemption must not widen into blindness
+    # ('note:'/'nothing' must not read as negations; word boundary keeps them out).
+    rt2 = _FakeRuntime(text="# R\nNote: apply noindex using robots.txt on the order pages.")
+    out2 = build_weekly_report(rt2, persist=False)
+    assert "Platform lint" in out2
