@@ -70,24 +70,28 @@ the live state of each:
 3. **The checkout can reach a clean `main` that ff-tracks `origin/main`** before any delivery —
    whether that delivery is a re-enabled autodeploy or a manual pull.
 
-## STEP 0 — server recon (owner runs; strictly read-only)
+## STEP 0 — server recon (strictly read-only)
+
+**Every Git command runs as `tcgrowth`, never as root.** A root `git` in this checkout previously
+rewrote the worktree index ownership and broke deployment (incident D5, recovered with
+`chown -R tcgrowth:tcgrowth …/.git/worktrees/…`). The `systemctl`/`tail`/`cat` lines are safe as
+root; the `git` lines are wrapped in `sudo -u tcgrowth git -C /opt/tc_ai_growth/app …`.
 
 ```bash
-cd /opt/tc_ai_growth/app
-echo "== branch/HEAD ==";        git rev-parse --abbrev-ref HEAD; git rev-parse HEAD
-echo "== working tree ==";       git status --short
-echo "== staged hotfix (cached diff) =="; git diff --cached
-echo "== unstaged diff ==";      git diff
-echo "== fetch main (read-only) =="; git fetch origin main --quiet && \
-  echo "origin/main = $(git rev-parse origin/main)"
-echo "== can it ff to main? =="; git merge-base --is-ancestor HEAD origin/main \
+G="sudo -u tcgrowth git -C /opt/tc_ai_growth/app"
+echo "== autodeploy timer =="; systemctl is-enabled tc-autodeploy.timer 2>/dev/null; \
+  systemctl is-active tc-autodeploy.timer 2>/dev/null; \
+  systemctl list-timers --all tc-autodeploy.timer --no-pager 2>/dev/null | head
+echo "== autodeploy log tail =="; tail -n 15 /opt/tc_ai_growth/app/orchestrator/data/autodeploy.log 2>/dev/null
+echo "== last deploy record =="; cat /opt/tc_ai_growth/app/orchestrator/data/last_deploy.json 2>/dev/null; echo
+echo "== branch/HEAD ==";        $G rev-parse --abbrev-ref HEAD; $G rev-parse HEAD
+echo "== working tree ==";       $G status --short
+echo "== staged hotfix (cached diff) =="; $G diff --cached -- orchestrator/tc_growth/cli.py
+echo "== unstaged diff ==";      $G diff
+echo "== fetch main (read-only) =="; $G fetch origin main --quiet && $G rev-parse origin/main
+echo "== can it ff to main? =="; $G merge-base --is-ancestor HEAD origin/main \
   && echo "HEAD is an ancestor of origin/main (ff-able if on main)" \
   || echo "HEAD is NOT an ancestor of origin/main (diverged — needs reconcile)"
-echo "== autodeploy timer =="; systemctl is-enabled tc-autodeploy.timer; \
-  systemctl is-active tc-autodeploy.timer; \
-  systemctl list-timers tc-autodeploy.timer --no-pager 2>/dev/null | head
-echo "== autodeploy log tail =="; tail -n 25 orchestrator/data/autodeploy.log 2>/dev/null
-echo "== last deploy record =="; cat orchestrator/data/last_deploy.json 2>/dev/null
 echo "== weekly-report timer =="; systemctl list-timers tc-weekly-report.timer --no-pager 2>/dev/null | head
 ```
 
@@ -116,6 +120,8 @@ autodeploy half-on: either it is enabled and known-good, or it stays disabled an
 Fast-forward merge (validator branch is `main` + 3 code commits — no merge commit needed), consistent
 with prior practice:
 
+Run in a maintainer clone (NOT the production checkout — this only moves `origin/main`):
+
 ```bash
 git checkout main && git pull --ff-only origin main
 git merge --ff-only fix/weekly-report-artifact-validation
@@ -127,24 +133,26 @@ autodeploy disabled, `origin/main` and the server checkout are decoupled. Delive
 
 ## STEP 3 — deliver to the server (path chosen in STEP 1)
 
+Same rule as STEP 0: every server-side `git`/`pip`/`pytest` runs as `tcgrowth`, never as root.
+
 **Path A — re-enable autodeploy (preferred; the tested, self-rolling path).** Only once the checkout
 is clean `main`:
 
 ```bash
-sudo systemctl enable --now tc-autodeploy.timer     # owner runs
+systemctl enable --now tc-autodeploy.timer     # owner runs (root; systemd, not git)
 # within ~5 min, observe (read-only):
 tail -n 30 /opt/tc_ai_growth/app/orchestrator/data/autodeploy.log
-cat /opt/tc_ai_growth/app/orchestrator/data/last_deploy.json   # expect result:"deployed", tests green
-git -C /opt/tc_ai_growth/app rev-parse HEAD                    # expect main tip
+cat /opt/tc_ai_growth/app/orchestrator/data/last_deploy.json           # expect result:"deployed", tests green
+sudo -u tcgrowth git -C /opt/tc_ai_growth/app rev-parse HEAD           # expect main tip
 ```
 
 **Path B — one-time manual deploy (if autodeploy stays disabled).** Mirror what autodeploy does, by
-hand, so the server test-gate still runs before anything serves:
+hand, as `tcgrowth`, so the server test-gate still runs before anything serves:
 
 ```bash
-cd /opt/tc_ai_growth/app && git pull --ff-only origin main
-.venv/bin/pip install -q -e 'orchestrator[anthropic,google,dev]'
-(cd orchestrator && ../.venv/bin/python -m pytest -q)          # MUST be green before proceeding
+sudo -u tcgrowth git -C /opt/tc_ai_growth/app pull --ff-only origin main
+sudo -u tcgrowth /opt/tc_ai_growth/app/.venv/bin/pip install -q -e '/opt/tc_ai_growth/app/orchestrator[anthropic,google,dev]'
+sudo -u tcgrowth bash -c 'cd /opt/tc_ai_growth/app/orchestrator && ../.venv/bin/python -m pytest -q'   # MUST be green
 # no dashboard restart needed for the weekly-report path; it re-reads code each run
 ```
 
@@ -171,8 +179,9 @@ instead of silently `ok`.
 - **Path A (autodeploy on):** server test failure → autodeploy reverts to the prior commit and
   reinstalls automatically. To undo a *green* deploy, `git revert` the merge on `main` and push;
   autodeploy pulls the revert.
-- **Path B (manual):** `git revert` the merge on `main`, push, then `git pull --ff-only` + reinstall
-  on the server. No direct server edits either way — rollback is a Git operation.
+- **Path B (manual):** `git revert` the merge on `main`, push, then on the server (as `tcgrowth`)
+  `sudo -u tcgrowth git -C /opt/tc_ai_growth/app pull --ff-only origin main` + reinstall. No direct
+  server edits either way — rollback is a Git operation, always run as `tcgrowth`.
 
 ## Governance
 
@@ -180,3 +189,7 @@ Owner is release authority; this plan is authorized before STEP 2 runs. Autodepl
 **disabled** — so the delivery path (re-enable vs. manual) is itself an owner decision, made from
 recon, not assumed. All changes reach the server through `origin/main` — never a hand-edit on the
 box. The staged `cli.py` hotfix is the one open thread that must be resolved into Git during STEP 1.
+
+**Invariant: every Git operation in the production checkout runs as `tcgrowth`, never as root.** A
+root `git` here rewrites index/object ownership under `.git/worktrees/…` and breaks subsequent
+`tcgrowth`-run deploys (incident D5). Use `sudo -u tcgrowth git -C /opt/tc_ai_growth/app …`.
