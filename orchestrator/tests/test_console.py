@@ -166,3 +166,54 @@ def test_console_phase_defaults_read_only_and_is_overridable(monkeypatch):
     assert console._console_phase() is Phase.CONTROLLED_EXECUTION
     monkeypatch.setenv("TC_CONSOLE_PHASE", "nonsense")
     assert console._console_phase() is Phase.READ_ONLY
+
+
+# -- stream liveness (U1: silent scan + idle NAT drop = "Running…" forever) ----
+
+
+def test_keepalive_pulses_until_stopped():
+    """The execute stream must never go silent: a clean integrity scan produces ~no stdout for
+    minutes, and an idle connection through the operator's NAT/tunnel path was silently dropped —
+    browser stuck on Running… while the backend completed (U1, 2026-08-03)."""
+    import io
+    import time as _t
+
+    class Sink(io.BytesIO):
+        def flush(self):  # count real flushes, not just writes
+            self.flushed = getattr(self, "flushed", 0) + 1
+
+    sink = Sink()
+    import threading as _th
+    stop = console._start_keepalive(sink, _th.Lock(), interval_s=0.02)
+    _t.sleep(0.09)
+    stop.set()
+    _t.sleep(0.03)
+    frames = sink.getvalue()
+    assert frames.count(console._KEEPALIVE_FRAME) >= 2
+    # SSE comment contract: ignored by the client's frame parser (no "data:" line).
+    assert console._KEEPALIVE_FRAME.startswith(b":") and b"data:" not in console._KEEPALIVE_FRAME
+
+
+def test_keepalive_survives_client_disconnect_quietly():
+    """A dead socket ends the pulse; it must never raise into the handler — disconnecting an
+    observer must not kill the running operation."""
+    import time as _t
+    import threading as _th
+
+    class DeadSocket:
+        def write(self, b):  # noqa: ARG002
+            raise OSError("broken pipe")
+        def flush(self):
+            raise OSError("broken pipe")
+
+    stop = console._start_keepalive(DeadSocket(), _th.Lock(), interval_s=0.01)
+    _t.sleep(0.05)   # pulse fires, hits OSError, exits — nothing propagates
+    stop.set()
+
+
+def test_nav_has_one_tab_per_destination():
+    """U1: 'Evidence' and 'Logs' were two tabs for the same /logs page — a nav item that takes
+    you somewhere other than what it says is a truth defect on an execution surface."""
+    page = console._shell("t", "operations", "x", site_name="TC", env_kind="staging")
+    assert page.count('href="/logs"') == 1
+    assert ">Evidence<" in page and ">Logs<" not in page

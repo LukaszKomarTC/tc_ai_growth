@@ -50,6 +50,12 @@ SERVICE_USER="${TC_SERVICE_USER:-tcgrowth}"                     # unprivileged r
 CONSOLE_PORT="${TC_CONSOLE_PORT:-8385}"                         # loopback port
 INSPECTOR_DEST="${TC_INSPECTOR_SCRIPT:-/usr/local/bin/wp-integrity-scan.sh}"
 CONSOLE_ENV_FILE="${TC_CONSOLE_ENV_FILE:-/etc/tc-console.env}"  # holds TC_CONSOLE_TOKEN etc.
+# Durable evidence store (U1 defect: BASE_DIR follows the code checkout, so every release worktree
+# got a FRESH database and Console evidence silently died with each redeploy — evidence that does
+# not survive a deploy is not evidence). Set TC_STORE_DB to the shared store (normally the app
+# checkout's orchestrator/data/tc_growth.db, where the weekly ledger already lives) and the unit
+# pins TC_DB_PATH to it. Empty = legacy per-checkout behaviour, and the plan SAYS so.
+STORE_DB="${TC_STORE_DB:-}"
 SNAP_DIR="${TC_SNAP_DIR:-/var/backups/tc-console}"
 UNIT="/etc/systemd/system/tc-console.service"
 # Scan permission (D2): the service user cannot read the WP docroot, so the Console runs the
@@ -232,6 +238,7 @@ cat <<PLAN
   Runs as user .................. $SERVICE_USER   (unprivileged; sudo limited to the one rule above)
   Bind address / port ........... 127.0.0.1:$CONSOLE_PORT   (loopback only — NOT internet-exposed)
   Reads secrets from ............ $CONSOLE_ENV_FILE   (READ only — this script never writes it)
+  Evidence store ................ $( [ -n "$STORE_DB" ] && echo "$STORE_DB   (durable — survives redeploys)" || echo "PER-CHECKOUT (data/ under the release dir) — evidence will NOT survive the next redeploy; set TC_STORE_DB" )
   Backup / snapshot to .......... $SNAP
   Restarts an existing service .. $( [ "$CUR_UNIT_STATE" = absent ] && echo "no (first install)" || echo "YES — tc-console will restart; active browser sessions are invalidated on redeploy" )
   Modifies any .env / profiles .. NO
@@ -274,7 +281,7 @@ User=$SERVICE_USER
 WorkingDirectory=$APP_DIR
 EnvironmentFile=$CONSOLE_ENV_FILE
 Environment=TC_BUILD_COMMIT=$RELEASE_COMMIT
-Environment=TC_INSPECTOR_SCRIPT=$INSPECTOR_DEST
+Environment=TC_INSPECTOR_SCRIPT=$INSPECTOR_DEST$( [ -n "$STORE_DB" ] && printf '\n%s' "# Durable evidence store — shared with the weekly ledger; survives release redeploys (U1)." "Environment=TC_DB_PATH=$STORE_DB" )
 # Integrity scan runs via the single sudoers-allowlisted command (see $SUDOERS_FILE).
 Environment=TC_INSPECTOR_SUDO=true
 # Bind loopback only; remote access is an SSH tunnel, never a public port.

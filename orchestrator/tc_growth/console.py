@@ -28,6 +28,7 @@ import html
 import json
 import os
 import re
+import threading
 import time
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -40,6 +41,15 @@ from .core.executor import Executor, StepEvent
 _SESSION_COOKIE = "tc_console"
 _SESSION_MAX_AGE = 12 * 3600  # a shift; re-auth after that
 _TOKEN_ENV = "TC_CONSOLE_TOKEN"
+# U1 defect (2026-08-03): a clean integrity scan writes ~nothing to stdout for its whole ~2-minute
+# run, so the execute stream carried ZERO bytes — and an idle connection through the operator's
+# NAT/SSH-tunnel path was silently dropped. Both ends kept waiting: the browser showed "Running…"
+# forever while the backend completed and recorded evidence. The stream must therefore NEVER go
+# silent: an SSE comment frame (": keepalive") every few seconds keeps every middlebox alive. The
+# client's frame parser skips blocks with no "data:" line, so keepalives are invisible to the UI
+# logic (but still tick the elapsed indicator, because bytes arrived).
+_KEEPALIVE_S = 10.0
+_KEEPALIVE_FRAME = b": keepalive\n\n"  # SSE comment — MUST start with ':' so clients ignore it
 
 # Self-only CSP: no external scripts, styles, fonts, images, or connections — the console must
 # not be able to fetch anything off-box (defence for a surface that runs privileged operations).
@@ -214,9 +224,10 @@ def _shell(title: str, active: str, body: str, *, site_name: str, env_kind: str)
     def _tab(name: str, href: str) -> str:
         on = " on" if active == name.lower() else ""
         return f'<a class="{on.strip()}" href="{href}">{name}</a>'
+    # ONE tab per destination (U1: "Evidence" and "Logs" both pointed at /logs — a nav item that
+    # takes you somewhere other than what it says is a truth defect on this surface).
     nav = "".join([
-        _tab("Operations", "/"), _tab("Evidence", "/logs"),
-        _tab("Cases", "/cases"), _tab("Logs", "/logs"),
+        _tab("Operations", "/"), _tab("Evidence", "/logs"), _tab("Cases", "/cases"),
     ])
     kind = (env_kind or "staging").strip().lower()
     badge_cls = "prod" if kind == "production" else "stag"
@@ -271,6 +282,7 @@ def _operations_body() -> str:
   <div class='body' id='mBody'></div>
   <div id='stream' style='display:none'></div>
   <div class='foot'>
+    <span id='mPulse' class='tag'></span>
     <button class='ghost' onclick='closeModal()'>Close</button>
     <button id='mExec' onclick='execOp()'>Execute</button>
   </div>
@@ -308,12 +320,22 @@ async function execOp(){
   // after the final frame, so the read loop terminates; a network error also restores the button.
   const btn = document.getElementById('mExec'); btn.disabled=true; btn.textContent='Running…';
   const stream = document.getElementById('stream'); stream.style.display='block'; stream.innerHTML='';
+  // Liveness indicator: ANY received bytes (step frames or server keepalives) bump lastByte.
+  // The server pulses every ~10s, so >25s of silence is a genuinely stalled stream and the
+  // indicator says so — a quiet-but-alive scan and a dead connection must look different.
+  const pulse = document.getElementById('mPulse'); const t0 = Date.now(); let lastByte = Date.now();
+  const tick = setInterval(()=>{
+    const idle = (Date.now()-lastByte)/1000;
+    pulse.textContent = 'running — '+Math.round((Date.now()-t0)/1000)+'s'
+      + (idle > 25 ? ' · NO DATA for '+Math.round(idle)+'s — stream may be lost' : '');
+  }, 1000);
   try {
     const res = await fetch('/api/execute', {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
       body:'op='+encodeURIComponent(currentOp)+'&csrf='+encodeURIComponent(window.__CSRF__)});
     const reader = res.body.getReader(); const dec = new TextDecoder(); let buf='';
     while(true){
       const {value, done} = await reader.read(); if(done) break;
+      lastByte = Date.now();
       buf += dec.decode(value, {stream:true});
       let idx;
       while((idx = buf.indexOf('\\n\\n')) >= 0){
@@ -327,6 +349,7 @@ async function execOp(){
   } catch (err) {
     stream.innerHTML += "<div class='result err'>CONNECTION LOST — "+h(String(err))+"</div>";
   } finally {
+    clearInterval(tick); pulse.textContent='';
     btn.textContent='Run again'; btn.disabled=false;
   }
 }
@@ -439,7 +462,7 @@ class _Handler(BaseHTTPRequestHandler):
             body = f"<script>window.__CSRF__={json.dumps(csrf)};</script>" + _operations_body()
             self._html(200, _shell("Operations", "operations", body, **chrome))
         elif path == "/logs":
-            self._html(200, _shell("Logs", "logs", _logs_body(), **chrome))
+            self._html(200, _shell("Evidence", "evidence", _logs_body(), **chrome))
         elif path == "/cases":
             self._html(200, _shell("Cases", "cases",
                                    _placeholder_panel("Cases",
@@ -501,9 +524,18 @@ class _Handler(BaseHTTPRequestHandler):
                       extra=[("Cache-Control", "no-cache"), ("X-Accel-Buffering", "no"),
                              ("Connection", "close")])
 
+        # One lock serialises ALL stream writes (event frames + keepalives) so frames never
+        # interleave mid-byte. See _KEEPALIVE_S for why the pulse exists (U1: silent scan +
+        # idle NAT drop = "Running…" forever while the backend completed).
+        wlock = threading.Lock()
+
         def frame(obj: dict) -> None:
-            self.wfile.write(f"data: {json.dumps(obj, default=str)}\n\n".encode())
-            self.wfile.flush()
+            payload = f"data: {json.dumps(obj, default=str)}\n\n".encode()
+            with wlock:
+                self.wfile.write(payload)
+                self.wfile.flush()
+
+        stop_pulse = _start_keepalive(self.wfile, wlock)
 
         def emit(ev: StepEvent) -> None:
             # F3: step detail can carry scanner output including server paths — reduce them the
@@ -521,11 +553,32 @@ class _Handler(BaseHTTPRequestHandler):
             frame({"type": "result", "execution_status": "error", "outcome": "failure",
                    "severity": "error", "block_reason": _redact(f"{type(exc).__name__}: {exc}")})
         finally:
+            stop_pulse.set()
             # End of body = end of connection; the client's reader resolves and resets the button.
             self.close_connection = True
 
     def log_message(self, fmt, *args):  # quiet; see dashboard.py
         pass
+
+
+def _start_keepalive(wfile, wlock: threading.Lock, interval_s: float | None = None) -> threading.Event:
+    """Pulse SSE comment frames onto an execute stream until told to stop; returns the stop event.
+
+    Runs as a daemon thread so a wedged socket can never keep the process alive. A write failure
+    ends the pulse quietly — the client is gone, but the OPERATION keeps running and its evidence
+    still persists (disconnecting an observer must never kill the work)."""
+    stop = threading.Event()
+
+    def _pulse() -> None:
+        while not stop.wait(interval_s if interval_s is not None else _KEEPALIVE_S):
+            try:
+                with wlock:
+                    wfile.write(_KEEPALIVE_FRAME)
+                    wfile.flush()
+            except OSError:
+                return
+    threading.Thread(target=_pulse, daemon=True).start()
+    return stop
 
 
 def _logs_body() -> str:
