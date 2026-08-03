@@ -139,6 +139,25 @@ report, prove email content and stored artifact match by hash.
 
 ## U3b — Minimal operator homepage (presentation only; brutally minimal)
 
+**U3b acceptance (reviewer-set, 2026-08-03) — three layers:**
+
+1. **The behavioral criterion (capstone):** measured next Monday, not at deploy: *if the owner
+   still instinctively opens Gmail first, U3b failed; if he opens the Console first, it
+   succeeded.* Unfakeable, and the only metric that matters.
+2. **The homepage review checklist:** latest report opens in ONE click · "Attention" is empty
+   when nothing needs attention · decisions are obvious, with WHY they wait immediately clear ·
+   every click lands somewhere real (zero dead navigation) · every empty state explains itself.
+3. **The anti-report rule:** the homepage answers *what happened / do I need to do anything /
+   what makes money next* — it must never grow into another screen of statistics. (The
+   "makes money next" answer is the decisions block; it carries titles today and gains
+   revenue-impact estimates with U4's enriched decision objects, not with homepage widgets.)
+
+**Standing product bar from here (reviewer, adopted):** every proposed feature is judged by
+one question — *does this eliminate something the owner currently does manually?* If no, it
+carries a very high bar. Infrastructure pauses after U3b; U4 (Decision Queue with in-browser
+approve/reject → connector apply → evidence stored → decision disappears) is the next priority
+because it converts the platform from reporting system to operations system.
+
 **Hard acceptance criterion (reviewer, 2026-08-03): no routine SSH for the owner.** Routine
 report access and re-delivery become browser actions in U3b (re-delivery is a natural registry
 operation — read-only body, existing governed execute path). Routine *deploys/rollback* from the

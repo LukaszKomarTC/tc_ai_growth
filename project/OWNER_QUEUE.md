@@ -7,6 +7,7 @@ objects (PROTOCOL.md, Phase 2). Pointers, not copies — evidence lives where it
 
 | ID | Priority | Decision / action | Evidence | Recommendation | Waiting since | Status |
 |---|---|---|---|---|---|---|
+| U3B-1 | Medium | Authorize U3b merge + Console redeploy (five-question homepage, artifact view, redeliver button) | Branch `feature/u3b-operator-homepage`: 213 green locally AND first-ever branch CI green (deb8b5b); reviewer criteria recorded in WP §U3b | Authorize — then the 5-command redeploy + in-browser checklist; behavioral capstone measures itself Monday | 2026-08-03 | waiting |
 
 ## Decided (index — details live at the pointer)
 

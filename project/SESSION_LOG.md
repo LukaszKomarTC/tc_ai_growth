@@ -31,8 +31,10 @@ Completed
 
 - U3b BUILT on feature/u3b-operator-homepage: home five-questions view, /report/<id> chain-metadata view, real Cases tab, redeliver_latest_report registry op, 213 green. Awaiting review
 
+- U3b reviewer criteria recorded: behavioral capstone (Gmail-vs-Console on Monday), homepage checklist, anti-report rule, standing manual-elimination product bar. U3B-1 queued for owner authorization
+
 Current
-- U3b review round; Monday: verify artifact #1
+- U3B-1 awaiting owner; Monday: verify artifact #1
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)
