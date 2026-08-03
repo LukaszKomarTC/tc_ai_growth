@@ -49,10 +49,13 @@ def test_write_operations_target_staging_only_and_document_rollback():
 
 def test_foundation_lists_only_accepted_operations():
     """Scenario-B foundation invariant: the executable registry describes CURRENT AUTHORITY, not
-    a roadmap. It contains exactly the operations implemented and accepted on the VPS — SMTP Test
-    and Integrity Scan — and no write/execution operations at all (those arrive with their own
-    capability + acceptance)."""
-    assert {op.id for op in OPERATIONS} == {"smtp_test", "run_integrity_scan"}
+    a roadmap. It contains exactly the operations implemented and accepted (or riding the current
+    increment's acceptance sheet) — and no write/execution operations at all (those arrive with
+    their own capability + acceptance). Set extended DELIBERATELY per increment:
+    U3b adds redeliver_latest_report (read-only re-send of a stored immutable artifact; accepted
+    as part of the U3b in-browser acceptance, like SMTP/scan rode the MVP acceptance)."""
+    assert {op.id for op in OPERATIONS} == {"smtp_test", "run_integrity_scan",
+                                            "redeliver_latest_report"}
     assert [op.id for op in OPERATIONS if op.category is Category.EXECUTION] == []
     assert all(op.min_phase is Phase.READ_ONLY for op in OPERATIONS)
 

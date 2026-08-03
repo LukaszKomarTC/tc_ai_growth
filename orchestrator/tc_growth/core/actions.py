@@ -97,6 +97,27 @@ OPERATIONS: tuple[Operation, ...] = (
                                  "streamed step event; a test message lands in the recipient inbox",
     ),
     Operation(
+        id="redeliver_latest_report",
+        name="Re-send latest weekly report",
+        category=Category.DIAGNOSTICS,
+        min_phase=Phase.READ_ONLY,
+        environments=("staging", "production"),
+        approval=Approval.NONE,
+        command="report-redeliver-latest",
+        allowed_args=(),  # 'latest' IS the operation — no argument surface (U3b)
+        # Re-sends the STORED immutable artifact byte-identically (U3a chain): no agent run, no
+        # tokens, no new artifact row; delivery attempt counted on the one row, marked by id.
+        result_policy=((0, "success"), (1, "failure")),
+        timeout_s=60.0,
+        preconditions=("at least one weekly-report artifact stored (schema v3)",
+                       "TC_SMTP_* and TC_REPORT_RECIPIENT configured"),
+        enforced_by=(_GATE, "reads the artifact store + mail config; site state untouched"),
+        rollback_description="not required — re-sends an existing immutable artifact; "
+                             "worst case is a duplicate email",
+        verification_description="delivery attempt recorded on the artifact row "
+                                 "(report-artifact <id> shows status + attempt count)",
+    ),
+    Operation(
         id="run_integrity_scan",
         name="Run integrity scan (Technical Inspector)",
         category=Category.DIAGNOSTICS,

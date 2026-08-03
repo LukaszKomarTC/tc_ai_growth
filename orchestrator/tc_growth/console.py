@@ -227,7 +227,8 @@ def _shell(title: str, active: str, body: str, *, site_name: str, env_kind: str)
     # ONE tab per destination (U1: "Evidence" and "Logs" both pointed at /logs — a nav item that
     # takes you somewhere other than what it says is a truth defect on this surface).
     nav = "".join([
-        _tab("Operations", "/"), _tab("Evidence", "/logs"), _tab("Cases", "/cases"),
+        _tab("Home", "/"), _tab("Operations", "/operations"),
+        _tab("Evidence", "/logs"), _tab("Cases", "/cases"),
     ])
     kind = (env_kind or "staging").strip().lower()
     badge_cls = "prod" if kind == "production" else "stag"
@@ -379,13 +380,6 @@ function renderEvent(ev, stream){
 </script>"""
 
 
-def _placeholder_panel(name: str, note: str) -> str:
-    return (f"<h2 style='font-size:15px'>{_e(name)}</h2><p class='muted'>{_e(note)}</p>"
-            "<p><a href='/'>← Operations</a></p>")
-
-
-# --- request handler ----------------------------------------------------------------------
-
 
 class _Handler(BaseHTTPRequestHandler):
     # HTTP/1.1 so we can stream the execution with chunked transfer encoding.
@@ -460,17 +454,52 @@ class _Handler(BaseHTTPRequestHandler):
         chrome = {"site_name": s.site_name or (active_site() or "Tossa Cycling"),
                   "env_kind": s.env_kind}
         if path in ("/", ""):
+            # U3b: the landing page answers the owner's five questions (console_views.home_body);
+            # the execute surface lives under /operations. Store trouble must degrade, not 500.
+            from . import console_views
+            from urllib.parse import urlparse
+
+            try:
+                from .store import open_store
+
+                body = console_views.home_body(
+                    open_store(), profile=chrome["site_name"], env_kind=s.env_kind,
+                    wp_host=urlparse(s.wp_base_url).netloc if s.wp_base_url else "",
+                    allow_writes=bool(s.allow_writes), redact=_redact)
+            except Exception as exc:  # noqa: BLE001 - an empty home beats a dead console
+                body = f"<p class='muted'>Home unavailable: {_e(_redact(str(exc)))}</p>"
+            self._html(200, _shell("Home", "home", body, **chrome))
+        elif path == "/operations":
             csrf = csrf_for(session, secret)
             body = f"<script>window.__CSRF__={json.dumps(csrf)};</script>" + _operations_body()
             self._html(200, _shell("Operations", "operations", body, **chrome))
+        elif path.startswith("/report/"):
+            from . import console_views
+
+            try:
+                from .store import open_store
+
+                artifact = open_store().get_report_artifact(int(path.rsplit("/", 1)[1]))
+            except Exception:  # noqa: BLE001 - bad id / no store -> not found, never 500
+                artifact = None
+            if artifact is None:
+                self._send(404, b"no such report artifact", "text/plain; charset=utf-8")
+            else:
+                self._html(200, _shell(f"Report #{artifact.id}", "home",
+                                       console_views.report_body(artifact, redact=_redact),
+                                       **chrome))
         elif path == "/logs":
             self._html(200, _shell("Evidence", "evidence", _logs_body(), **chrome))
         elif path == "/cases":
-            self._html(200, _shell("Cases", "cases",
-                                   _placeholder_panel("Cases",
-                                       "Case detail lives in the read-only dashboard "
-                                       "(python -m tc_growth.cli dashboard). Wired into the "
-                                       "Console in a later slice."), **chrome))
+            from . import console_views
+
+            try:
+                from .store import open_store
+
+                body = console_views.cases_body(open_store())
+            except Exception as exc:  # noqa: BLE001
+                body = f"<p class='muted'>Cases unavailable: {_e(_redact(str(exc)))}</p>"
+            self._html(200, _shell("Cases", "cases", body, **chrome))
         else:
             self._send(404, b"not found", "text/plain; charset=utf-8")
 

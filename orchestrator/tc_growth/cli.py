@@ -17,6 +17,7 @@
     python -m tc_growth.cli report-artifacts        # list stored report artifacts (U3a)
     python -m tc_growth.cli report-artifact <id>    # artifact metadata (--body dumps exact body)
     python -m tc_growth.cli report-redeliver <id>   # re-send a stored artifact (no regeneration)
+    python -m tc_growth.cli report-redeliver-latest # re-send the newest stored report (Console op)
     python -m tc_growth.cli decisions               # list the decision log
     python -m tc_growth.cli case-note <ref> "<text>"     # append a human observation to a case
     python -m tc_growth.cli case-status <ref> <status>   # human-approved lifecycle change
@@ -312,6 +313,20 @@ def cmd_report_redeliver(artifact_id: str) -> int:
     return 0 if b.delivery_status == "delivered" else 1
 
 
+def cmd_report_redeliver_latest() -> int:
+    """Re-send the LATEST stored weekly-report artifact — the Console binding (U3b): registry
+    command ops take no arguments by design, so 'latest' IS the operation; per-id redelivery
+    stays a CLI action until U4 brings argumented approvals."""
+    from . import store
+
+    a = store.open_store().latest_report_artifact(kind="weekly-report")
+    if a is None:
+        print("No weekly-report artifact stored yet (first one lands on the next scheduled run).")
+        return 1
+    print(f"latest artifact: #{a.id} generated {a.generated_at} sha={a.content_sha256[:16]}")
+    return cmd_report_redeliver(str(a.id))
+
+
 def _resolve_case(s, key: str):
     case = s.get_case_by_ref(key)
     if case is None and key.lstrip("#").isdigit():
@@ -521,6 +536,8 @@ def main(argv: list[str] | None = None) -> int:
             print("Usage: report-redeliver <id>")
             return 1
         return cmd_report_redeliver(rest[0])
+    if cmd == "report-redeliver-latest":
+        return cmd_report_redeliver_latest()
     if cmd == "decisions":
         return cmd_decisions()
     if cmd == "case-note":
