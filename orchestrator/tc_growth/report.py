@@ -90,6 +90,16 @@ _WINDOW_RE = re.compile(
     r"Reporting window:\**\s*(\d{4}-\d{2}-\d{2}\s*(?:→|->|—|-)+\s*\d{4}-\d{2}-\d{2})")
 
 
+class ArtifactBody(str):
+    """The report body, carrying the id of ITS persisted artifact row. Delivery must bind to the
+    ROW, not to 'the newest row with a matching hash' — two runs can legitimately produce
+    byte-identical bodies, and a hash-only lookup would then mark the wrong record (review,
+    2026-08-03). Hash verifies byte identity; the id identifies the record; the chain needs both.
+    Subclassing str keeps every existing caller working unchanged."""
+
+    artifact_id: int | None = None
+
+
 def persist_report_artifact(kind: str, body: str, *, validator_ok: bool, reason: str,
                             run_id: int | None, result: RuntimeResult) -> int | None:
     """Persist the exact report body as an immutable, hash-verified artifact (U3a trust chain:
@@ -296,22 +306,28 @@ def build_weekly_report(
                              detail=None if artifact_ok else reason)
         # U3a: the validated body becomes an immutable, hash-verified artifact BEFORE delivery —
         # if delivery then crashes, the artifact exists with delivery_status='pending', never lost.
-        persist_report_artifact(run_kind, body, validator_ok=artifact_ok, reason=reason,
-                                run_id=run_id, result=result)
+        aid = persist_report_artifact(run_kind, body, validator_ok=artifact_ok, reason=reason,
+                                      run_id=run_id, result=result)
+        out = ArtifactBody(body)
+        out.artifact_id = aid
+        return out
     return body
 
 
-def deliver(report: str, *, validation: bool = False, ok: bool = True) -> None:
+def deliver(report: str, *, validation: bool = False, ok: bool = True,
+            artifact_id: int | None = None) -> None:
     """Send the report via the configured channel. Both paths are best-effort and never raise
     in a way that would break a scheduled run.
 
     `ok=False` marks the subject `[REPORT FAILED]` so an invalid artifact is never delivered as if
     it were a successful report — the operator still receives the raw output (for diagnosis) but
     cannot mistake it for a real report."""
+    if artifact_id is None:
+        artifact_id = getattr(report, "artifact_id", None)  # rides along from build (ArtifactBody)
     s = get_settings()
     if s.report_channel == "telegram":
         _deliver_telegram(report)
-        _mark_artifact_delivery(report, "delivered")  # telegram path reports no failure signal
+        _mark_artifact_delivery(report, "delivered", artifact_id)  # no failure signal on this path
     else:
         subject = "Tossa Cycling — Growth Report"
         if not ok:
@@ -319,21 +335,30 @@ def deliver(report: str, *, validation: bool = False, ok: bool = True) -> None:
         if validation:
             subject = "[MANUAL VALIDATION] " + subject
         sent = send_email(subject, report, raise_on_error=False)
-        _mark_artifact_delivery(report, "delivered" if sent else "send_failed")
+        _mark_artifact_delivery(report, "delivered" if sent else "send_failed", artifact_id)
 
 
-def _mark_artifact_delivery(report: str, status: str) -> None:
-    """Close the U3a chain: delivery status is recorded against the artifact whose stored hash
-    matches EXACTLY the bytes just sent — never against 'the newest row'. Best-effort; a store
-    problem must not break delivery, and an unmatched hash (artifact persistence failed earlier)
-    is a silent no-op by design."""
+def _mark_artifact_delivery(report: str, status: str, artifact_id: int | None = None) -> None:
+    """Close the U3a chain. Identity and integrity are separate checks (review, 2026-08-03):
+    when the caller knows WHICH row (artifact_id), we verify the stored hash matches the bytes
+    just sent and then mark THAT row — a mismatch marks nothing (fail closed, loudly). Only
+    id-less callers fall back to newest-hash-match, and byte-identical twins make that lookup
+    ambiguous by nature. Best-effort throughout; a store problem must not break delivery."""
     try:
         import hashlib
 
         from .store import open_store
 
-        open_store().set_artifact_delivery_by_hash(
-            hashlib.sha256(report.encode("utf-8")).hexdigest(), status)
+        sha = hashlib.sha256(report.encode("utf-8")).hexdigest()
+        store = open_store()
+        if artifact_id is not None:
+            a = store.get_report_artifact(artifact_id)
+            if a is None or a.content_sha256 != sha:
+                print(f"[artifact #{artifact_id} hash mismatch — delivery status NOT recorded]")
+                return
+            store.set_artifact_delivery(artifact_id, status)
+        else:
+            store.set_artifact_delivery_by_hash(sha, status)
     except Exception as exc:  # noqa: BLE001
         print(f"[artifact delivery status not recorded: {exc}]")
 

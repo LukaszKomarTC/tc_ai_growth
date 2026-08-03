@@ -165,3 +165,69 @@ def test_one_artifact_many_delivery_attempts(monkeypatch):
     assert a.delivery_status == "delivered" and a.delivery_attempts == 2
     assert a.body == BODY                                      # same immutable artifact
     assert len(shared.list_report_artifacts()) == 1            # exactly one row, ever
+
+
+def test_identical_twin_artifacts_redeliver_binds_to_the_requested_row(monkeypatch):
+    """Review condition 3 (2026-08-03): two artifacts with the SAME body/hash exist; redelivering
+    the OLDER must update only the older. Hash-only lookup would mark the newest — the exact
+    ambiguity the id-binding fix removes."""
+    import tc_growth.store as store_mod
+    from tc_growth.cli import cmd_report_redeliver
+
+    shared = SqliteStore(":memory:")
+    monkeypatch.setattr(store_mod, "open_store", lambda: shared)
+    monkeypatch.setattr("tc_growth.report.send_email", lambda *a, **k: True)
+
+    older = _persist(shared, body=BODY)
+    newer = _persist(shared, body=BODY)                 # byte-identical twin, same sha256
+    assert (shared.get_report_artifact(older).content_sha256
+            == shared.get_report_artifact(newer).content_sha256)
+
+    assert cmd_report_redeliver(str(older)) == 0
+    assert shared.get_report_artifact(older).delivery_status == "delivered"
+    assert shared.get_report_artifact(older).delivery_attempts == 1
+    assert shared.get_report_artifact(newer).delivery_status == "pending"   # twin untouched
+    assert shared.get_report_artifact(newer).delivery_attempts == 0
+
+
+def test_weekly_path_carries_artifact_id_past_a_newer_twin(monkeypatch):
+    """The normal Monday path binds by id too: the body returned by build carries its artifact
+    id (ArtifactBody), so even if a NEWER identical-hash row appears before delivery, deliver()
+    marks the row build created — not the newest match."""
+    import tc_growth.store as store_mod
+    from tc_growth.report import build_weekly_report, deliver
+
+    shared = SqliteStore(":memory:")
+
+    class _NoClose:
+        def __getattr__(self, name):
+            return (lambda: None) if name == "close" else getattr(shared, name)
+
+    monkeypatch.setattr(store_mod, "open_store", lambda: _NoClose())
+    monkeypatch.setattr("tc_growth.report.send_email", lambda *a, **k: True)
+
+    from tests.test_report_rules import _FakeRuntime
+    body = build_weekly_report(_FakeRuntime(text=BODY), persist=True)
+    built_id = getattr(body, "artifact_id", None)
+    assert built_id is not None
+
+    interloper = _persist(shared, body=str(body))       # newer identical-hash row
+    deliver(body, ok=True)
+    assert shared.get_report_artifact(built_id).delivery_status == "delivered"
+    assert shared.get_report_artifact(interloper).delivery_status == "pending"
+
+
+def test_id_hash_mismatch_marks_nothing(monkeypatch):
+    """Fail closed: an artifact_id whose stored hash does not match the bytes being sent must
+    record NOTHING (identity and integrity must agree before the chain closes)."""
+    import tc_growth.store as store_mod
+    from tc_growth.report import deliver
+
+    shared = SqliteStore(":memory:")
+    monkeypatch.setattr(store_mod, "open_store", lambda: shared)
+    monkeypatch.setattr("tc_growth.report.send_email", lambda *a, **k: True)
+
+    aid = _persist(shared, body=BODY)
+    deliver(BODY + "tampered", ok=True, artifact_id=aid)
+    a = shared.get_report_artifact(aid)
+    assert a.delivery_status == "pending" and a.delivery_attempts == 0

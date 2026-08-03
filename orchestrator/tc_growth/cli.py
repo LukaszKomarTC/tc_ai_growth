@@ -305,7 +305,8 @@ def cmd_report_redeliver(artifact_id: str) -> int:
     if a is None:
         print(f"No report artifact #{artifact_id}")
         return 1
-    deliver(a.body, validation=a.kind.endswith("-validation"), ok=bool(a.validator_ok))
+    deliver(a.body, validation=a.kind.endswith("-validation"), ok=bool(a.validator_ok),
+            artifact_id=a.id)  # bind to THE row — byte-identical twins must never receive this
     b = store.open_store().get_report_artifact(int(artifact_id))
     print(f"artifact #{a.id} re-delivery attempt #{b.delivery_attempts}: {b.delivery_status}")
     return 0 if b.delivery_status == "delivered" else 1
