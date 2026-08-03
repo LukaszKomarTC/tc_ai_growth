@@ -80,6 +80,31 @@ Codex). Rules, set before any second engineer joins:
   who cannot see each other's conversations coordinate.
 - Roles are added to the table above when a participant actually joins, not speculatively.
 
+## Coordination — how agents learn what happened
+
+**Today: pull, not push.** The repository is the shared state; nobody relays content. Each agent
+reads state when it activates (the session ritual); an agent's work IS its notification — the
+commit, the PR, the SESSION_LOG line. The owner's role shrinks from "paste content between
+agents" to "one-word nudge that an agent should look" — and even that disappears where push
+exists (below).
+
+Honest per-agent capabilities (2026-08-03):
+
+- **Claude (lead):** reads the live repo on demand (commits, PRs, diffs, reviews — no uploads);
+  can **subscribe to a specific PR**, after which comments/reviews/CI on that PR arrive as
+  events into its session — a real push channel, used for active review loops.
+- **Codex (auditor):** repository-native read; acts when invoked; reports via PR/commits.
+- **ChatGPT (reviewer):** GitHub read connector when invoked; **no background worker** (its own
+  statement) — it participates when the owner opens the conversation or, later, when the
+  platform invokes it.
+
+**Horizon (recorded, not built): the platform as event orchestrator.** GitHub webhook → events
+recorded as evidence → role-scoped agent invocation → OWNER_QUEUE/notifications — the "AI
+Operating System" shape, converging with U3b (queue panel) and U4 (decision workflow), reusing
+the existing evidence/cases/decisions pipeline. Build it when coordination volume demands it;
+at three agents and ~one PR a week, pull + per-PR subscriptions suffice, and process that
+outpaces its value is how good protocols die.
+
 ## Reviewer access
 
 The reviewer (ChatGPT) has READ access to the live repository via its GitHub connector (as of
