@@ -19,11 +19,13 @@ _Index, not authority (PROTOCOL.md). If this disagrees with git or the server, t
 
 ## Current work
 
-**WP-CONSOLE-USABILITY: U1 + U2 ACCEPTED** (records in the WP doc). Console reachable at
-https://ops.tossacycling.com from any device (docs/RUNBOOK-CONSOLE.md). Next increment: **U3a —
-immutable report artifact persistence** (spec in WP-CONSOLE-USABILITY.md §U3a): persist the
-validated weekly-report body with hash-bound identity so the dashboard can display provably the
-artifact that was validated and emailed.
+**WP-CONSOLE-USABILITY: U1 + U2 ACCEPTED; U3a BUILT, awaiting review+merge.** U3a lives on
+branch `feature/u3a-report-artifacts` (1 commit on main tip): schema v3 report_artifacts with a
+database-layer immutability trigger, hash-verified persist-before-deliver wiring, hash-keyed
+delivery marking, CLI read commands, 201 tests green, v2→v3 migration proven non-destructive.
+CAUTION: this changes report.py/cli.py — the scheduled Monday path — so merge is
+owner-authorized and production convergence follows the controlled-ff runbook. Next Monday run:
+2026-08-10 (would produce production artifact #1 if deployed before then).
 
 ## Blocked on
 
@@ -31,8 +33,9 @@ Nothing — engineering (U3a) and the owner's business queue proceed independent
 
 ## Next action
 
-1. Claude: U3a design + implementation on a branch (data model only, no UI).
-2. Owner: business queue (P3-ES → D#9 → D#10 → D#11) — independent of engineering.
+1. Review round on feature/u3a-report-artifacts (reviewer/auditor welcome), then
+   owner-authorized merge + production convergence (weekly-path change).
+2. Then U3b (minimal operator homepage) renders the stored artifacts.
 
 ## Standing constraints
 
