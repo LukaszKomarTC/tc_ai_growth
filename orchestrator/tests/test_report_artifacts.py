@@ -16,7 +16,19 @@ import sqlite3
 import pytest
 
 from tc_growth.report import VALIDATOR_VERSION, validate_report_artifact
+from tc_growth.runtime.base import RuntimeResult
 from tc_growth.store.sqlite import SqliteStore
+
+
+class _FakeRuntime:
+    """Minimal runtime double (kept local: test modules must not import each other — the
+    `from tests.…` form broke under CI's pytest invocation, 2026-08-03)."""
+
+    def __init__(self, text: str) -> None:
+        self._text = text
+
+    def run(self, *, system, task, tools, phase, model=None, max_iterations=12):
+        return RuntimeResult(text=self._text)
 
 BODY = ("# Tossa Cycling — Growth Report (2026-08-03)\n"
         "**Reporting window:** 2026-07-07 → 2026-08-03\n\n"
@@ -111,7 +123,6 @@ def test_build_and_deliver_close_the_chain(monkeypatch):
     monkeypatch.setattr(store_mod, "open_store", lambda: _NoClose())
     monkeypatch.setattr("tc_growth.report.send_email", lambda subject, body, **kw: True)
 
-    from tests.test_report_rules import _FakeRuntime
     body = build_weekly_report(_FakeRuntime(text=BODY), persist=True)
 
     a = shared.latest_report_artifact(kind="weekly-report")
@@ -206,7 +217,6 @@ def test_weekly_path_carries_artifact_id_past_a_newer_twin(monkeypatch):
     monkeypatch.setattr(store_mod, "open_store", lambda: _NoClose())
     monkeypatch.setattr("tc_growth.report.send_email", lambda *a, **k: True)
 
-    from tests.test_report_rules import _FakeRuntime
     body = build_weekly_report(_FakeRuntime(text=BODY), persist=True)
     built_id = getattr(body, "artifact_id", None)
     assert built_id is not None
