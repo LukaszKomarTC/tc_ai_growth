@@ -140,3 +140,28 @@ def test_genuine_run20_body_persists_with_stable_hash():
     a = s.get_report_artifact(aid)
     assert a.content_sha256 == hashlib.sha256(body.encode("utf-8")).hexdigest()
     assert a.body == body
+
+
+def test_one_artifact_many_delivery_attempts(monkeypatch):
+    """The review's approval condition: a failed Monday delivery is retried Tuesday against the
+    SAME artifact — no regeneration, no duplicate rows, attempts counted on the one row."""
+    import tc_growth.store as store_mod
+    from tc_growth.cli import cmd_report_redeliver
+
+    shared = SqliteStore(":memory:")
+    monkeypatch.setattr(store_mod, "open_store", lambda: shared)
+    aid = _persist(shared)
+
+    # Monday: SMTP down.
+    monkeypatch.setattr("tc_growth.report.send_email", lambda *a, **k: False)
+    assert cmd_report_redeliver(str(aid)) == 1
+    a = shared.get_report_artifact(aid)
+    assert a.delivery_status == "send_failed" and a.delivery_attempts == 1
+
+    # Tuesday: SMTP back.
+    monkeypatch.setattr("tc_growth.report.send_email", lambda *a, **k: True)
+    assert cmd_report_redeliver(str(aid)) == 0
+    a = shared.get_report_artifact(aid)
+    assert a.delivery_status == "delivered" and a.delivery_attempts == 2
+    assert a.body == BODY                                      # same immutable artifact
+    assert len(shared.list_report_artifacts()) == 1            # exactly one row, ever

@@ -85,6 +85,12 @@ class Store(Protocol):
     def update_decision(self, decision_id: int, **fields: object) -> None: ...
 
     # -- report artifacts (U3a: immutable, hash-verified) --
+    # CONSTITUTIONAL INVARIANT (backend-neutral): the artifact core (body, hash, verdict,
+    # provenance) is immutable AT THE STORAGE LAYER of whatever backend implements this
+    # protocol — SQLite does it with a trigger; a PostgresStore must bring an equivalent
+    # (rule/permission/trigger). Only delivery_status / delivery_attempts / delivered_at may
+    # change. An implementation without storage-layer enforcement does not satisfy this
+    # protocol, regardless of API discipline. One artifact, many delivery attempts.
     def persist_report_artifact(
         self,
         *,

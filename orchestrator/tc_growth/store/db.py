@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS report_artifacts (
     content_sha256    TEXT NOT NULL,                -- sha256 of body EXACTLY as delivered
     body              TEXT NOT NULL,                -- the immutable original artifact
     delivery_status   TEXT NOT NULL DEFAULT 'pending',  -- pending | delivered | send_failed
+    delivery_attempts INTEGER NOT NULL DEFAULT 0,         -- one artifact, many attempts (review)
     delivered_at      TEXT
 );
 
@@ -91,7 +92,7 @@ CREATE INDEX IF NOT EXISTS idx_artifacts_sha   ON report_artifacts(content_sha25
 
 -- The trust chain's storage guarantee (WP-CONSOLE-USABILITY U3a): the artifact core is
 -- IMMUTABLE at the database layer, not merely by API convention. Only the delivery fields
--- (mutable metadata AROUND the immutable core) may ever change on an existing row.
+-- (status/attempts/timestamp — mutable metadata AROUND the immutable core) may ever change.
 CREATE TRIGGER IF NOT EXISTS trg_report_artifacts_immutable
 BEFORE UPDATE ON report_artifacts
 WHEN OLD.body            IS NOT NEW.body
@@ -108,7 +109,7 @@ WHEN OLD.body            IS NOT NEW.body
   OR OLD.cost_usd        IS NOT NEW.cost_usd
   OR OLD.run_id          IS NOT NEW.run_id
 BEGIN
-    SELECT RAISE(ABORT, 'report artifact is immutable (only delivery_status/delivered_at may change)');
+    SELECT RAISE(ABORT, 'report artifact is immutable (only delivery status/attempts/timestamp may change)');
 END;
 """
 

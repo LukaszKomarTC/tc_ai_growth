@@ -16,6 +16,7 @@
     python -m tc_growth.cli runs                    # list recent runs
     python -m tc_growth.cli report-artifacts        # list stored report artifacts (U3a)
     python -m tc_growth.cli report-artifact <id>    # artifact metadata (--body dumps exact body)
+    python -m tc_growth.cli report-redeliver <id>   # re-send a stored artifact (no regeneration)
     python -m tc_growth.cli decisions               # list the decision log
     python -m tc_growth.cli case-note <ref> "<text>"     # append a human observation to a case
     python -m tc_growth.cli case-status <ref> <status>   # human-approved lifecycle change
@@ -293,6 +294,23 @@ def cmd_report_artifact(artifact_id: str, show_body: bool = False) -> int:
     return 0
 
 
+def cmd_report_redeliver(artifact_id: str) -> int:
+    """Re-deliver a STORED artifact byte-identically (U3a review: the report exists once;
+    delivery attempts are tracked separately). No agent run, no tokens, no new artifact —
+    deliver() marks this attempt by hash against the same immutable row."""
+    from . import store
+    from .report import deliver
+
+    a = store.open_store().get_report_artifact(int(artifact_id))
+    if a is None:
+        print(f"No report artifact #{artifact_id}")
+        return 1
+    deliver(a.body, validation=a.kind.endswith("-validation"), ok=bool(a.validator_ok))
+    b = store.open_store().get_report_artifact(int(artifact_id))
+    print(f"artifact #{a.id} re-delivery attempt #{b.delivery_attempts}: {b.delivery_status}")
+    return 0 if b.delivery_status == "delivered" else 1
+
+
 def _resolve_case(s, key: str):
     case = s.get_case_by_ref(key)
     if case is None and key.lstrip("#").isdigit():
@@ -497,6 +515,11 @@ def main(argv: list[str] | None = None) -> int:
             print("Usage: report-artifact <id> [--body]")
             return 1
         return cmd_report_artifact(rest[0], show_body="--body" in rest)
+    if cmd == "report-redeliver":
+        if not rest:
+            print("Usage: report-redeliver <id>")
+            return 1
+        return cmd_report_redeliver(rest[0])
     if cmd == "decisions":
         return cmd_decisions()
     if cmd == "case-note":

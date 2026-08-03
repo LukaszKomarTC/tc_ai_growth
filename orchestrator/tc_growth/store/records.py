@@ -347,6 +347,7 @@ class ReportArtifact:
     content_sha256: str
     body: str
     delivery_status: str
+    delivery_attempts: int
     delivered_at: str | None
 
 
@@ -412,7 +413,8 @@ def list_report_artifacts(conn: sqlite3.Connection, *, kind: str | None = None,
 
 def set_artifact_delivery(conn: sqlite3.Connection, artifact_id: int, status: str) -> None:
     """The ONLY sanctioned mutation — delivery metadata around the immutable core."""
-    conn.execute("UPDATE report_artifacts SET delivery_status = ?, delivered_at = ? WHERE id = ?;",
+    conn.execute("UPDATE report_artifacts SET delivery_status = ?, delivered_at = ?, "
+                 "delivery_attempts = delivery_attempts + 1 WHERE id = ?;",
                  (status, _now(), artifact_id))
     conn.commit()
 
@@ -422,7 +424,8 @@ def set_artifact_delivery_by_hash(conn: sqlite3.Connection, content_sha256: str,
     recorded against the precise bytes that were sent, never against 'whatever row is newest' —
     the chain stays self-verifying end to end. Returns False when no artifact matches."""
     cur = conn.execute(
-        "UPDATE report_artifacts SET delivery_status = ?, delivered_at = ? WHERE id = "
+        "UPDATE report_artifacts SET delivery_status = ?, delivered_at = ?, "
+        "delivery_attempts = delivery_attempts + 1 WHERE id = "
         "(SELECT id FROM report_artifacts WHERE content_sha256 = ? ORDER BY id DESC LIMIT 1);",
         (status, _now(), content_sha256))
     conn.commit()
