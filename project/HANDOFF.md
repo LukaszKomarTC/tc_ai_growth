@@ -13,18 +13,17 @@ _Index, not authority (PROTOCOL.md). If this disagrees with git or the server, t
   weekly-report path is UNCHANGED (verified @ 2026-08-03 10:5x UTC:
   `git diff --quiet b6779cc HEAD -- …/report.py …/cli.py …/core …/store` → identical), and the
   Console does not run from this checkout. Reconcile via controlled ff at next deploy round.
-- Console release (tc-console): `63448f3` from `/opt/tc_ai_growth/releases/63448f3` — verified:
-  deploy apply output + health check HTTP 200 @ 2026-08-03 ~09:33 UTC; U1 acceptance in-browser
-  (evidence run#24)
+- Console release (tc-console): `ab9afa4` from `/opt/tc_ai_growth/releases/ab9afa4` — verified:
+  deploy apply plan + owner in-browser confirmation @ 2026-08-03 ~17:40 UTC (Sign out working).
+  Rollback: `releases/63448f3` retained (N-1 rule); `releases/d260726` removable
 
 ## Current work
 
-**WP-CONSOLE-USABILITY, U2 essentially complete** (2026-08-03 evening):
-https://ops.tossacycling.com is LIVE — TLS (Let's Encrypt + 301), Apache basic auth (no nginx on
-this Plesk: rate-limit deviation recorded in the runbook), proxy to loopback :8385. Verified
-through the URL: SMTP test + full 114.9s integrity scan (evidence run#27). Token rotated (F4
-CLOSED). RUNBOOK-CONSOLE.md delivered. Remaining: one 5-min Console redeploy from main tip to
-ship the new Sign out button (last U2 checkbox), then U2 acceptance closes.
+**WP-CONSOLE-USABILITY: U1 + U2 ACCEPTED** (records in the WP doc). Console reachable at
+https://ops.tossacycling.com from any device (docs/RUNBOOK-CONSOLE.md). Next increment: **U3a —
+immutable report artifact persistence** (spec in WP-CONSOLE-USABILITY.md §U3a): persist the
+validated weekly-report body with hash-bound identity so the dashboard can display provably the
+artifact that was validated and emailed.
 
 ## Blocked on
 
@@ -32,8 +31,8 @@ Nothing hard — U2-F is a 5-minute owner convenience; U3a can start regardless.
 
 ## Next action
 
-1. Owner: 5-command Console redeploy (queue item U2-F) → Sign out visible → U2 CLOSED.
-2. Then: U3a (immutable report artifact persistence) per WP-CONSOLE-USABILITY.md.
+1. Claude: U3a design + implementation on a branch (data model only, no UI).
+2. Owner: business queue (P3-ES → D#9 → D#10 → D#11) — independent of engineering.
 
 ## Standing constraints
 

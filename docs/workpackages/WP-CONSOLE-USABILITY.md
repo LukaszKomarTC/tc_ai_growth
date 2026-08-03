@@ -1,6 +1,18 @@
 # WP-CONSOLE-USABILITY — the owner can operate the platform
 
-**Status: U1 ACCEPTED 2026-08-03 · U2 in progress.**
+**Status: U1 + U2 ACCEPTED 2026-08-03 · next: U3a.**
+
+**U2 acceptance record (owner-run, 2026-08-03).** https://ops.tossacycling.com live from any
+device: IONOS A record + Plesk subdomain + Let's Encrypt TLS + 301 → Apache basic auth →
+proxy to loopback :8385 (this Plesk is Apache-only — NO nginx, so no proxy rate limit;
+deviation + compensating controls recorded in docs/RUNBOOK-CONSOLE.md). Verified through the
+URL: SMTP test and a full 114.9s integrity scan streamed to completion (evidence run#27 —
+keepalives survived the proxy). TC_CONSOLE_TOKEN rotated (F4 CLOSED). Sign out control built,
+e2e-tested (194 green), deployed as Console release `ab9afa4` and verified in-browser.
+RUNBOOK-CONSOLE.md delivered (access, rotation, troubleshooting, security model). Basic auth
+remains transitional per the retirement criteria above. Gate items now satisfied: 1, 2, 9, 10
+(restart), plus 3 partially (badge; the full source-truth panel is U3b). Remaining for the
+package gate: 4–8 (U3a/U3b/U4).
 
 **U1 acceptance record (owner-run, in-browser, 2026-08-03).** Deployed release `63448f3`
 (three dry-run/fix/redeploy rounds surfaced and fixed four truth defects: stale review-branch

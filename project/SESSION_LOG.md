@@ -17,14 +17,16 @@ Completed
 
 - U2 EXECUTED: ops.tossacycling.com live (IONOS DNS + Plesk subdomain + Let's Encrypt + Apache-only proxy — no nginx on box, rate-limit deviation recorded; htpasswd perms fix). Verified through URL: SMTP + 114.9s scan (run#27). Token rotated (F4 closed). Logout built + tested (194 green). RUNBOOK-CONSOLE.md written
 
+- U2 ACCEPTED: Console release ab9afa4 deployed; Sign out verified in-browser. U1+U2 done same day
+
 Current
-- U2-F: one Console redeploy pending (ships Sign out) -> closes U2
+- Next increment: U3a (immutable report artifact persistence)
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)
 
 Next
-- U2 A–F → runbook; then U3a artifact persistence
+- U3a artifact persistence; owner business queue (P3-ES, D#9, D#10, D#11)
 
 ## 2026-08-02 (prior sessions, reconstructed from records)
 
