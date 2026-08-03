@@ -139,6 +139,34 @@ report, prove email content and stored artifact match by hash.
 
 ## U3b — Minimal operator homepage (presentation only; brutally minimal)
 
+**U3b acceptance record (owner in-browser, 2026-08-03 evening, release 48e91d7): STRUCTURAL
+PASS with four recorded observations.** All five sections render with live store data and honest
+empty states; truth panel shows six source lines; Attention shows the real monitoring case;
+Decisions waiting shows the store's three proposed decisions; Problems empty; Recent operations
+lists runs #23–27 with the Evidence link; Operations carries exactly three read-only ops incl.
+Re-send latest weekly report; Cases is a real 3-row list; no dead navigation found. Reviewer
+scores: operator usability 7/10, business usefulness 6.5/10 — "no longer a developer tool;
+beginning of an operations product; remaining work is presentation and workflow."
+
+Observations (all evidence FOR the panel/design doing its job, none a U3b code defect):
+- **U3B-O1 (truth-panel catch #1):** "Production writes: Enabled (capped by phase gate)" —
+  `allow_writes` defaults True and the Console env never set the production cap. Owner action:
+  add `TC_ALLOW_WRITES=false` to the Console's release `.env` + restart; panel then reads
+  Disabled. Phase gate meant no actual write path existed; the CONFIG was imprecise, not the UI.
+- **U3B-O2 (truth-panel catch #2):** "WordPress: dev.tourdegirona.com" — the Console profile's
+  `wp_base_url` points at a different site's dev host. Owner to confirm: genuine staging host
+  for Tossa, or cross-site config error to correct in the env.
+- **U3B-O3:** D#9/D#10/D#11 render as waiting because the STORE still holds them `proposed` —
+  the WP-side work was done manually but the `decision-set` sync commands were never run. The
+  dashboard truthfully mirrors the store (correct behavior, reviewer concurs). One-time CLI sync
+  pending; U4 makes this a button, permanently.
+- **U3B-O4 (visual hierarchy debt, owner + reviewer):** everything renders at near-identical
+  weight — "technically correct, emotionally dead." Adopted: **U3b.1 polish** (hierarchy only:
+  heading scale, severity color accents, muted metadata, spacing — no new data, no widgets),
+  then U4's decision cards deliver the reviewer's "one card" (impact/confidence/evidence — data
+  that requires U4's enriched decision schema, which does not exist yet).
+
+
 **U3b acceptance (reviewer-set, 2026-08-03) — three layers:**
 
 1. **The behavioral criterion (capstone):** measured next Monday, not at deploy: *if the owner

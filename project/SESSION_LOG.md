@@ -37,8 +37,10 @@ Completed
 
 - U3b MERGED (owner GO): rebased, 213 green, ff to main. Console redeploy pending
 
+- U3b DEPLOYED (release 48e91d7) + in-browser acceptance: STRUCTURAL PASS, 4 observations (truth panel caught uncapped allow_writes + wrong/unconfirmed WP host; store decisions unsynced D#9/10/11; hierarchy debt -> U3b.1 polish adopted). Reviewer: usability 7/10, "beginning of an operations product"
+
 Current
-- Console redeploy from main tip + U3b in-browser acceptance; Monday: artifact #1 + behavioral capstone
+- Owner: 3 config/sync one-liners; U3b.1 polish + U4 spec next; Monday: artifact #1 + capstone
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)

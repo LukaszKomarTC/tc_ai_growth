@@ -7,6 +7,9 @@ objects (PROTOCOL.md, Phase 2). Pointers, not copies — evidence lives where it
 
 | ID | Priority | Decision / action | Evidence | Recommendation | Waiting since | Status |
 |---|---|---|---|---|---|---|
+| U3B-O1 | Medium | Cap production writes in Console env (`TC_ALLOW_WRITES=false` + restart) | WP §U3b acceptance O1 (truth-panel catch) | One-liner in chat; panel then reads Disabled | 2026-08-03 | waiting |
+| U3B-O2 | Medium | Confirm WordPress host: is `dev.tourdegirona.com` really Tossa's staging WP? | WP §U3b acceptance O2 (truth-panel catch) | Confirm or correct `TC_WP_BASE_URL` in Console env | 2026-08-03 | waiting |
+| U3B-O3 | Low | Sync the store: D#9/D#10 approved+executed, D#11 approved (3 CLI one-liners) | WP §U3b acceptance O3; WP work already done 2026-08-03 | Run the block in chat; U4 retires this class of chore | 2026-08-03 | waiting |
 
 ## Decided (index — details live at the pointer)
 
