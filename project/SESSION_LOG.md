@@ -23,8 +23,10 @@ Completed
 
 - U3a BUILT on feature/u3a-report-artifacts: schema v3 + immutability trigger, hash chain persist-before-deliver, delivery-by-hash, CLI reads, migration test, 201 green. Awaiting review + owner-authorized merge (touches Monday path)
 
+- U3a review: 2 findings (stale branch base; hash-only delivery ambiguity on twin bodies) — both fixed (rebase; ArtifactBody id-binding, fail-closed mismatch, twin regression tests; report-redeliver). 205 green. AUTHORIZED + MERGED f0e5a50
+
 Current
-- U3a review round
+- U3a production convergence (owner block pending); then U3b (hard criterion: no routine owner SSH)
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)

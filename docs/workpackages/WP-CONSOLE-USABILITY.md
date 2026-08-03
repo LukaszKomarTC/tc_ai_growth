@@ -1,6 +1,11 @@
 # WP-CONSOLE-USABILITY — the owner can operate the platform
 
-**Status: U1 + U2 ACCEPTED 2026-08-03 · next: U3a.**
+**Status: U1 + U2 ACCEPTED · U3a MERGED to main (f0e5a50), production convergence pending ·
+next: U3b.** U3a review round (2026-08-03): approved after four conditions — rebase onto main,
+delivery bound to the artifact ROW (id identifies, hash verifies; twin-artifact regression
+proven), one-artifact-many-delivery-attempts (`report-redeliver`), 205 tests green. Immutability
+is constitutional in the Store protocol, storage-layer enforced. Accepted debt: split report.py
+into builder/validator/delivery/artifacts after U3.
 
 **U2 acceptance record (owner-run, 2026-08-03).** https://ops.tossacycling.com live from any
 device: IONOS A record + Plesk subdomain + Let's Encrypt TLS + 301 → Apache basic auth →
@@ -132,6 +137,13 @@ the validator's real-corpus regression set with every Monday run.) Acceptance: f
 report, prove email content and stored artifact match by hash.
 
 ## U3b — Minimal operator homepage (presentation only; brutally minimal)
+
+**Hard acceptance criterion (reviewer, 2026-08-03): no routine SSH for the owner.** Routine
+report access and re-delivery become browser actions in U3b (re-delivery is a natural registry
+operation — read-only body, existing governed execute path). Routine *deploys/rollback* from the
+browser are explicitly NOT U3b: they require root-level authority the Console deliberately does
+not hold (tcgrowth + one sudoers line), so browser-deploys are their own reviewed increment
+after U4, not a side effect of a homepage.
 
 One homepage answering five questions, in order: **1.** Did the scheduled report run
 successfully? **2.** What requires my attention? **3.** What decisions are waiting? **4.** Any

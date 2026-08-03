@@ -33,9 +33,8 @@ Nothing — engineering (U3a) and the owner's business queue proceed independent
 
 ## Next action
 
-1. Review round on feature/u3a-report-artifacts (reviewer/auditor welcome), then
-   owner-authorized merge + production convergence (weekly-path change).
-2. Then U3b (minimal operator homepage) renders the stored artifacts.
+1. Owner: run the U3a convergence block on the VPS (expect 205 passed).
+2. Claude: U3b spec + build (renders artifacts/cases/decisions; no-routine-SSH criterion).
 
 ## Standing constraints
 
