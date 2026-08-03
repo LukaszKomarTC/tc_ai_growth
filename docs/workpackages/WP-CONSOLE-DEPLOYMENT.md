@@ -1,9 +1,10 @@
 # Operations Console — deployment & owner acceptance runbook
 
-**Status this gates:** *Repository implementation and sandbox validation complete. Production
-owner acceptance PENDING.* The Console is **not "live"** until the steps below pass on the real
-VPS. This runbook exists so that first deployment is **one reviewed operation**, not a blind
-terminal marathon — the very thing the Console exists to end.
+**Current status:** the Operations Console MVP and U1 are operationally accepted. This file is
+the current deployment and redeployment runbook. Historical acceptance evidence remains
+unchanged in `WP-CONSOLE-ACCEPTANCE-LEDGER.md`, `WP-CONSOLE-MERGE-PLAN.md`, and
+`WP-CONSOLE-MERGE-RECORD.md`; those files are immutable records, while this runbook follows the
+current release model.
 
 Everything is driven by one script: `orchestrator/scripts/deploy-console.sh`. It is a **dry run
 by default** and changes nothing until you pass `--apply`. Read it before you run it.
@@ -11,31 +12,46 @@ by default** and changes nothing until you pass `--apply`. Read it before you ru
 ## Prerequisites (one-time, on the VPS)
 
 1. **Bootstrap an isolated release checkout** (D1: never deploy from the checkout that
-   `tc-weekly-report` / `tc-autodeploy` run from — preflight refuses it). As the service user,
-   detached at the exact reviewed commit:
+   `tc-weekly-report` / `tc-autodeploy` run from — preflight refuses it). Resolve the full
+   reviewed SHA from `main`, verify that it belongs to `origin/main`, and create one detached
+   worktree per release under `/opt/tc_ai_growth/releases/<sha>`:
    ```bash
    cd /opt/tc_ai_growth/app
-   sudo -u tcgrowth git fetch origin feature/operations-console
-   sudo -u tcgrowth git worktree add --detach /opt/tc_ai_growth/console <reviewed-sha>
+   sudo -u tcgrowth git fetch origin main
+   RELEASE_SHA=<full-reviewed-sha>
+   sudo -u tcgrowth git merge-base --is-ancestor "$RELEASE_SHA" origin/main || { echo "SHA is not on origin/main"; exit 1; }
+   sudo -u tcgrowth git worktree add --detach \
+       "/opt/tc_ai_growth/releases/$RELEASE_SHA" "$RELEASE_SHA"
    install -m 600 -o tcgrowth -g tcgrowth /opt/tc_ai_growth/app/orchestrator/.env \
-       /opt/tc_ai_growth/console/orchestrator/.env
+       "/opt/tc_ai_growth/releases/$RELEASE_SHA/orchestrator/.env"
    ```
 2. A console token, stored 0600, never printed to a shell that logs history:
    ```bash
    umask 077; printf 'TC_CONSOLE_TOKEN=%s\n' "$(openssl rand -base64 32)" >> /etc/tc-console.env
    ```
-3. The shared venv: release checkouts have no `.venv`, so `TC_VENV` must point at the main
-   install's (editable-install + `WorkingDirectory` means the service still runs the release
-   checkout's code — cwd wins on `sys.path`).
+3. Release worktrees have no private virtualenv or durable database. Pass both shared paths
+   explicitly on dry run and apply:
+   - `TC_VENV=/opt/tc_ai_growth/app/orchestrator/.venv`
+   - `TC_STORE_DB=/opt/tc_ai_growth/app/orchestrator/data/tc_growth.db`
+
+   `TC_VENV` supplies the reviewed runtime dependencies. `TC_STORE_DB` makes the unit pin
+   `TC_DB_PATH` to the shared weekly-ledger database, so Console evidence survives release
+   changes (U1-3).
 
 ## Deploy (the one operation)
 
+Run the deployment script from the reviewed release worktree. The script defaults its identity
+check to the reviewed branch `main` and derives `TC_BUILD_COMMIT` from the owner-run Git check.
+
 ```bash
-cd /opt/tc_ai_growth/console/orchestrator     # the release checkout — you deploy what you run from
+RELEASE_SHA=<full-reviewed-sha>
+cd "/opt/tc_ai_growth/releases/$RELEASE_SHA/orchestrator"
 export TC_VENV=/opt/tc_ai_growth/app/orchestrator/.venv
-./scripts/deploy-console.sh                   # DRY RUN — prints every action, changes nothing
-# review the plan: pinned commit, sudoers rule, unit, paths — then:
-sudo TC_VENV=$TC_VENV TC_BUILD_COMMIT=$(git rev-parse --short HEAD) ./scripts/deploy-console.sh --apply
+export TC_STORE_DB=/opt/tc_ai_growth/app/orchestrator/data/tc_growth.db
+
+TC_VENV="$TC_VENV" TC_STORE_DB="$TC_STORE_DB" ./scripts/deploy-console.sh
+# Review the plan: main ancestry, pinned commit, shared venv, durable store, unit, and paths.
+sudo TC_VENV="$TC_VENV" TC_STORE_DB="$TC_STORE_DB" ./scripts/deploy-console.sh --apply
 ```
 
 **Scan permission (D2), shown in the plan before you apply:** the deploy installs one
@@ -45,43 +61,50 @@ caller's environment, so the Console cannot redirect the scan target even in pri
 consequently runs without `NoNewPrivileges` and with `ProtectSystem=full`; the rationale for each
 relaxation is written in the unit itself.
 
-**To deploy a newer reviewed commit:** advance the detached worktree, then re-run:
+**To deploy a newer reviewed commit:** create a new detached worktree; do not advance the
+currently deployed release directory in place.
+
 ```bash
-sudo -u tcgrowth git -C /opt/tc_ai_growth/console fetch origin feature/operations-console
-sudo -u tcgrowth git -C /opt/tc_ai_growth/console checkout --detach <new-reviewed-sha>
+cd /opt/tc_ai_growth/app
+sudo -u tcgrowth git fetch origin main
+NEW_SHA=<full-reviewed-sha>
+sudo -u tcgrowth git merge-base --is-ancestor "$NEW_SHA" origin/main || { echo "SHA is not on origin/main"; exit 1; }
+sudo -u tcgrowth git worktree add --detach \
+    "/opt/tc_ai_growth/releases/$NEW_SHA" "$NEW_SHA"
+install -m 600 -o tcgrowth -g tcgrowth /opt/tc_ai_growth/app/orchestrator/.env \
+    "/opt/tc_ai_growth/releases/$NEW_SHA/orchestrator/.env"
+
+cd "/opt/tc_ai_growth/releases/$NEW_SHA/orchestrator"
+export TC_VENV=/opt/tc_ai_growth/app/orchestrator/.venv
+export TC_STORE_DB=/opt/tc_ai_growth/app/orchestrator/data/tc_growth.db
+TC_VENV="$TC_VENV" TC_STORE_DB="$TC_STORE_DB" ./scripts/deploy-console.sh
+sudo TC_VENV="$TC_VENV" TC_STORE_DB="$TC_STORE_DB" ./scripts/deploy-console.sh --apply
 ```
 
-**Worktree ownership rule (D5, learned the hard way):** ALL manual git commands in the release
-worktree run as the service user (`sudo -u tcgrowth git -C …`) — never as root. Root's
-`git status` rewrites the index file root-owned, which breaks the owner's next fetch/checkout
-with `index file open failed: Permission denied`. Recovery if it happens:
+**Worktree ownership rule (D5):** every manual Git command in the app checkout or a release
+worktree runs as `tcgrowth` (`sudo -u tcgrowth git -C …`), never as root. Root Git can rewrite
+worktree metadata and indexes with root ownership. If that happens, stop and identify the exact
+checkout and its metadata before performing a targeted ownership repair:
 ```bash
-chown -R tcgrowth:tcgrowth /opt/tc_ai_growth/app/.git/worktrees/console /opt/tc_ai_growth/console
+sudo -u tcgrowth git -C /opt/tc_ai_growth/app worktree list --porcelain
 ```
-(The deploy script itself now runs its git checks as the checkout's owner automatically.)
+The deploy script runs its identity checks as the checkout owner automatically.
 
-### First redeploy (post-acceptance fix batch D4/F1/F2/F3)
+### Historical acceptance fix batches
 
-This redeploy doubles as the deferred acceptance rows (idempotency; old session rejected;
-optional rollback test). Before applying, add the explicit environment label to the console's
-env copy (F2 — the badge derives from it):
-```bash
-echo 'TC_ENV_KIND=production' >> /opt/tc_ai_growth/console/orchestrator/.env
-```
-Then advance the worktree (above), dry-run, review the plan (expect the new commit; everything
-else unchanged), apply once. Verify in the browser: red **PRODUCTION** badge; Execute →
-Running… → **Run again** (button now resets — D4); your PRE-redeploy session was signed out.
-Ledger rows to close: redeploy idempotency (run `--apply` a second time — no-op in effect),
-and optionally `--rollback` followed by a final re-apply.
+Do not replay the old first-redeploy commands from chat or reconstruct them here. The original
+release paths, defect batches, results, and branch names are immutable history in
+`WP-CONSOLE-ACCEPTANCE-LEDGER.md`. Every current redeploy follows the new-release procedure
+above from a reviewed `main` SHA.
 
 The script runs six phases, each of which you can verify:
 
 | Phase | What it does | How you know it worked |
 |---|---|---|
 | 1 Preflight | Read-only checks: app dir, venv, service user, **token present (else fail closed)**, `list-operations` validates, port free | Prints `preflight OK` + the commit it will pin |
-| 2 Snapshot | Copies the current systemd unit, deployed inspector, and evidence store to `/var/backups/tc-console/<ts>` | Prints the snapshot dir — rollback is now real |
+| 2 Snapshot | Copies the current systemd unit, deployed inspector, and sudoers state to `/var/backups/tc-console/<ts>`; the shared `TC_STORE_DB` remains in place | Prints the snapshot dir — rollback is now real |
 | 3 Inspector | Installs the **repo** inspector atomically to `/usr/local/bin` (single source of truth), logs its sha256+commit | `logger` line `deployed … sha256=… commit=…` |
-| 4 Service | Writes a loopback systemd unit pinning `TC_BUILD_COMMIT` + `TC_INSPECTOR_SCRIPT`, enables + starts it | `systemctl status tc-console` active |
+| 4 Service | Writes a loopback systemd unit pinning `TC_BUILD_COMMIT`, `TC_INSPECTOR_SCRIPT`, and `TC_DB_PATH`, then enables + restarts it | `systemctl status tc-console` active |
 | 5 Health check | Curls the loopback login page; aborts (suggests rollback) if not HTTP 200 | Prints `health check OK` |
 | 6 Access | Prints the SSH-tunnel command + the `http://localhost:<port>` URL | You open it in a browser |
 
@@ -99,20 +122,19 @@ plainly:
 
 | Question | Answer |
 |---|---|
-| Idempotent / safe to run twice? | **Yes.** Each run snapshots first, then overwrites the unit + inspector; `enable --now` is idempotent. Re-running the same commit is a no-op in effect. |
-| Versioned release directories? | **Not yet** — in-place install. Previous states are kept as timestamped **snapshots** under `/var/backups/tc-console`, which is what rollback uses. |
-| Atomic activation (symlink swap)? | **Not yet** — service restart is the activation. Blue/green with atomic symlink swap is recorded as **debt** below. |
-| Previous releases retained? | **Yes** — every run leaves a timestamped snapshot; none are deleted by the script. |
-| Rollback restores code or config? | Restores the **inspector script + systemd unit** (config) and preserves the prior **evidence store**; it does **not** roll back the orchestrator app code (that lives in `APP_DIR`, deployed separately). |
+| Idempotent / safe to run twice? | **Yes.** Each run snapshots first, overwrites the unit + inspector, then runs `systemctl enable` + `restart`. Re-running the same commit redeploys identical state. |
+| Versioned release directories? | **Yes.** Each reviewed `main` SHA gets a detached worktree at `/opt/tc_ai_growth/releases/<sha>`; the script deploys the checkout it lives in. |
+| Atomic activation (symlink swap)? | **Not yet** — systemd unit replacement plus service restart activates the selected release worktree. A symlink swap remains recorded debt below. |
+| Previous releases retained? | **Yes** — release worktrees are retained under `/opt/tc_ai_growth/releases/`, and every deploy also leaves a timestamped snapshot; neither is pruned automatically. |
+| Rollback restores code or config? | Restores the prior **systemd unit** (including its release `WorkingDirectory`), inspector, and sudoers state; it preserves the durable evidence store. The prior release worktree must still exist. |
 | Health check fails after activation? | The script **aborts and points you at `--rollback`**. |
 | Are active Console sessions invalidated on redeploy? | **Yes** — the session/CSRF signature is bound to the deploy commit (`TC_BUILD_COMMIT`), so a new deploy forces re-auth. |
 | Does it modify `.env` / touch WordPress? | **No** to both — it reads the console env file, and deploys only the Console + read-only inspector. |
 
-**Debt (record, don't build under deployment pressure):** move to **versioned release directories
-with atomic symlink activation and retained N-previous releases**, so activation is atomic and
-rollback is a symlink flip. The current snapshot-and-overwrite model is safe for a single-owner
-loopback console but should be hardened before this surface grows. (Aligns with the repo audit's
-"reproducible deployment + rollback semantics" note.)
+**Debt (record, don't build under deployment pressure):** add atomic release activation
+(for example, a reviewed `current` symlink strategy) and a deliberate retention/pruning policy.
+Versioned release worktrees already exist; the remaining debt is atomic selection and lifecycle
+management, not creation of release directories.
 
 ## Owner acceptance — the narrow, intentional checklist
 
@@ -121,7 +143,7 @@ narrow — validate exactly the package, OP1, OP2, rollback, and the access boun
 
 **Deployment**
 - [ ] Dry-run output reviewed; the printed action list == what `--apply` will run (no hidden steps).
-- [ ] Source commit shown matches the expected branch tip.
+- [ ] Source commit is the reviewed SHA on `origin/main`, and the checkout path is `/opt/tc_ai_growth/releases/<sha>`.
 - [ ] Backup/snapshot created before any change.
 - [ ] Service installed under the expected user (`tcgrowth`), not root.
 - [ ] Bind address is loopback only (`127.0.0.1`), confirmed with `ss -ltn`.
@@ -155,8 +177,10 @@ narrow — validate exactly the package, OP1, OP2, rollback, and the access boun
 - [ ] The service cannot execute arbitrary commands (registry-only; no free-form field).
 - [ ] `tcgrowth` does not receive broad sudo authority as part of this.
 
-When all four groups pass, with correct outcome semantics and traceable evidence, the Console MVP
-has earned the right to continue. Until then it stays **acceptance pending**, not "live".
+The Console MVP's original acceptance decision is preserved in
+`WP-CONSOLE-ACCEPTANCE-LEDGER.md`. For every current redeploy, all applicable checks above must
+pass before the new release is treated as current; failures follow the ledger protocol:
+observe → record → fix in Git → deploy a new reviewed release.
 
 ## Keep it to five owner steps
 
