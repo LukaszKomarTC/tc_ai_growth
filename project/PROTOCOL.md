@@ -8,13 +8,21 @@ server). **The project remembers; the participants read.**
 
 ## Roles
 
-| Role | Responsibility |
-|---|---|
-| Łukasz | Product Owner — release authority; the ONLY approver |
-| Claude | Lead Engineer — implementation, deployment plans, evidence |
-| ChatGPT | Chief Architect / Reviewer — audits, design review, risk |
-| Git repository | Source of truth |
-| /project files | Shared memory — navigation aids, NEVER authority |
+| Role | Who | Responsibility |
+|---|---|---|
+| Product Owner | Łukasz | Release authority; the ONLY approver |
+| Lead Engineer | Claude | Implementation, deployment plans, evidence; merges after green suite |
+| Repository Auditor | Codex | Repository-consistency audits; docs-only PRs on branches (onboarded 2026-08-03 via PR #67 — audit → PR → lead review → merge, full loop proven) |
+| Architecture & Governance | ChatGPT | Design review, audits, risk; read access, no write by design |
+| Source of truth | Git repository | — |
+| Shared memory | /project files | Navigation aids, NEVER authority |
+
+**Known limitation (2026-08-03):** all agents currently act under ONE GitHub identity, so
+GitHub's own review mechanics can't distinguish them (an "approval" of a same-account PR is
+impossible; lead reviews land as comments). Role separation is enforced by this protocol and
+the records, not by GitHub. If enforcement-by-platform becomes wanted, agents need distinct
+GitHub identities (machine accounts + branch protection) — a deliberate future decision, not
+an accident to drift into.
 
 Standing governance (earned, not theoretical): **reviewer input ≠ authorization** — only the
 owner authorizes releases and production actions. Freeze protocol: every change reaches servers
