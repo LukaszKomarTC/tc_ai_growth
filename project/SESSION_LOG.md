@@ -29,8 +29,10 @@ Completed
 
 - U3a DEPLOYED: converged b6779cc→d391247, 205 on VPS, v2→v3 migration clean, ledger intact, timer armed. Artifact #1 lands Monday 08-10
 
+- U3b BUILT on feature/u3b-operator-homepage: home five-questions view, /report/<id> chain-metadata view, real Cases tab, redeliver_latest_report registry op, 213 green. Awaiting review
+
 Current
-- U3b spec+build (no-routine-SSH criterion); Monday: verify artifact #1
+- U3b review round; Monday: verify artifact #1
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)

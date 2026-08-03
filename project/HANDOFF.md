@@ -31,7 +31,8 @@ Nothing — engineering (U3a) and the owner's business queue proceed independent
 
 ## Next action
 
-1. Claude: U3b spec + build (renders artifacts/cases/decisions; no-routine-SSH criterion).
+1. Review round on feature/u3b-operator-homepage → merge → Console redeploy → in-browser
+   acceptance (five sections render truthfully; redeliver button once artifact #1 exists).
 2. Monday 08-10: verify artifact #1 (hash vs email) — closes U3a's live acceptance.
 
 ## Standing constraints
