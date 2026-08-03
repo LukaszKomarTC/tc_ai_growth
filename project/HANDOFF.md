@@ -27,7 +27,7 @@ artifact that was validated and emailed.
 
 ## Blocked on
 
-Nothing hard — U2-F is a 5-minute owner convenience; U3a can start regardless.
+Nothing — engineering (U3a) and the owner's business queue proceed independently.
 
 ## Next action
 
