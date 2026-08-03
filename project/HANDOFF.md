@@ -31,9 +31,8 @@ Nothing — engineering (U3a) and the owner's business queue proceed independent
 
 ## Next action
 
-1. Review round on feature/u3b-operator-homepage → merge → Console redeploy → in-browser
-   acceptance (five sections render truthfully; redeliver button once artifact #1 exists).
-2. Monday 08-10: verify artifact #1 (hash vs email) — closes U3a's live acceptance.
+1. Owner: Console redeploy from main tip (block in chat), then in-browser U3b checklist.
+2. Monday 08-10: artifact #1 (U3a live acceptance) + the Gmail-vs-Console behavioral capstone.
 
 ## Standing constraints
 

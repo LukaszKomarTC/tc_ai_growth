@@ -7,7 +7,6 @@ objects (PROTOCOL.md, Phase 2). Pointers, not copies — evidence lives where it
 
 | ID | Priority | Decision / action | Evidence | Recommendation | Waiting since | Status |
 |---|---|---|---|---|---|---|
-| U3B-1 | Medium | Authorize U3b merge + Console redeploy (five-question homepage, artifact view, redeliver button) | Branch `feature/u3b-operator-homepage`: 213 green locally AND first-ever branch CI green (deb8b5b); reviewer criteria recorded in WP §U3b | REVIEWER AUTHORIZED 2026-08-03 (scope disciplined; decision-evidence gap accepted as U4's opening requirement, not a blocker). Awaiting the OWNER's word per governance: reviewer input ≠ authorization | 2026-08-03 | waiting |
 
 ## Decided (index — details live at the pointer)
 
@@ -23,3 +22,4 @@ objects (PROTOCOL.md, Phase 2). Pointers, not copies — evidence lives where it
 | D#10 | Executed: bilingual title/meta live on /salidas_guiadas-listado (ES+EN, lead-verified) | docs/decisions/2026-08-D9-D10-D11.md |
 | P3-ES | Closed on business evidence: real ES orders/bookings arriving; page-level rate stays under weekly monitoring | docs/decisions/2026-08-D9-D10-D11.md |
 | D#11 | Closed, REVISED rationale: GA4 pipeline operational; WooCommerce = order/revenue truth, GA4 = attribution (93 orders / €11,604 net in window ≠ mismatch) | docs/decisions/2026-08-D9-D10-D11.md |
+| U3B-1 | U3b merge authorized (owner GO 2026-08-03) and merged to main; Console redeploy + in-browser acceptance next | WP-CONSOLE-USABILITY.md §U3b |

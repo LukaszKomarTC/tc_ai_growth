@@ -35,8 +35,10 @@ Completed
 
 - U3b reviewer-authorized; U4 opening requirement recorded (U3b=what needs attention, U4=why approve; evidence+impact before controls) + post-Monday owner-behavior instrumentation note. Merge held for OWNER word (reviewer input ≠ authorization)
 
+- U3b MERGED (owner GO): rebased, 213 green, ff to main. Console redeploy pending
+
 Current
-- U3B-1 awaiting owner word; Monday: verify artifact #1
+- Console redeploy from main tip + U3b in-browser acceptance; Monday: artifact #1 + behavioral capstone
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)
