@@ -16,7 +16,7 @@ from pathlib import Path
 
 from ..config import BASE_DIR, active_site, get_settings
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # One statement per table; CREATE ... IF NOT EXISTS makes init idempotent.
 _SCHEMA = """
@@ -64,9 +64,52 @@ CREATE TABLE IF NOT EXISTS decisions (
     case_id    INTEGER REFERENCES cases(id)
 );
 
+CREATE TABLE IF NOT EXISTS report_artifacts (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id            INTEGER REFERENCES runs(id),  -- ledger linkage (nullable: run log may fail)
+    kind              TEXT NOT NULL,                -- weekly-report | weekly-report-validation
+    profile           TEXT,                         -- site label at generation time
+    window            TEXT,                         -- reporting window as stated in the body (best-effort)
+    generated_at      TEXT NOT NULL,
+    format_version    TEXT NOT NULL,                -- artifact format, e.g. 'md/1'
+    validator_version TEXT NOT NULL,                -- which validator heuristics judged it
+    validator_ok      INTEGER NOT NULL,             -- 1 accepted / 0 rejected (stored either way)
+    validator_reason  TEXT,                         -- rejection reason when validator_ok = 0
+    model             TEXT,
+    cost_usd          REAL,
+    content_sha256    TEXT NOT NULL,                -- sha256 of body EXACTLY as delivered
+    body              TEXT NOT NULL,                -- the immutable original artifact
+    delivery_status   TEXT NOT NULL DEFAULT 'pending',  -- pending | delivered | send_failed
+    delivered_at      TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_cases_status    ON cases(status);
 CREATE INDEX IF NOT EXISTS idx_runs_kind       ON runs(kind);
 CREATE INDEX IF NOT EXISTS idx_decisions_case  ON decisions(case_id);
+CREATE INDEX IF NOT EXISTS idx_artifacts_kind  ON report_artifacts(kind);
+CREATE INDEX IF NOT EXISTS idx_artifacts_sha   ON report_artifacts(content_sha256);
+
+-- The trust chain's storage guarantee (WP-CONSOLE-USABILITY U3a): the artifact core is
+-- IMMUTABLE at the database layer, not merely by API convention. Only the delivery fields
+-- (mutable metadata AROUND the immutable core) may ever change on an existing row.
+CREATE TRIGGER IF NOT EXISTS trg_report_artifacts_immutable
+BEFORE UPDATE ON report_artifacts
+WHEN OLD.body            IS NOT NEW.body
+  OR OLD.content_sha256  IS NOT NEW.content_sha256
+  OR OLD.kind            IS NOT NEW.kind
+  OR OLD.profile         IS NOT NEW.profile
+  OR OLD.window          IS NOT NEW.window
+  OR OLD.generated_at    IS NOT NEW.generated_at
+  OR OLD.format_version  IS NOT NEW.format_version
+  OR OLD.validator_version IS NOT NEW.validator_version
+  OR OLD.validator_ok    IS NOT NEW.validator_ok
+  OR OLD.validator_reason IS NOT NEW.validator_reason
+  OR OLD.model           IS NOT NEW.model
+  OR OLD.cost_usd        IS NOT NEW.cost_usd
+  OR OLD.run_id          IS NOT NEW.run_id
+BEGIN
+    SELECT RAISE(ABORT, 'report artifact is immutable (only delivery_status/delivered_at may change)');
+END;
 """
 
 
@@ -125,3 +168,7 @@ def _migrate(conn: sqlite3.Connection, *, from_version: int) -> None:
             except sqlite3.OperationalError as exc:  # column already there (fresh-create race)
                 if "duplicate column" not in str(exc).lower():
                     raise
+    if from_version < 3:
+        # v2 -> v3: report_artifacts table + immutability trigger — purely additive, created by
+        # the CREATE IF NOT EXISTS statements in _SCHEMA (which init_db runs before migrating).
+        pass

@@ -7,6 +7,7 @@ recommended actions, and delivers it via email or Telegram.
 from __future__ import annotations
 
 import datetime as dt
+import re
 import time
 from collections.abc import Callable
 
@@ -54,17 +55,17 @@ def _first_line(text: str, limit: int = 200) -> str:
 
 
 def persist_run(kind: str, result: RuntimeResult, *, started_at: str, duration_s: float,
-                status: str = "ok", detail: str | None = None) -> None:
+                status: str = "ok", detail: str | None = None) -> int | None:
     """Log a completed agent run to the store. Best-effort: a persistence problem (missing/RO DB)
     must NEVER break the report or investigation, so every failure is swallowed with a note.
 
     `status` lets the caller record an artifact-level verdict (e.g. a weekly report that finished
     but produced no valid report — see validate_report_artifact): the run EXECUTED but the ledger
-    must not call it 'ok'."""
+    must not call it 'ok'. Returns the run id (for artifact linkage, U3a) or None on failure."""
     try:
         from .store import open_store
 
-        open_store().log_run(
+        return open_store().log_run(
             kind=kind,
             model=result.model,
             prompt_tokens=result.prompt_tokens,
@@ -77,6 +78,44 @@ def persist_run(kind: str, result: RuntimeResult, *, started_at: str, duration_s
         )
     except Exception as exc:  # noqa: BLE001 - logging must never break the run
         print(f"[run not logged: {exc}]")
+        return None
+
+
+# Version stamp of the artifact validator's HEURISTICS (not the code commit): bump when the
+# accept/reject rules below change, so every stored artifact records which rules judged it and a
+# future rules change can never silently reinterpret old verdicts (U3a).
+VALIDATOR_VERSION = "1"
+
+_WINDOW_RE = re.compile(
+    r"Reporting window:\**\s*(\d{4}-\d{2}-\d{2}\s*(?:→|->|—|-)+\s*\d{4}-\d{2}-\d{2})")
+
+
+def persist_report_artifact(kind: str, body: str, *, validator_ok: bool, reason: str,
+                            run_id: int | None, result: RuntimeResult) -> int | None:
+    """Persist the exact report body as an immutable, hash-verified artifact (U3a trust chain:
+    generation → validated artifact → hash → persisted → delivery → display). Best-effort like
+    persist_run — storage trouble must never break the scheduled run. Rejected artifacts are
+    stored too: a failed report is evidence, and every real body grows the validator corpus."""
+    try:
+        from .core.cost import estimate_cost
+        from .store import open_store
+
+        m = _WINDOW_RE.search(body)
+        return open_store().persist_report_artifact(
+            kind=kind,
+            body=body,
+            validator_ok=validator_ok,
+            validator_reason=None if validator_ok else reason,
+            validator_version=VALIDATOR_VERSION,
+            run_id=run_id,
+            profile=site_label() or None,
+            window=m.group(1) if m else None,
+            model=result.model,
+            cost_usd=estimate_cost(result.model, result.prompt_tokens, result.completion_tokens),
+        )
+    except Exception as exc:  # noqa: BLE001 - persistence must never break the run
+        print(f"[report artifact not persisted: {exc}]")
+        return None
 
 
 # Report concepts (tolerant substring groups) — a finished weekly report covers most of these.
@@ -251,10 +290,14 @@ def build_weekly_report(
         # Distinct ledger kind: manual validation runs must be machine-distinguishable from the
         # scheduled runs that count toward the release gate.
         run_kind = "weekly-report-validation" if validation else "weekly-report"
-        persist_run(run_kind, result, started_at=started_at,
-                    duration_s=round(time.perf_counter() - t0, 2),
-                    status="ok" if artifact_ok else "failed",
-                    detail=None if artifact_ok else reason)
+        run_id = persist_run(run_kind, result, started_at=started_at,
+                             duration_s=round(time.perf_counter() - t0, 2),
+                             status="ok" if artifact_ok else "failed",
+                             detail=None if artifact_ok else reason)
+        # U3a: the validated body becomes an immutable, hash-verified artifact BEFORE delivery —
+        # if delivery then crashes, the artifact exists with delivery_status='pending', never lost.
+        persist_report_artifact(run_kind, body, validator_ok=artifact_ok, reason=reason,
+                                run_id=run_id, result=result)
     return body
 
 
@@ -268,13 +311,31 @@ def deliver(report: str, *, validation: bool = False, ok: bool = True) -> None:
     s = get_settings()
     if s.report_channel == "telegram":
         _deliver_telegram(report)
+        _mark_artifact_delivery(report, "delivered")  # telegram path reports no failure signal
     else:
         subject = "Tossa Cycling — Growth Report"
         if not ok:
             subject = "[REPORT FAILED] " + subject
         if validation:
             subject = "[MANUAL VALIDATION] " + subject
-        send_email(subject, report, raise_on_error=False)
+        sent = send_email(subject, report, raise_on_error=False)
+        _mark_artifact_delivery(report, "delivered" if sent else "send_failed")
+
+
+def _mark_artifact_delivery(report: str, status: str) -> None:
+    """Close the U3a chain: delivery status is recorded against the artifact whose stored hash
+    matches EXACTLY the bytes just sent — never against 'the newest row'. Best-effort; a store
+    problem must not break delivery, and an unmatched hash (artifact persistence failed earlier)
+    is a silent no-op by design."""
+    try:
+        import hashlib
+
+        from .store import open_store
+
+        open_store().set_artifact_delivery_by_hash(
+            hashlib.sha256(report.encode("utf-8")).hexdigest(), status)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[artifact delivery status not recorded: {exc}]")
 
 
 def send_email(subject: str, body: str, *, raise_on_error: bool = False) -> bool:

@@ -260,6 +260,11 @@ def test_validation_run_is_labelled_and_ledgered_separately(monkeypatch):
         "tc_growth.report.persist_run",
         lambda kind, result, *, started_at, duration_s, status="ok", detail=None: recorded.setdefault("kind", kind),
     )
+    # U3a: artifact persistence rides the same persist flag — stub it so tests touch no real DB.
+    monkeypatch.setattr(
+        "tc_growth.report.persist_report_artifact",
+        lambda kind, body, *, validator_ok, reason, run_id, result: recorded.setdefault("artifact_kind", kind),
+    )
     rt = _FakeRuntime()
     out = build_weekly_report(rt, persist=True, validation=True)
     assert recorded["kind"] == "weekly-report-validation"      # machine-distinguishable in the ledger

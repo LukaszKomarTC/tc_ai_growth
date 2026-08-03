@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from .records import Case, Decision, Run
+from .records import Case, Decision, ReportArtifact, Run
 
 
 @runtime_checkable
@@ -83,6 +83,36 @@ class Store(Protocol):
     def get_decision(self, decision_id: int) -> Decision | None: ...
 
     def update_decision(self, decision_id: int, **fields: object) -> None: ...
+
+    # -- report artifacts (U3a: immutable, hash-verified) --
+    def persist_report_artifact(
+        self,
+        *,
+        kind: str,
+        body: str,
+        validator_ok: bool,
+        validator_reason: str | None,
+        validator_version: str,
+        run_id: int | None = None,
+        profile: str | None = None,
+        window: str | None = None,
+        model: str | None = None,
+        cost_usd: float | None = None,
+        format_version: str = "md/1",
+        generated_at: str | None = None,
+    ) -> int: ...
+
+    def get_report_artifact(self, artifact_id: int) -> ReportArtifact | None: ...
+
+    def latest_report_artifact(self, *, kind: str | None = None) -> ReportArtifact | None: ...
+
+    def list_report_artifacts(
+        self, *, kind: str | None = None, limit: int = 20
+    ) -> list[ReportArtifact]: ...
+
+    def set_artifact_delivery(self, artifact_id: int, status: str) -> None: ...
+
+    def set_artifact_delivery_by_hash(self, content_sha256: str, status: str) -> bool: ...
 
     # -- lifecycle --
     def seed_incident_case(self) -> int: ...

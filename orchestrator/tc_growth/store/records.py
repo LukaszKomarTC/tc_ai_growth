@@ -317,3 +317,113 @@ def list_decisions(
             "SELECT * FROM decisions ORDER BY id DESC LIMIT ?;", (limit,)
         ).fetchall()
     return [Decision(**r) for r in rows]
+
+
+# -- report artifacts (WP-CONSOLE-USABILITY U3a) --------------------------------------------------
+#
+# The trust chain: generation → validated immutable artifact → hash → persisted artifact →
+# email delivery → dashboard display. The body stored here is byte-identical to the body that was
+# validated and delivered; content_sha256 is computed HERE, over exactly what is stored, so a
+# stored artifact can always be re-verified against the delivered email. The immutability trigger
+# in db.py enforces that only the delivery fields ever change.
+
+MAX_ARTIFACT_BYTES = 2_000_000  # sanity ceiling: a weekly report is ~15 KB; 2 MB means a bug
+
+
+@dataclass
+class ReportArtifact:
+    id: int
+    run_id: int | None
+    kind: str
+    profile: str | None
+    window: str | None
+    generated_at: str
+    format_version: str
+    validator_version: str
+    validator_ok: int
+    validator_reason: str | None
+    model: str | None
+    cost_usd: float | None
+    content_sha256: str
+    body: str
+    delivery_status: str
+    delivered_at: str | None
+
+
+def persist_report_artifact(
+    conn: sqlite3.Connection,
+    *,
+    kind: str,
+    body: str,
+    validator_ok: bool,
+    validator_reason: str | None,
+    validator_version: str,
+    run_id: int | None = None,
+    profile: str | None = None,
+    window: str | None = None,
+    model: str | None = None,
+    cost_usd: float | None = None,
+    format_version: str = "md/1",
+    generated_at: str | None = None,
+) -> int:
+    """Store the artifact and return its id. Rejected artifacts are stored too (validator_ok=0) —
+    a failed report is evidence, and the corpus of real bodies is how the validator improves."""
+    import hashlib
+
+    raw = body.encode("utf-8")
+    if len(raw) > MAX_ARTIFACT_BYTES:
+        raise ValueError(f"report artifact too large ({len(raw)} bytes > {MAX_ARTIFACT_BYTES})")
+    cur = conn.execute(
+        "INSERT INTO report_artifacts (run_id, kind, profile, window, generated_at, "
+        "format_version, validator_version, validator_ok, validator_reason, model, cost_usd, "
+        "content_sha256, body) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);",
+        (run_id, kind, profile, window, generated_at or _now(), format_version,
+         validator_version, 1 if validator_ok else 0, validator_reason, model, cost_usd,
+         hashlib.sha256(raw).hexdigest(), body),
+    )
+    conn.commit()
+    return int(cur.lastrowid)
+
+
+def get_report_artifact(conn: sqlite3.Connection, artifact_id: int) -> ReportArtifact | None:
+    row = conn.execute("SELECT * FROM report_artifacts WHERE id = ?;", (artifact_id,)).fetchone()
+    return ReportArtifact(**row) if row else None
+
+
+def latest_report_artifact(conn: sqlite3.Connection, *, kind: str | None = None) -> ReportArtifact | None:
+    if kind:
+        row = conn.execute("SELECT * FROM report_artifacts WHERE kind = ? "
+                           "ORDER BY id DESC LIMIT 1;", (kind,)).fetchone()
+    else:
+        row = conn.execute("SELECT * FROM report_artifacts ORDER BY id DESC LIMIT 1;").fetchone()
+    return ReportArtifact(**row) if row else None
+
+
+def list_report_artifacts(conn: sqlite3.Connection, *, kind: str | None = None,
+                          limit: int = 20) -> list[ReportArtifact]:
+    if kind:
+        rows = conn.execute("SELECT * FROM report_artifacts WHERE kind = ? "
+                            "ORDER BY id DESC LIMIT ?;", (kind, limit)).fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM report_artifacts ORDER BY id DESC LIMIT ?;",
+                            (limit,)).fetchall()
+    return [ReportArtifact(**r) for r in rows]
+
+
+def set_artifact_delivery(conn: sqlite3.Connection, artifact_id: int, status: str) -> None:
+    """The ONLY sanctioned mutation — delivery metadata around the immutable core."""
+    conn.execute("UPDATE report_artifacts SET delivery_status = ?, delivered_at = ? WHERE id = ?;",
+                 (status, _now(), artifact_id))
+    conn.commit()
+
+
+def set_artifact_delivery_by_hash(conn: sqlite3.Connection, content_sha256: str, status: str) -> bool:
+    """Mark the LATEST artifact with this exact content hash. Hash-keyed on purpose: delivery is
+    recorded against the precise bytes that were sent, never against 'whatever row is newest' —
+    the chain stays self-verifying end to end. Returns False when no artifact matches."""
+    cur = conn.execute(
+        "UPDATE report_artifacts SET delivery_status = ?, delivered_at = ? WHERE id = "
+        "(SELECT id FROM report_artifacts WHERE content_sha256 = ? ORDER BY id DESC LIMIT 1);",
+        (status, _now(), content_sha256))
+    conn.commit()
+    return cur.rowcount > 0

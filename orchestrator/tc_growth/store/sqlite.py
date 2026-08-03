@@ -11,7 +11,7 @@ from pathlib import Path
 
 from . import records, seed
 from .db import connect
-from .records import Case, Decision, Run
+from .records import Case, Decision, ReportArtifact, Run
 
 
 class SqliteStore:
@@ -64,6 +64,25 @@ class SqliteStore:
 
     def list_decisions(self, *, case_id: int | None = None, limit: int = 50) -> list[Decision]:
         return records.list_decisions(self._conn, case_id=case_id, limit=limit)
+
+    # -- report artifacts --
+    def persist_report_artifact(self, **kw) -> int:
+        return records.persist_report_artifact(self._conn, **kw)
+
+    def get_report_artifact(self, artifact_id: int) -> ReportArtifact | None:
+        return records.get_report_artifact(self._conn, artifact_id)
+
+    def latest_report_artifact(self, *, kind: str | None = None) -> ReportArtifact | None:
+        return records.latest_report_artifact(self._conn, kind=kind)
+
+    def list_report_artifacts(self, *, kind: str | None = None, limit: int = 20) -> list[ReportArtifact]:
+        return records.list_report_artifacts(self._conn, kind=kind, limit=limit)
+
+    def set_artifact_delivery(self, artifact_id: int, status: str) -> None:
+        records.set_artifact_delivery(self._conn, artifact_id, status)
+
+    def set_artifact_delivery_by_hash(self, content_sha256: str, status: str) -> bool:
+        return records.set_artifact_delivery_by_hash(self._conn, content_sha256, status)
 
     # -- lifecycle --
     def seed_incident_case(self) -> int:
