@@ -82,15 +82,16 @@ Codex). Rules, set before any second engineer joins:
 
 ## Reviewer access
 
-The reviewer (ChatGPT) reads uploads, not the live repository. To produce a review bundle, the
-owner runs from the repo root:
+The reviewer (ChatGPT) has READ access to the live repository via its GitHub connector (as of
+2026-08-03): commits, files, branch comparisons, PR review/comments, search. Fallback when the
+connector is unavailable — the owner uploads a bundle:
 
     git archive --format=zip -o /tmp/tc-review-bundle.zip HEAD docs project orchestrator
 
-and uploads the zip. The bundle IS the repo state at HEAD — no curation, no summarizing, no
-chat-memory dependence. The reviewer writes nothing directly: recommendations return through
-the owner, and changes land via the lead — recommendation → evidence → approval → execution,
-the same shape as the platform itself.
+**The reviewer holds no write authority, by its own recommendation and owner governance** —
+separation of duties is a strength of this model, not a workaround. Recommendations return
+through the owner; changes land via the lead — recommendation → evidence → approval →
+execution, the same shape as the platform itself.
 
 ## Deliberately NOT here
 
