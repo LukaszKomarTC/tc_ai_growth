@@ -1,6 +1,7 @@
 # WP-CONSOLE-USABILITY — the owner can operate the platform
 
-**Status: U1 + U2 ACCEPTED · U3a MERGED to main (f0e5a50), production convergence pending ·
+**Status: U1 + U2 ACCEPTED · U3a DEPLOYED to production 2026-08-03 (converged at d391247, 205
+on VPS, v2→v3 migration clean; live acceptance = Monday 08-10 artifact #1 hash-vs-email) ·
 next: U3b.** U3a review round (2026-08-03): approved after four conditions — rebase onto main,
 delivery bound to the artifact ROW (id identifies, hash verifies; twin-artifact regression
 proven), one-artifact-many-delivery-attempts (`report-redeliver`), 205 tests green. Immutability

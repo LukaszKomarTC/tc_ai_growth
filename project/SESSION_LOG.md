@@ -27,8 +27,10 @@ Completed
 
 - CI break on main (f0e5a50/7bab5ca): cross-test-module import failed CI's bare-pytest shape (passes python -m pytest locally + VPS). Fixed de3d8d7, CI green in 39s. New protocol rule: pusher verifies CI after every main push
 
+- U3a DEPLOYED: converged b6779cc→d391247, 205 on VPS, v2→v3 migration clean, ledger intact, timer armed. Artifact #1 lands Monday 08-10
+
 Current
-- U3a production convergence (owner block pending; expect de3d8d7); then U3b
+- U3b spec+build (no-routine-SSH criterion); Monday: verify artifact #1
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)

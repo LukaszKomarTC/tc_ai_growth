@@ -7,12 +7,10 @@ _Index, not authority (PROTOCOL.md). If this disagrees with git or the server, t
 - `main`: NOT pinned here — a file committed to `main` cannot pin `main`'s HEAD (the commit that
   updates the pin invalidates it; Codex caught the stale value on 2026-08-03). Authority:
   `git rev-parse origin/main`. Only deployment pins belong below.
-- Production app checkout (`/opt/tc_ai_growth/app`): `b6779cc` — verified: owner-run
-  `git rev-parse HEAD` in server terminal @ 2026-08-03. Drift vs main: main is ahead by commits
-  touching docs, /project, `deploy-console.sh`, `console.py`, and tests — but the scheduled
-  weekly-report path is UNCHANGED (verified @ 2026-08-03 10:5x UTC:
-  `git diff --quiet b6779cc HEAD -- …/report.py …/cli.py …/core …/store` → identical), and the
-  Console does not run from this checkout. Reconcile via controlled ff at next deploy round.
+- Production app checkout (`/opt/tc_ai_growth/app`): `d391247` — verified: owner-run
+  convergence @ 2026-08-03 ~19:40 UTC — ff b6779cc→d391247, 205 passed on the VPS, store
+  migrated v2→v3 (report_artifacts empty, ledger intact #25–27), Monday timer armed 08-10
+  05:00 UTC. Rollback marker: `backup/pre-u3a-b6779cc`.
 - Console release (tc-console): `ab9afa4` from `/opt/tc_ai_growth/releases/ab9afa4` — verified:
   deploy apply plan + owner in-browser confirmation @ 2026-08-03 ~17:40 UTC (Sign out working).
   Rollback: `releases/63448f3` retained (N-1 rule); `releases/d260726` removable
@@ -33,8 +31,8 @@ Nothing — engineering (U3a) and the owner's business queue proceed independent
 
 ## Next action
 
-1. Owner: run the U3a convergence block on the VPS (expect 205 passed).
-2. Claude: U3b spec + build (renders artifacts/cases/decisions; no-routine-SSH criterion).
+1. Claude: U3b spec + build (renders artifacts/cases/decisions; no-routine-SSH criterion).
+2. Monday 08-10: verify artifact #1 (hash vs email) — closes U3a's live acceptance.
 
 ## Standing constraints
 
