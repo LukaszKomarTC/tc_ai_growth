@@ -1,6 +1,21 @@
 # WP-CONSOLE-USABILITY — the owner can operate the platform
 
-**Status: SPEC v2 — review round adopted 2026-08-03; U1 authorized to proceed.** The platform has
+**Status: U1 ACCEPTED 2026-08-03 · U2 in progress.**
+
+**U1 acceptance record (owner-run, in-browser, 2026-08-03).** Deployed release `63448f3`
+(three dry-run/fix/redeploy rounds surfaced and fixed four truth defects: stale review-branch
+check + `TC_BUILD_COMMIT=unknown` provenance in the deploy script, stream death on silent
+operations U1-1, duplicate Evidence/Logs nav U1-2, per-release evidence store U1-3 — see
+WP-CONSOLE-ACCEPTANCE-LEDGER.md). Final sheet, all PASS: wrong token fails closed · sign-in with
+PRODUCTION badge · exactly two operations, no dead controls (OBS-1 closed by construction) ·
+SMTP test streams + emails · integrity scan survives its ~2-min quiet stretch on keepalives and
+resolves on-screen (`COMPLETED — CLEAN · evidence run#24 · 113s`) · Evidence tab opens the
+operation log reading the SHARED durable ledger (#23+, alongside weekly report runs) · Cases is
+a labeled placeholder · service restart keeps working (sessions survive restart by design —
+stateless signed cookies; only a redeploy/new-commit or token rotation invalidates; the
+acceptance script's "restart signs you out" expectation was wrong, not the system) · all judged
+in the owner's actual browsers on two machines. Open wording debt: scan card promises "each
+check streams as output" but a clean run is quiet by design — truth-polish alongside F6. The platform has
 proven it can run; this work package proves the owner can operate it. Scope is the reviewer's
 **conservative option** — the owner-facing operational minimum. WP-07/WP-08 production reads,
 FinOps, connectors, and role administration are explicitly **out** until this gate closes.
