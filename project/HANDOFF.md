@@ -19,22 +19,21 @@ _Index, not authority (PROTOCOL.md). If this disagrees with git or the server, t
 
 ## Current work
 
-**WP-CONSOLE-USABILITY, increment U2** (fixed HTTPS access for the Console).
-U1 ACCEPTED 2026-08-03 (record: docs/workpackages/WP-CONSOLE-USABILITY.md, commit f222f03).
-U2 plan delivered to owner and reviewer-endorsed: Plesk subdomain `ops.tossacycling.com` + TLS +
-transitional basic auth (retirement criteria in the WP spec) reverse-proxying loopback :8385,
-then token rotation (F4), then RUNBOOK-CONSOLE.md.
+**WP-CONSOLE-USABILITY, U2 essentially complete** (2026-08-03 evening):
+https://ops.tossacycling.com is LIVE — TLS (Let's Encrypt + 301), Apache basic auth (no nginx on
+this Plesk: rate-limit deviation recorded in the runbook), proxy to loopback :8385. Verified
+through the URL: SMTP test + full 114.9s integrity scan (evidence run#27). Token rotated (F4
+CLOSED). RUNBOOK-CONSOLE.md delivered. Remaining: one 5-min Console redeploy from main tip to
+ship the new Sign out button (last U2 checkbox), then U2 acceptance closes.
 
 ## Blocked on
 
-Owner executing U2 Phase A in Plesk (create subdomain + DNS + Let's Encrypt). Full phase list
-A–F is in the chat-delivered plan; the durable spec is WP-CONSOLE-USABILITY.md §U2.
+Nothing hard — U2-F is a 5-minute owner convenience; U3a can start regardless.
 
 ## Next action
 
-1. Owner: U2 Phase A–C (Plesk + two terminal commands), paste any Plesk error back.
-2. Claude: verify Phase D through the URL, guide token rotation (E), write RUNBOOK-CONSOLE.md (F).
-3. Then: U3a (immutable report artifact persistence) per WP-CONSOLE-USABILITY.md.
+1. Owner: 5-command Console redeploy (queue item U2-F) → Sign out visible → U2 CLOSED.
+2. Then: U3a (immutable report artifact persistence) per WP-CONSOLE-USABILITY.md.
 
 ## Standing constraints
 

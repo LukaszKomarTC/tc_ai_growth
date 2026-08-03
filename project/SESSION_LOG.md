@@ -15,11 +15,13 @@ Completed
 - Reviewer gained GitHub READ connector (no write, by design); CODEX-1 refined to Repository Auditor role with validation task: docs-only PR modernizing WP-CONSOLE-DEPLOYMENT.md
 - PR #67 (Codex): runbook modernized — lead-reviewed (193 green on branch), rebase-merged cd4623f. Full governed loop proven; CODEX-1 DECIDED. Found: shared GitHub identity blocks same-account approvals (recorded in PROTOCOL); new ops rule: retain N-1 release worktree until next successful deploy
 
+- U2 EXECUTED: ops.tossacycling.com live (IONOS DNS + Plesk subdomain + Let's Encrypt + Apache-only proxy — no nginx on box, rate-limit deviation recorded; htpasswd perms fix). Verified through URL: SMTP + 114.9s scan (run#27). Token rotated (F4 closed). Logout built + tested (194 green). RUNBOOK-CONSOLE.md written
+
 Current
-- U2 Phase A (owner-side Plesk work pending)
+- U2-F: one Console redeploy pending (ships Sign out) -> closes U2
 
 Blocked
-- U2 on owner availability at Plesk; business queue on owner (see OWNER_QUEUE.md)
+- Nothing hard; business queue on owner (see OWNER_QUEUE.md)
 
 Next
 - U2 A–F → runbook; then U3a artifact persistence

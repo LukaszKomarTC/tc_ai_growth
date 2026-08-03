@@ -236,7 +236,9 @@ def _shell(title: str, active: str, body: str, *, site_name: str, env_kind: str)
         "<!doctype html><html><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
         f"<title>{_e(title)} — TC Operations Console</title><style>{_STYLE}</style></head><body>"
-        f"<header><h1>TC Operations Console</h1><span class='env'>{_e(site_name)}</span>{badge}</header>"
+        f"<header><h1>TC Operations Console</h1><span class='env'>{_e(site_name)}</span>{badge}"
+        "<form method='post' action='/logout' style='margin-left:auto'>"
+        "<button class='ghost' type='submit'>Sign out</button></form></header>"
         f"<nav>{nav}</nav><main>{body}</main></body></html>"
     )
 
@@ -497,6 +499,16 @@ class _Handler(BaseHTTPRequestHandler):
         session = self._authed(secret)
         if session is None:
             self._json(401, {"error": "not authenticated"})
+            return
+
+        if path == "/logout":
+            # U2: explicit sign-out. Sessions are STATELESS signed cookies, so "logout" clears
+            # THIS browser's cookie; it cannot revoke a copied token server-side (that's what
+            # token rotation / service restart-on-redeploy are for — documented in the runbook).
+            # No CSRF required: a forged logout can only sign the victim out, never in.
+            expired = f"{_SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0"
+            self._headers(303, "text/html; charset=utf-8",
+                          extra=[("Location", "/"), ("Set-Cookie", expired)], body_len=0)
             return
 
         if path == "/api/execute":

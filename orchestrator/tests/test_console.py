@@ -217,3 +217,39 @@ def test_nav_has_one_tab_per_destination():
     page = console._shell("t", "operations", "x", site_name="TC", env_kind="staging")
     assert page.count('href="/logs"') == 1
     assert ">Evidence<" in page and ">Logs<" not in page
+
+
+def test_logout_clears_session_cookie_and_signs_out(monkeypatch):
+    """U2: the Sign out button POSTs /logout — cookie expired, redirected to login, and the
+    cleared browser no longer reaches authed pages. (Stateless sessions: logout clears THIS
+    browser; server-side revocation is token rotation, per the runbook.)"""
+    import threading as _th
+    import urllib.request
+    import urllib.error
+    import http.cookiejar
+    from http.server import ThreadingHTTPServer
+
+    monkeypatch.setenv(console._TOKEN_ENV, "logout-test-token")
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), console._Handler)
+    port = httpd.server_address[1]
+    t = _th.Thread(target=httpd.serve_forever, daemon=True)
+    t.start()
+    try:
+        base = f"http://127.0.0.1:{port}"
+        cj = http.cookiejar.CookieJar()
+        opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
+        # login
+        opener.open(urllib.request.Request(f"{base}/login", data=b"token=logout-test-token",
+                                           method="POST"))
+        assert any(c.name == console._SESSION_COOKIE for c in cj)
+        # authed page renders the Sign out control
+        page = opener.open(f"{base}/").read().decode()
+        assert "Sign out" in page and "/logout" in page
+        # logout expires the cookie (Max-Age=0 -> jar drops it) and redirects to /
+        opener.open(urllib.request.Request(f"{base}/logout", data=b"", method="POST"))
+        assert not any(c.name == console._SESSION_COOKIE for c in cj)
+        # and the browser is back at the login page
+        page = opener.open(f"{base}/").read().decode()
+        assert "Sign in" in page and "Sign out" not in page
+    finally:
+        httpd.shutdown()
