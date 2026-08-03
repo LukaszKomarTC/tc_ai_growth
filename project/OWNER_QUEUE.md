@@ -12,6 +12,7 @@ objects (PROTOCOL.md, Phase 2). Pointers, not copies — evidence lives where it
 | D#10 | High | Approve + publish bilingual SEO title/meta for `/salidas_guiadas-listado` (post 48284) | Weekly report 2026-08-03 §1c Opp 2 (pos 4.1, CTR 0.75%); draft queued | Approve | 2026-08-01 | waiting |
 | D#11 | Medium | Resolve tracking case TRK-20260706-050158 | Weekly report 2026-08-03 §3d: ~20 GA4 conv / ~€2,426 first clean window; needs WP-admin order-count cross-check 2026-07-08→08-03 | Cross-check, then resolve | 2026-08-02 | waiting |
 | U2-A | High | Execute U2 Phase A–C in Plesk (create `ops.tossacycling.com`, DNS, TLS, proxy directives) | WP-CONSOLE-USABILITY.md §U2; phase plan delivered 2026-08-03 | Run when at a computer with Plesk access | 2026-08-03 | waiting |
+| CODEX-1 | Low | Decide whether to onboard Codex as a repository-native engineer | project/PROTOCOL.md §Multiple engineers (guardrails pre-agreed: branch+PR only, no main pushes, no deployment, narrow earned starter scope) | Yes, under those guardrails — useful for small fixes/tests/PR prep; no urgency, U2/U3 don't depend on it | 2026-08-03 | waiting |
 
 ## Decided (index — details live at the pointer)
 

@@ -52,8 +52,42 @@ indexes pointing at authority, never restatements of it.
 4. **Update on milestones, not session end.** Sessions die abruptly (context exhaustion is a
    first-class failure mode with direct evidence). Journal before the crash: update HANDOFF and
    SESSION_LOG at every commit/deploy/acceptance, not "when finished."
-5. **Session ritual.** Start: read HANDOFF.md, OWNER_QUEUE.md, tail of SESSION_LOG.md. End (or
-   milestone): update them. The reviewer reads the same three files — nobody needs the chat.
+5. **Session ritual.** Start: read HANDOFF.md, OWNER_QUEUE.md, tail of SESSION_LOG.md (and know
+   docs/STANDING-CAUTIONS.md exists). End (or milestone): update them. The reviewer reads the
+   same files — nobody needs the chat.
+6. **Chat is not canon.** The moment any participant relies on a load-bearing fact that exists
+   only in conversation, it gets recorded in the repository — continuously absorbed, not
+   bulk-exported. (Proven necessary 2026-08-03: the DO_NOT_RESTORE compromised-backup warning
+   lived only in chat until a grep showed the repo had never heard of it.) Permanent dangers go
+   to docs/STANDING-CAUTIONS.md; decisions to their work package; state to HANDOFF.
+
+## Multiple engineers
+
+The repository can host more engineers than the lead (e.g. a repository-native assistant such as
+Codex). Rules, set before any second engineer joins:
+
+- **Any engineer beyond the lead works on branches and opens PRs — never pushes `main`.** Merges
+  to `main` are executed by the lead after the full test suite is green, or by the owner.
+- **Deployment is excluded** from additional engineers entirely: server actions remain
+  owner-run under lead-prepared, reviewed plans. Nothing about the deploy discipline changes.
+- New engineers start with a **narrow earned scope** (small fixes, tests, docs, PR preparation)
+  and expand only through accepted work — capability is earned by acceptance here, same as for
+  the platform's own operations.
+- Every engineer follows this protocol's session ritual; the /project files are how engineers
+  who cannot see each other's conversations coordinate.
+- Roles are added to the table above when a participant actually joins, not speculatively.
+
+## Reviewer access
+
+The reviewer (ChatGPT) reads uploads, not the live repository. To produce a review bundle, the
+owner runs from the repo root:
+
+    git archive --format=zip -o /tmp/tc-review-bundle.zip HEAD docs project orchestrator
+
+and uploads the zip. The bundle IS the repo state at HEAD — no curation, no summarizing, no
+chat-memory dependence. The reviewer writes nothing directly: recommendations return through
+the owner, and changes land via the lead — recommendation → evidence → approval → execution,
+the same shape as the platform itself.
 
 ## Deliberately NOT here
 

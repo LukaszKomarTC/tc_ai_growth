@@ -34,6 +34,7 @@ A–F is in the chat-delivered plan; the durable spec is WP-CONSOLE-USABILITY.md
 ## Standing constraints
 
 Autodeploy DISABLED by decision · manual deliberate deploys only · all server Git as `tcgrowth`
-(D5) · owner is release authority · see PRODUCTION_BASELINE_V1.md for the baseline reference
+(D5) · owner is release authority · permanent dangers in docs/STANDING-CAUTIONS.md (incl. the
+DO_NOT_RESTORE compromised backup) · see PRODUCTION_BASELINE_V1.md for the baseline reference
 (note: its commit pins predate today's Console release — the baseline records the 2026-08-02
 state by design).

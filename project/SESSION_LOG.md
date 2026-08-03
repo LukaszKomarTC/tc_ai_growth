@@ -9,7 +9,8 @@ Completed
 - Deploy-script provenance fix (d260726) — found by U1 dry-run
 - Console U1 fix round (63448f3): stream keepalive, nav truth, durable evidence store (TC_DB_PATH)
 - Console redeployed twice (d260726 → 63448f3), U1 ACCEPTED in-browser (f222f03; evidence run#24)
-- /project protocol adopted and seeded (this commit)
+- /project protocol adopted and seeded (19ef4b1)
+- Protocol v1.1: chat-is-not-canon invariant, multi-engineer rules, reviewer bundles; docs/STANDING-CAUTIONS.md created (DO_NOT_RESTORE backup warning was chat-only until now)
 
 Current
 - U2 Phase A (owner-side Plesk work pending)
