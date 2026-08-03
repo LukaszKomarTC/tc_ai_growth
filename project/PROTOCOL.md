@@ -79,6 +79,10 @@ Codex). Rules, set before any second engineer joins:
 
 - **Any engineer beyond the lead works on branches and opens PRs — never pushes `main`.** Merges
   to `main` are executed by the lead after the full test suite is green, or by the owner.
+- **Every push to `main` is verified against CI** (.github/workflows/ci.yml) by whoever pushed —
+  green locally is not green, because invocation shapes differ (learned 2026-08-03: a
+  cwd-dependent test import passed `python -m pytest` locally and on the VPS but failed CI's
+  bare `pytest`; the owner learned of the break from failure emails before the lead did).
 - **Deployment is excluded** from additional engineers entirely: server actions remain
   owner-run under lead-prepared, reviewed plans. Nothing about the deploy discipline changes.
 - New engineers start with a **narrow earned scope** (small fixes, tests, docs, PR preparation)

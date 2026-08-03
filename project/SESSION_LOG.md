@@ -25,8 +25,10 @@ Completed
 
 - U3a review: 2 findings (stale branch base; hash-only delivery ambiguity on twin bodies) — both fixed (rebase; ArtifactBody id-binding, fail-closed mismatch, twin regression tests; report-redeliver). 205 green. AUTHORIZED + MERGED f0e5a50
 
+- CI break on main (f0e5a50/7bab5ca): cross-test-module import failed CI's bare-pytest shape (passes python -m pytest locally + VPS). Fixed de3d8d7, CI green in 39s. New protocol rule: pusher verifies CI after every main push
+
 Current
-- U3a production convergence (owner block pending); then U3b (hard criterion: no routine owner SSH)
+- U3a production convergence (owner block pending; expect de3d8d7); then U3b
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)
