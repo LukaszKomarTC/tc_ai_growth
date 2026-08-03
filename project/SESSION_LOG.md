@@ -33,8 +33,10 @@ Completed
 
 - U3b reviewer criteria recorded: behavioral capstone (Gmail-vs-Console on Monday), homepage checklist, anti-report rule, standing manual-elimination product bar. U3B-1 queued for owner authorization
 
+- U3b reviewer-authorized; U4 opening requirement recorded (U3b=what needs attention, U4=why approve; evidence+impact before controls) + post-Monday owner-behavior instrumentation note. Merge held for OWNER word (reviewer input ≠ authorization)
+
 Current
-- U3B-1 awaiting owner; Monday: verify artifact #1
+- U3B-1 awaiting owner word; Monday: verify artifact #1
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)

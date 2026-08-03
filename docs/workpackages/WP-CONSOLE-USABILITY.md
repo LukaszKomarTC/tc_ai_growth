@@ -186,6 +186,18 @@ would hide the mixed-source reality and invite trusting staging Woo data as prod
 
 ## U4 — Controlled decision workflow (capstone)
 
+**Opening requirement (reviewer, 2026-08-03, from U3b's honestly-flagged weakest item):**
+U3b answers *"what needs my attention?"* — U4 answers *"why should I approve this?"* Every
+queued decision renders its evidence, reasoning, and (where estimable) revenue impact BEFORE
+the approve/reject controls. A decision without visible "why" is not approvable. Reviewer
+sketch adopted as target UX: report ready → N recommendations → [Approve] [Reject] [explain] →
+connector applies → evidence stored → decision disappears.
+
+**Post-Monday addition (if U3b's behavioral capstone passes):** instrument the homepage with
+owner-behavior signals only — first page opened, time-to-report, decision actions, whether the
+report is opened at all (everything-visible = success, not failure). Purpose: learn which
+homepage parts earn their place and which are decoration. No vanity analytics.
+
 Approve / reject / defer a supported decision from the browser, routed through the
 origin-agnostic Execution Service like any operation — server-side phase/approval/environment
 enforcement, evidence recorded, result visible (gate items 6–8).
