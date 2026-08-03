@@ -56,8 +56,11 @@ UNIT="/etc/systemd/system/tc-console.service"
 # inspector through ONE narrowly-scoped sudo rule: exactly this root-owned script, ZERO arguments,
 # nothing else. Installed below as a validated sudoers.d drop-in; shown in the plan.
 SUDOERS_FILE="/etc/sudoers.d/tc-console-scan"
-RELEASE_BRANCH="${TC_RELEASE_BRANCH:-feature/operations-console}"  # reviewed branch for identity check
-RELEASE_COMMIT="${TC_BUILD_COMMIT:-$(git -C "$APP_DIR/.." rev-parse --short HEAD 2>/dev/null || echo unknown)}"
+RELEASE_BRANCH="${TC_RELEASE_BRANCH:-main}"  # reviewed branch for identity check (main since the Console merge)
+# RELEASE_COMMIT is resolved AFTER the owner-run git wrapper (rgit) exists — a plain root git here
+# hits dubious-ownership on the tcgrowth-owned checkout and silently pinned "unknown" into
+# TC_BUILD_COMMIT, poisoning evidence provenance. Env override wins; otherwise derived = GIT_SHA.
+RELEASE_COMMIT="${TC_BUILD_COMMIT:-}"
 
 APPLY=0; ROLLBACK=0
 case "${1:-}" in
@@ -171,6 +174,10 @@ rgit(){ if [ "$(id -u)" -eq 0 ] && [ "$REPO_OWNER" != "root" ]; then
         fi; }
 GIT_BRANCH="$(rgit rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
 GIT_SHA="$(rgit rev-parse HEAD 2>/dev/null || echo unknown)"
+# Pin the source commit from the same owner-run identity check the plan displays (unless the
+# operator overrode it via TC_BUILD_COMMIT). "unknown" is now impossible when the checkout is
+# readable — and an unreadable checkout fails the identity fields visibly right above.
+RELEASE_COMMIT="${RELEASE_COMMIT:-$GIT_SHA}"
 if [ -z "$(rgit status --porcelain 2>/dev/null)" ]; then TREE_STATE="clean"; else TREE_STATE="DIRTY"; fi
 REMOTE_STATE="not checked (no network / no upstream)"
 CHECK_BRANCH="$GIT_BRANCH"
