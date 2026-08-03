@@ -7,10 +7,6 @@ objects (PROTOCOL.md, Phase 2). Pointers, not copies — evidence lives where it
 
 | ID | Priority | Decision / action | Evidence | Recommendation | Waiting since | Status |
 |---|---|---|---|---|---|---|
-| D#9 | High | Approve + publish bilingual SEO title/meta for `/alquiler_bicicletas` (post 13699) | Weekly report 2026-08-03 §1c Opp 1 (1,502 impressions, pos 14.9); draft queued in platform | Approve — but run P3-ES first (below) so new traffic lands on a working funnel | 2026-08-01 | waiting |
-| P3-ES | High | Verify the Spanish booking journey end-to-end (rental page → calendar → add-to-cart → checkout, ES locale) | Weekly report 2026-08-03 §3d: 56 ES organic sessions → 0 conversions vs EN ~9% | Do before D#9 publish; ~30 min in WP/storefront | 2026-08-03 | waiting |
-| D#10 | High | Approve + publish bilingual SEO title/meta for `/salidas_guiadas-listado` (post 48284) | Weekly report 2026-08-03 §1c Opp 2 (pos 4.1, CTR 0.75%); draft queued | Approve | 2026-08-01 | waiting |
-| D#11 | Medium | Resolve tracking case TRK-20260706-050158 | Weekly report 2026-08-03 §3d: ~20 GA4 conv / ~€2,426 first clean window; needs WP-admin order-count cross-check 2026-07-08→08-03 | Cross-check, then resolve | 2026-08-02 | waiting |
 
 ## Decided (index — details live at the pointer)
 
@@ -22,3 +18,7 @@ objects (PROTOCOL.md, Phase 2). Pointers, not copies — evidence lives where it
 | CODEX-1 | Codex onboarded as Repository Auditor | PR #67 (audit → docs-only PR → lead review → rebase merge cd4623f); project/PROTOCOL.md §Roles |
 | U2-A | ops.tossacycling.com live: TLS + basic auth + Apache proxy to loopback Console; SMTP + 114.9s integrity scan streamed through it (evidence run#27); token rotated (F4 closed) | docs/RUNBOOK-CONSOLE.md; WP-CONSOLE-USABILITY.md §U2 |
 | U2 | U2 ACCEPTED — Sign out deployed (Console release ab9afa4) and verified in-browser | WP-CONSOLE-USABILITY.md §U2 acceptance record |
+| D#9 | Executed: bilingual title/meta live on /alquiler_bicicletas (ES+EN, lead-verified by fetch) | docs/decisions/2026-08-D9-D10-D11.md |
+| D#10 | Executed: bilingual title/meta live on /salidas_guiadas-listado (ES+EN, lead-verified) | docs/decisions/2026-08-D9-D10-D11.md |
+| P3-ES | Closed on business evidence: real ES orders/bookings arriving; page-level rate stays under weekly monitoring | docs/decisions/2026-08-D9-D10-D11.md |
+| D#11 | Closed, REVISED rationale: GA4 pipeline operational; WooCommerce = order/revenue truth, GA4 = attribution (93 orders / €11,604 net in window ≠ mismatch) | docs/decisions/2026-08-D9-D10-D11.md |
