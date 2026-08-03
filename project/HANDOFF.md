@@ -4,10 +4,15 @@ _Index, not authority (PROTOCOL.md). If this disagrees with git or the server, t
 
 ## Commits
 
-- `main`: `f222f03` — verified: `git rev-parse HEAD` → f222f03 @ 2026-08-03 10:08 UTC
+- `main`: NOT pinned here — a file committed to `main` cannot pin `main`'s HEAD (the commit that
+  updates the pin invalidates it; Codex caught the stale value on 2026-08-03). Authority:
+  `git rev-parse origin/main`. Only deployment pins belong below.
 - Production app checkout (`/opt/tc_ai_growth/app`): `b6779cc` — verified: owner-run
-  `git rev-parse HEAD` in server terminal @ 2026-08-03 (STEP 3b convergence; main is 3 doc-only
-  commits ahead — no runtime difference, reconciles at next touch)
+  `git rev-parse HEAD` in server terminal @ 2026-08-03. Drift vs main: main is ahead by commits
+  touching docs, /project, `deploy-console.sh`, `console.py`, and tests — but the scheduled
+  weekly-report path is UNCHANGED (verified @ 2026-08-03 10:5x UTC:
+  `git diff --quiet b6779cc HEAD -- …/report.py …/cli.py …/core …/store` → identical), and the
+  Console does not run from this checkout. Reconcile via controlled ff at next deploy round.
 - Console release (tc-console): `63448f3` from `/opt/tc_ai_growth/releases/63448f3` — verified:
   deploy apply output + health check HTTP 200 @ 2026-08-03 ~09:33 UTC; U1 acceptance in-browser
   (evidence run#24)

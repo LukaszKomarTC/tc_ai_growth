@@ -46,7 +46,10 @@ indexes pointing at authority, never restatements of it.
    elsewhere — it points (commit, run #, doc path, PR).
 2. **Live values are verified, not remembered.** Any branch/commit/deployment value carries how
    it was checked and when: `verified: <command> → <result> @ <UTC timestamp>`. A value without a
-   verification note is a claim, not a fact.
+   verification note is a claim, not a fact. Corollary (Codex finding, 2026-08-03): never record
+   a value that the act of recording invalidates — a file committed to `main` cannot pin `main`'s
+   HEAD; point at the authority (`git rev-parse origin/main`) instead. Pin only values that
+   change through OTHER events (deployed releases, server checkouts).
 3. **Every substantive claim is traceable** — one pointer to its evidence, enough for any future
    reader (human or AI) to navigate to the source.
 4. **Update on milestones, not session end.** Sessions die abruptly (context exhaustion is a
