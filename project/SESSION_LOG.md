@@ -79,8 +79,12 @@ Completed
 
 - U4a closeout progress: VPS suite 262 passed (criterion 3 closed); EN homepage VERIFIED LIVE on re-fetch (was page cache) — BOTH languages of D#12's change now live; owner ran the /etc/tc-console.env persist fix + restart (badge/writes re-check pending owner refresh). Hosts .env line mangled a SECOND time by the owner's chat client (renders www URLs as markdown links even in code blocks) — new fix avoids contiguous www.host text; TARGET_ENVIRONMENTS line also duplicated (dedupe in same fix)
 
+- U4a closeout confirmed by owner: badge PRODUCTION + writes Disabled restored (env persist works across releases now); D#13 (as-applied content) APPROVED in browser; D#12 unapproved→REJECTED "superseded" — unapprove and reject controls exercised live. Record now matches live content. Hosts-line hygiene fix output still unpasted (non-blocking: valid first entry carried every proposal)
+
+- Reviewer post-merge finding on #71 (under AGENTS.md header): NO decision-history view — approved/rejected decisions vanish from homepage (proposed-only queue), reachable only by remembered URL; Unapprove effectively undiscoverable. "Real UX defect… fix promptly before U4a is called fully closed." U4a.1 build begins: /decisions destination (all statuses, filterable), nav tab, post-action history link
+
 Current
-- U4a closeout: hosts-line python fix, badge/writes confirmation, D#13 supersede (as-applied content) + D#12 retire. Monday: artifact #1 + capstone
+- U4a.1 (decision history view) build → PR → review → owner merge → console redeploy. Monday: artifact #1 + capstone
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)
