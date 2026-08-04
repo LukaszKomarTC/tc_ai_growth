@@ -343,7 +343,7 @@ def verification_section(decision, *, csrf: str, verifiable: bool, pending=None,
 
 
 def comparison_section(decision, *, csrf: str, comparison=None, snapshot=None,
-                       adoptable: bool = False) -> str:
+                       adoptable: bool = False, snapshot_token: str | None = None) -> str:
     """Current-vs-proposed, read-only (U4c item 2). Loaded ON DEMAND (`?live=1`) rather than on
     every page view: it performs real fetches, and a detail page must not silently hammer the
     site each time it is opened. Values carry the fetch timestamp; a page that could not be read
@@ -386,15 +386,17 @@ def comparison_section(decision, *, csrf: str, comparison=None, snapshot=None,
              f"{_e((snapshot or {}).get('fetched_at', '—'))} · "
              f"<a href='/decision/{d.id}?live=1'>re-read</a></div>")
     adopt = ""
-    if adoptable and differing and not unreadable:
+    if adoptable and differing and not unreadable and snapshot_token:
         adopt = (
             f"<form method='post' action='/decision/{d.id}/adopt-live' style='margin-top:10px'>"
             f"<input type='hidden' name='csrf' value='{_e(csrf)}'>"
             f"<input type='hidden' name='revision' value='{d.revision}'>"
+            f"<input type='hidden' name='snapshot' value='{_e(snapshot_token)}'>"
             "<button class='ghost' type='submit'>Adopt live content as a new proposal</button>"
             "<div class='muted' style='margin-top:4px'>Creates a NEW decision in "
-            "<b>proposed</b>, carrying the live values and their provenance. This decision is "
-            "not changed, approved, or closed.</div></form>")
+            "<b>proposed</b>, carrying exactly the values shown above and their provenance. "
+            "If the pages change before you click, the adopt is refused and you compare again. "
+            "This decision is not changed, approved, or closed.</div></form>")
     return _section("Compare with the live pages", head + "".join(rows) + stamp + adopt)
 
 
@@ -536,7 +538,8 @@ def decisions_body(store, *, status: str = "all") -> str:
 
 def decision_body(decision, events, *, csrf: str, notice: str = "", error: str = "",
                   verifiable: bool = False, pending=None, wait_s: int = 0,
-                  attempts=(), comparison=None, snapshot=None) -> str:
+                  attempts=(), comparison=None, snapshot=None,
+                  snapshot_token: str | None = None) -> str:
     """The decision detail page (/decision/<id>) — why approve, what exactly changes, then the
     technical trail. U4b adds the Verify-live-change section (approved decisions) and the
     append-only verification-attempt evidence."""
@@ -595,7 +598,8 @@ def decision_body(decision, events, *, csrf: str, notice: str = "", error: str =
 
     compare = comparison_section(d, csrf=csrf, comparison=comparison, snapshot=snapshot,
                                  adoptable=verifiable and d.status in ("proposed", "approved",
-                                                                      "rejected", "executed"))
+                                                                      "rejected", "executed"),
+                                 snapshot_token=snapshot_token)
     verify = verification_section(d, csrf=csrf, verifiable=verifiable, pending=pending,
                                   wait_s=wait_s)
     failure = last_verify_failure_callout(d, attempts)
