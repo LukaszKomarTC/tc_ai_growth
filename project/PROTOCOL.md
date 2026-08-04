@@ -58,6 +58,15 @@ indexes pointing at authority, never restatements of it.
    a value that the act of recording invalidates — a file committed to `main` cannot pin `main`'s
    HEAD; point at the authority (`git rev-parse origin/main`) instead. Pin only values that
    change through OTHER events (deployed releases, server checkouts).
+   **Corollary — store-backed state (reviewer finding, 2026-08-04, earned the hard way):** when
+   a durable ledger exists, NO closure, handoff, or acceptance claim about its objects may be
+   written from chat memory or UI recollection. The lead recorded a D#12 rejection that never
+   happened; the decision sat back in the owner's queue for ~13h until `decision_events` (5 rows
+   where 6 were claimed) exposed it. Rules now: every acceptance/closure record cites the
+   object's current status AND its event sequence from the store; claimed event counts must
+   match the ledger exactly; queue/handoff records are re-checked after every approve,
+   unapprove, reject, verify and execute; any chat-vs-store discrepancy is corrected
+   EXPLICITLY in the record, never silently overwritten.
 3. **Every substantive claim is traceable** — one pointer to its evidence, enough for any future
    reader (human or AI) to navigate to the source.
 4. **Update on milestones, not session end.** Sessions die abruptly (context exhaustion is a
@@ -104,9 +113,14 @@ Honest per-agent capabilities (2026-08-03):
 
 - **Claude (lead):** reads the live repo on demand (commits, PRs, diffs, reviews — no uploads);
   can **subscribe to a specific PR**, after which comments/reviews/CI on that PR arrive as
-  events into its session — a real push channel, used for active review loops. **PRs only:
-  issue threads cannot wake the lead** (no subscription mechanism) — so anything needing the
-  lead's automatic reaction goes on a PR; issues are charters, read when nudged.
+  events into its session — a real push channel, used for active review loops. **OPEN PRs only:
+  issue threads cannot wake the lead** (no subscription mechanism), **and merging a PR
+  auto-unsubscribes it** — guidance posted to a closed thread is invisible until someone nudges
+  (proven 2026-08-04: reviewer UX guidance sat unread ~17h on merged #69). Therefore:
+  **closed PRs are historical records, not coordination channels.** Cross-increment guidance
+  goes on the currently OPEN implementation PR, or on a new open issue that the PR references;
+  and every implementation PR carries the COMPLETE acceptance scope for its increment, even
+  when earlier architectural discussion lives elsewhere.
 - **Codex (auditor):** repository-native read; acts when invoked; reports via PR/commits.
 - **ChatGPT (reviewer):** GitHub read connector when invoked; **no background worker** (its own
   statement) — it participates when the owner opens the conversation or, later, when the
