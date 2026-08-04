@@ -22,41 +22,108 @@ acceptance checks this table row by row, like U1's button inventory.
 
 ## Schema (store v4 — additive migration, same pattern as v3)
 
-`decisions` gains: `kind` (e.g. `seo_meta_update` — selects the apply/verify path) ·
-`payload` (the EXACT actionable content, e.g. JSON `{post_id, title_es, meta_es, title_en,
-meta_en}`) · `content_sha256` (hash of payload — what approval binds to) · `evidence` (pointers +
-key numbers: report artifact id, GSC figures) · `impact` (estimate, honestly labeled as
-estimate) · `confidence` (label) · `approved_at/by` · `executed_at` · `execution_evidence`
-(run/artifact ref). All nullable; legacy decisions render as today (title+rationale) and are
-NOT approvable via U4 controls (no payload = nothing to bind to — visible, with that reason).
+**Approval binds to a target-bound ENVELOPE, not bare payload bytes** (review #69 pt 1): an
+identical SEO payload approved for the wrong site/profile must be impossible by construction.
+
+```json
+{"schema_version": "u4/1",
+ "profile": "<site profile id>",
+ "environment": "staging|production",
+ "kind": "seo_meta_update",
+ "target": {"object_type": "wp_post", "post_id": 13699,
+            "expected_urls": {"es": "https://…/alquiler_bicicletas/",
+                              "en": "https://…/en/alquiler_bicicletas/"}},
+ "payload": {"title_es": "…", "meta_es": "…", "title_en": "…", "meta_en": "…"}}
+```
+
+**Canonical serialization (pt 2), pinned:** `envelope_sha256 = sha256(json.dumps(envelope,
+sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))` — UTF-8, stable
+key order, no insignificant whitespace, `schema_version` inside the hashed bytes. Same logical
+envelope always hashes identically; any material change (including target or environment) never
+does. A canonicalization unit test with byte-exact fixtures ships with U4a.
+
+`decisions` gains: `kind` · `envelope` (canonical JSON text) · `envelope_sha256` · `revision`
+(INTEGER, optimistic concurrency) · `evidence` · `impact` · `confidence` (both structured — see
+provenance below) · `approved_at/by` · `executed_at` · `execution_evidence`. All nullable;
+legacy decisions render as today and are NOT approvable via U4 controls (no envelope = nothing
+to bind to — visible, with that reason).
+
+**Impact/confidence carry provenance (pt 6)** — structured, never a bare number:
+`{"value": "+200–500 visits/mo", "label": "estimate", "method": "GSC position/CTR heuristic",
+"source": "report artifact #N", "as_of": "2026-08-03"}`. The UI renders the `estimate` label
+visibly; a missing field renders **unknown** — unknown beats invented precision.
+
+`report_artifacts` gains nullable `recommendations_count` (pt 7): best-effort parse at persist
+time; parse failure stores NULL and renders **"unknown"**, never zero; it can never affect
+report validity or the validator. Structured recommendation metadata at generation time is the
+better long-term source — recorded as a candidate improvement, introduced only via its own
+reviewed change to the generation path.
 
 `report_artifacts` gains nullable `recommendations_count` (best-effort parse of the Recommended
 Actions section at persist time) — feeds the business-review homepage block.
 
-## Approval semantics (constitutional, from the WP + charter)
+## Approval semantics + state machine (constitutional; review #69 pts 1–4, 9)
 
-1. **Content-bound:** Approve records `content_sha256` of the exact payload. Any payload edit
-   reverts status to `proposed` and voids the approval (storage-layer guard, v3-trigger style:
-   payload/hash immutable while status is `approved` — change requires un-approval first).
-2. **Approve ≠ execute:** two separate recorded events, two separate controls. Execute is
-   enabled only while stored hash == approved hash.
-3. **Approvable = accepted path exists:** only `kind`s with a registered verify/apply path show
-   enabled controls; everything else renders visible-but-disabled with the reason.
-4. **Every act is logged** as a run (actor=human, decision id, hashes) — approvals are
-   governance evidence like everything else.
+**Allowed transitions — exhaustive; anything not listed is refused loudly:**
 
-## Execution + verification (the U4b loop)
+| From | Action | To | Notes |
+|---|---|---|---|
+| proposed | approve | approved | records envelope_sha256, approved_at/by; requires confirmation step |
+| proposed | reject (reason required) | rejected | reason stored |
+| approved | unapprove | proposed | explicit human act; approval fields cleared |
+| approved | envelope edit | proposed | automatic void: storage guard refuses envelope/hash change while approved — edit requires unapprove first (v3-trigger style) |
+| approved | verify/apply FAILED | approved | attempt recorded with evidence; decision does NOT close |
+| approved | verify/apply SUCCESS | executed | executed_at + execution_evidence stored; leaves the queue |
+| rejected | re-propose | proposed | new revision; new envelope allowed |
+| executed | (terminal) | — | immutable outcome; corrections are NEW decisions |
 
-For `seo_meta_update` (the first and only kind in U4):
+**Concurrency (pt 3):** every mutation carries the expected `revision`; a mismatch fails
+visibly (stale-tab guard), never silently merges. Mutations are idempotent where safe (approve
+of an already-approved identical hash = no-op success) and loud everywhere else.
 
-- **Staging decisions:** Execute runs the existing accepted connector apply (staging-only, D#7
-  intact) through the Execution Service, then verifies.
-- **Production decisions (D#9-class):** Execute is a *verification* act — a read-only registry
-  operation `verify_decision_execution` fetches the live page(s), compares title/meta against
-  the approved payload (normalized), and on match marks executed + stores the evidence (URLs,
-  matched values, fetch hash). On mismatch: honest failure, decision stays approved-not-executed.
-  This makes "owner applies in WP, platform closes the loop" a verified workflow instead of a
-  trust-me workflow — and it is exactly what the lead did by hand for D#9/D#10 this week.
+**Authority + audit identity (pt 9):** the Console is single-operator by design today — actor
+is recorded as `owner` with the session-issued timestamp and decision revision in every audit
+row. Approve requires an explicit confirmation step (two clicks); reject requires a reason.
+When the U2 basic-auth retirement lands a named Console login, the actor field carries the
+username with no schema change. Until then, "who approved" is unambiguous because exactly one
+human holds the token — and that assumption is written here so the retirement review must
+revisit it.
+
+**Approvable = registered path exists:** only `kind`s with a registered verify/apply path show
+enabled controls; everything else renders visible-but-disabled with the reason. Every act is
+logged as a run — approvals are governance evidence like everything else.
+
+## Verification + apply (the U4b loop)
+
+**Control naming (pt 4):** production decisions get a **"Verify live change"** control — the
+platform is NOT executing anything there; the owner edits WP, the platform verifies and closes.
+"Apply" appears only where the platform genuinely applies (staging, once its dependency below
+is met). No control may overstate its authority.
+
+**Verification semantics for `seo_meta_update` (pt 5), exact and fail-closed:**
+
+- Fetches BOTH `target.expected_urls` (ES and EN — each language variant is its own URL under
+  the site's qTranslate routing; language-correct values must appear on their own URL).
+- Requirements per URL: final HTTP 200; redirect chain permitted only if the FINAL URL equals
+  the expected canonical; the page's `<link rel=canonical>` must equal the expected URL.
+- Comparison: `<title>` and `meta[name=description]` vs the approved payload — Unicode NFC
+  normalization, whitespace collapsed, then exact match.
+- Cache policy: requests sent with cache-bypassing headers; **two consistent reads ≥ 60s apart**
+  are required before marking executed (a cached page must not close a decision).
+- Evidence stored either way: both URLs, final status/redirect chains, fetched title/meta
+  verbatim, response body hashes, timestamps of both reads.
+- **Fail-closed:** ALL languages must match on BOTH reads. One language matching is a MISMATCH —
+  recorded, surfaced, decision stays approved-not-executed. This workflow is exactly what the
+  lead did by hand for D#9/D#10, now with rules instead of judgment.
+
+**Staging apply is a DEPENDENCY, not an available path (pt 8 — corrected from spec v1).**
+Verified on current `main`: the connector path exists as phase-gated TOOLS
+(`wp_create_seo_draft` @ Phase.DRAFTS; `publish_seo_draft` @ Phase.CONTROLLED_EXECUTION,
+ALWAYS_ASK — `core/approval.py:44,50`), NOT as an Action Registry operation, and the Console
+runs READ_ONLY. Registering an apply operation (with environment=staging binding, ALWAYS_ASK
+confirmation flow, and its own acceptance) is a distinct dependency milestone. **U4 therefore
+ships production-verify first (U4b); staging Apply arrives only when its dependency passes
+acceptance** — the workflow needs no redesign either way.
 
 ## UI (U4a + U4c)
 
