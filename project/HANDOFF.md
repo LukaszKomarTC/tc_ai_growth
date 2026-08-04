@@ -17,26 +17,30 @@ _Index, not authority (PROTOCOL.md). If this disagrees with git or the server, t
 
 ## Current work
 
-**WP-CONSOLE-USABILITY: U1+U2+U3a+U3b(+.1) ACCEPTED · U4a FULLY CLOSED 2026-08-04** (three
-increments #71/#72/#73 through the full loop; closure record in WP-CONSOLE-USABILITY.md §U4a).
-Production state: app checkout a3104a8 (schema v4, D#12 rejected/superseded, D#13 approved =
-as-applied homepage SEO, live-verified both languages); Console release 9dd11ef; env context
-TC_DECISION_TARGET_ENVIRONMENTS=production + TC_DECISION_URL_HOSTS set (hosts line hygiene
-confirmed via seeding success). Next increment: **U4b** per
-docs/workpackages/WP-U4-DECISION-WORKFLOW.md §Verification — verify_decision_execution (two
-owner-triggered reads ≥60s apart, store-backed verification_pending, immutable
-decision_verify_attempts rows, URL-equality rules, fail-closed both-languages match) ->
-decisions marked executed with evidence. D#13 is the natural first verification target.
+**WP-CONSOLE-USABILITY: U1+U2+U3a+U3b(+.1) ACCEPTED · U4a FULLY CLOSED · U4b ACCEPTED
+2026-08-04 — the platform closes its own loop** (acceptance records in
+WP-CONSOLE-USABILITY.md §U4b/§U4a). Live production state, store-verified 2026-08-04 19:47 UTC:
+schema v5 · D#12 rejected (superseded) · D#13 rejected (live copy drifted again) · **D#14
+EXECUTED by the platform** (`propose`→`approve`(owner)→two matching live reads→`execute`
+(platform), evidence `verify_attempt:3`) · queue empty · env context
+TC_DECISION_TARGET_ENVIRONMENTS=production + TC_DECISION_URL_HOSTS set.
+
+Remaining in U4: **U4c** (per spec §UI — homepage smart card with impact/confidence,
+business-review report block, 🔴/🟡 labels, Recent-operations collapse) plus the new
+**"adopt live content"** candidate (copy drift proved a pattern across D#12→D#13→D#14).
+Also now triggered: the **U2 basic-auth retirement review** (spec exit condition 4 — approval
+authority is live for daily use).
 
 ## Blocked on
 
-Nothing — PR #74 (U4b) review proceeds on-thread; owner queue empty.
+Nothing — owner queue empty; U4b accepted and live.
 
 ## Next action
 
-1. Reviewer round on PR #74 -> lead fixes on-thread -> owner word merges -> deploy (app
-   convergence for schema v5 + console redeploy) -> owner acceptance: Verify D#13 live.
-2. Monday 08-10: artifact #1 (U3a live acceptance) + the Gmail-vs-Console behavioral capstone.
+1. U4c on owner word (smart card + business-review block + labels; "adopt live content"
+   candidate), and/or the U2 basic-auth retirement review.
+2. Monday 08-10 05:00 UTC: artifact #1 lands (U3a live acceptance = `report-artifact 1` hash
+   vs the delivered email) + the behavioral capstone (Console-first vs Gmail-first).
 
 ## Standing constraints
 
