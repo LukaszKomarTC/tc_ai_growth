@@ -39,8 +39,10 @@ Completed
 
 - U3b DEPLOYED (release 48e91d7) + in-browser acceptance: STRUCTURAL PASS, 4 observations (truth panel caught uncapped allow_writes + wrong/unconfirmed WP host; store decisions unsynced D#9/10/11; hierarchy debt -> U3b.1 polish adopted). Reviewer: usability 7/10, "beginning of an operations product"
 
+- U3b.1 built+merged (94463c3, CI green, 214 tests): status card first (green all-clear / red top-decision with rationale+age), truth panel to bottom, severity accents, heading hierarchy. Reviewer's 10%-polish budget respected
+
 Current
-- Owner: 3 config/sync one-liners; U3b.1 polish + U4 spec next; Monday: artifact #1 + capstone
+- Owner: 3 config/sync one-liners + one Console redeploy (picks up U3b.1); U4 spec next; Monday: artifact #1 + capstone
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)
