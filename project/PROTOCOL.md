@@ -104,7 +104,9 @@ Honest per-agent capabilities (2026-08-03):
 
 - **Claude (lead):** reads the live repo on demand (commits, PRs, diffs, reviews — no uploads);
   can **subscribe to a specific PR**, after which comments/reviews/CI on that PR arrive as
-  events into its session — a real push channel, used for active review loops.
+  events into its session — a real push channel, used for active review loops. **PRs only:
+  issue threads cannot wake the lead** (no subscription mechanism) — so anything needing the
+  lead's automatic reaction goes on a PR; issues are charters, read when nudged.
 - **Codex (auditor):** repository-native read; acts when invoked; reports via PR/commits.
 - **ChatGPT (reviewer):** GitHub read connector when invoked; **no background worker** (its own
   statement) — it participates when the owner opens the conversation or, later, when the

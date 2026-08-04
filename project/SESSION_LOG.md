@@ -51,8 +51,10 @@ Completed
 
 - U4 spec written + PR #69 opened (owner GO — no waiting): eliminated-actions table, schema v4, content-bound approvals, verify-execution loop closing production decisions WITHOUT production writes, U2 basic-auth retirement trigger. Lead subscribed to the PR; review happens on-thread
 
+- PR #69 review round 1: nine technical points (envelope binding, canonical hashing, state machine+concurrency, Verify-not-Execute naming, exact fail-closed verification, provenance on estimates, honest unknown counts, staging-apply OVERCLAIM conceded->dependency (verified on main), authority identity). ALL addressed in spec r2 (b02180a), point-by-point reply on thread. Fully on the bus — zero owner clipboard
+
 Current
-- PR #69 (U4 spec) under review on the bus; owner authorizes merge; then U4a build. Monday: artifact #1 + capstone
+- PR #69 spec r2 awaiting re-review + owner merge word; then U4a build. Monday: artifact #1 + capstone
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)
