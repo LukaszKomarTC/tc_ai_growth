@@ -73,8 +73,10 @@ Completed
 
 - PR #71 reviewer verdict on r3: "safe for owner authorization to merge" (both round-2 corrections verified in code; reviewer self-corrected an earlier stale-state report). 6 deployment acceptance criteria adopted as the U4a deploy gate. Merge queued for owner (U4A-1)
 
+- U4a MERGED (owner word): PR #71 rebase-merged to main 95c7974; 262 green on merged tip locally. Queue emptied (U4A-1 decided). Deploy plan next (6 reviewer criteria: 2 env values, controlled v3→v4 migration, VPS suite, seeded real decision, browser approve/reject, no-overstated-controls check)
+
 Current
-- PR #71 (U4a r3) awaiting OWNER merge word only; then deploy plan + browser acceptance. Monday: artifact #1 + capstone
+- U4a deploy plan + owner-run deployment + browser acceptance. Monday: artifact #1 + capstone
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)

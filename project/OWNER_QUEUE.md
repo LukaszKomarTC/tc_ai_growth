@@ -7,7 +7,6 @@ objects (PROTOCOL.md, Phase 2). Pointers, not copies — evidence lives where it
 
 | ID | Priority | Decision / action | Evidence | Recommendation | Waiting since | Status |
 |---|---|---|---|---|---|---|
-| U4A-1 | normal | Authorize merge of PR #71 (U4a: browser decision approval) — your word merges it; owner-run deploy plan follows in chat | PR #71 thread (3 review rounds, r3 `9252821`, CI green ×2, 262 tests) | Reviewer: "safe for owner authorization to merge"; 6 deployment criteria adopted | 2026-08-04 | waiting |
 
 ## Decided (index — details live at the pointer)
 
@@ -29,3 +28,4 @@ objects (PROTOCOL.md, Phase 2). Pointers, not copies — evidence lives where it
 | U3B-O2 | Owner confirmed: `dev.tourdegirona.com` IS Tossa's staging WordPress host (cross-domain by design, not a config error) | docs/STANDING-CAUTIONS.md note |
 | U4-SPEC | Owner GO 2026-08-04 → PR #69 rebase-merged (main f37dfb8); U4a opened against the 10 thread criteria | PR #69 thread; docs/workpackages/WP-U4-DECISION-WORKFLOW.md |
 | AGENTS-1 | PR #70 merged to main (365f623): AGENTS.md attribution protocol in force; lead's 2 record alignments executed (AGENTS.md→PROTOCOL pointer; PROTOCOL reviewer-surface update) | PR #70 thread; /AGENTS.md; project/PROTOCOL.md §Reviewer access |
+| U4A-1 | Owner "merge" 2026-08-04 → PR #71 rebase-merged (main 95c7974, 262 green on merged tip); deploy plan + browser acceptance next per the 6 thread criteria | PR #71 thread; WP-U4-DECISION-WORKFLOW.md |

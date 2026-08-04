@@ -17,22 +17,22 @@ _Index, not authority (PROTOCOL.md). If this disagrees with git or the server, t
 
 ## Current work
 
-**WP-CONSOLE-USABILITY: U1+U2+U3a+U3b(+.1) ACCEPTED and deployed. U4 spec MERGED (PR #69 r4,
-owner GO 2026-08-04, main f37dfb8). U4a BUILT — under review on PR #71** (branch
-`feature/u4a-decision-detail`, 626b5ce, lead subscribed): schema v4 additive migration, canonical
-envelope hashing, storage-trigger lifecycle guards, revision concurrency, /decision/<id> page
-with two-step browser Approve / Reject-with-reason. 250 tests green, branch CI green. Review
-gate: the 10 acceptance criteria on the PR #69 thread. Spec authority:
-docs/workpackages/WP-U4-DECISION-WORKFLOW.md.
+**WP-CONSOLE-USABILITY: U1+U2+U3a+U3b(+.1) ACCEPTED and deployed. U4a MERGED (PR #71 r3, three
+review rounds, owner word 2026-08-04, main 95c7974; 262 tests green on the merged tip).**
+Deployment phase next, gated by the 6 reviewer criteria on the PR #71 thread: env values
+TC_DECISION_TARGET_ENVIRONMENTS=production + TC_DECISION_URL_HOSTS=www.tossacycling.com,
+tossacycling.com · controlled v3→v4 migration · full VPS suite · seed one real decision
+(decision-propose) · owner browser approve/reject acceptance · confirm no Apply/Execute/Verify
+control. Spec authority: docs/workpackages/WP-U4-DECISION-WORKFLOW.md. Deploys touch BOTH the
+app checkout (weekly path — controlled ff runbook) and the Console release (deploy-console.sh).
 
 ## Blocked on
 
-Nothing — PR #71 review proceeds on-thread; owner queue empty.
+Owner-run deployment (lead has no SSH — plan lands in chat; owner executes and pastes outputs).
 
 ## Next action
 
-1. Reviewer round on PR #71 → lead fixes on-thread → owner word merges → deploy via runbook →
-   owner acceptance click-through (seed decision via `decision-propose`).
+1. Owner: run the U4a deploy plan (chat), then the in-browser acceptance click-through.
 2. Monday 08-10: artifact #1 (U3a live acceptance) + the Gmail-vs-Console behavioral capstone.
 
 ## Standing constraints
