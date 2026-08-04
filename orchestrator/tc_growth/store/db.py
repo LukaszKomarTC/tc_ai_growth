@@ -16,7 +16,7 @@ from pathlib import Path
 
 from ..config import BASE_DIR, active_site, get_settings
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 # One statement per table; CREATE ... IF NOT EXISTS makes init idempotent.
 _SCHEMA = """
@@ -139,6 +139,20 @@ CREATE TABLE IF NOT EXISTS decision_verify_attempts (
 );
 
 CREATE INDEX IF NOT EXISTS idx_verify_attempts ON decision_verify_attempts(decision_id);
+
+CREATE TABLE IF NOT EXISTS decision_adoptions (
+    -- Adopt-live idempotence as a DURABLE EXACT KEY (review #76): source decision + its
+    -- revision + its envelope hash + the digest of the snapshot the owner was shown. UNIQUE, so
+    -- the database — not an application scan over the newest N rows — is what makes a duplicate
+    -- adoption impossible, however large the archive grows.
+    adopt_key           TEXT PRIMARY KEY,
+    source_id           INTEGER NOT NULL REFERENCES decisions(id),
+    source_revision     INTEGER NOT NULL,
+    source_envelope     TEXT NOT NULL,
+    snapshot_digest     TEXT NOT NULL,
+    created_decision_id INTEGER REFERENCES decisions(id),  -- NULL = claimed, not yet completed
+    at                  TEXT NOT NULL
+);
 
 -- Verification attempts are append-only evidence (WP-U4b): repeated failures accumulate as
 -- individually inspectable rows and a later success can never rewrite or remove them.
@@ -316,6 +330,9 @@ def _migrate(conn: sqlite3.Connection, *, from_version: int) -> None:
             except sqlite3.OperationalError as exc:
                 if "duplicate column" not in str(exc).lower():
                     raise
+    if from_version < 6:
+        # v5 -> v6: decision_adoptions — additive table only, created by _SCHEMA above.
+        pass
     if from_version < 5:
         # v4 -> v5 (WP-U4b): decision_verify_attempts table + its append-only triggers —
         # purely additive, created by the CREATE IF NOT EXISTS statements in _SCHEMA (which

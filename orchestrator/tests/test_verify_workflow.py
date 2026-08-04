@@ -288,11 +288,13 @@ def test_attempt_rows_are_append_only_and_carry_verbatim_evidence(tmp_path):
             s._conn.execute(stmt)
 
 
-def test_v4_database_migrates_to_v5_additively(tmp_path):
-    """A v4 store (as deployed today) opens under v5 code: version stamped, the attempts table
-    and its triggers exist, and everything else is untouched."""
+def test_v4_database_migrates_forward_additively(tmp_path):
+    """A v4 store (as deployed before U4b) opens under current code: version stamped forward,
+    the attempts table and its triggers exist, and everything else is untouched."""
+    from tc_growth.store.db import SCHEMA_VERSION
+
     path = tmp_path / "v4.db"
-    s = SqliteStore(path)                                      # current code creates v5 directly
+    s = SqliteStore(path)                                      # current code creates latest
     s._conn.execute("UPDATE schema_version SET version = 4;")  # pretend it was v4
     s._conn.execute("DROP TRIGGER trg_verify_attempts_no_update;")
     s._conn.execute("DROP TRIGGER trg_verify_attempts_no_delete;")
@@ -300,7 +302,8 @@ def test_v4_database_migrates_to_v5_additively(tmp_path):
     s._conn.commit()
     s.close()
     s = SqliteStore(path)
-    assert s._conn.execute("SELECT version FROM schema_version;").fetchone()[0] == 5
+    assert s._conn.execute(
+        "SELECT version FROM schema_version;").fetchone()[0] == SCHEMA_VERSION
     names = {r[0] for r in s._conn.execute(
         "SELECT name FROM sqlite_master WHERE name LIKE '%verify%';")}
     assert {"decision_verify_attempts", "trg_verify_attempts_no_update",

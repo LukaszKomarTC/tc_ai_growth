@@ -93,6 +93,9 @@ _DECISION_ERRORS = {
                      "adopting it.",
     "adopt-token": "That adopt request did not carry a valid reference to the comparison you "
                    "were shown — nothing was created. Run the comparison again.",
+    "internal": "Something went WRONG INSIDE THE CONSOLE — this is a defect, not a policy "
+                "refusal. Nothing was created. It is recorded in Evidence with the details; "
+                "please report it rather than retrying blindly.",
     "unknown": "The action could not be completed — nothing was changed. Check the state below.",
 }
 
@@ -718,6 +721,24 @@ class _Handler(BaseHTTPRequestHandler):
 
         self._send(404, b"not found", "text/plain; charset=utf-8")
 
+    def _record_internal_error(self, where: str, exc: BaseException) -> str:
+        """An UNEXPECTED exception is a defect, not a policy outcome (review #76). Record it as
+        evidence — a failed run in the ledger, visible in the Evidence panel with the exception
+        type, message and traceback — and return the query key for a message that says exactly
+        that. A catch-all that renders defects as polite refusals is how real bugs hide."""
+        import traceback
+
+        try:
+            from .store import open_store
+
+            open_store().log_run(
+                kind="console-error", status="error",
+                summary=f"Console defect in {where}: {type(exc).__name__}",
+                detail=_redact("".join(traceback.format_exception(exc))[:8000]))
+        except Exception:  # noqa: BLE001 - never let error recording break error handling
+            pass
+        return "internal"
+
     def _decision_act(self, decision_id: int, action: str, form: dict) -> None:
         """U4a approve/reject/unapprove. Approve is genuinely two-step: the first POST (no
         `confirmed`) mutates NOTHING and renders the confirmation page; only the confirmed POST
@@ -784,26 +805,45 @@ class _Handler(BaseHTTPRequestHandler):
                     _redirect("err=adopt-token")
                     return
                 shown_at, shown_digest = bound
-                # Idempotence: the same displayed snapshot must never yield twin proposals.
-                existing = next((d for d in store.list_decisions(limit=200)
-                                 if d.evidence and shown_digest in d.evidence), None)
-                if existing is not None:
+                # Idempotence via a DURABLE EXACT KEY in the store — not a scan over recent
+                # rows, and not a substring search in prose (review #76). The key stays valid
+                # however large the archive grows.
+                from .store.records import adopt_key as _adopt_key
+
+                key = _adopt_key(source_id=source.id, source_revision=source.revision,
+                                 envelope_sha256=source.envelope_sha256,
+                                 snapshot_digest=shown_digest)
+                already = store.adopted_decision_id(key)
+                if already is not None:
                     self._headers(303, "text/html; charset=utf-8",
-                                  extra=[("Location",
-                                          f"/decision/{existing.id}?msg=already-adopted")],
+                                  extra=[("Location", f"/decision/{already}?msg=already-adopted")],
                                   body_len=0)
                     return
+                # EXPECTED failures (unreadable page, malformed stored envelope) are policy
+                # refusals; anything else is a defect and must NOT wear policy's clothing.
                 try:
                     envelope = json.loads(source.envelope or "")
                     snapshot = verify_mod.live_snapshot(envelope)
                     confirm_digest = verify_mod.snapshot_digest(
                         snapshot, source_id=source.id, revision=source.revision,
                         envelope_sha256=source.envelope_sha256)
-                except Exception:  # noqa: BLE001 - an unreadable page creates nothing
+                except (ValueError, TypeError):
                     _redirect("err=adopt-failed")
+                    return
+                except Exception as exc:  # noqa: BLE001 - a DEFECT: record it, show it as one
+                    _redirect(f"err={self._record_internal_error('adopt-live/read', exc)}")
                     return
                 if not hmac.compare_digest(confirm_digest, shown_digest):
                     _redirect("err=adopt-changed")
+                    return
+                if not store.claim_adoption(
+                        key, source_id=source.id, source_revision=source.revision,
+                        envelope_sha256=source.envelope_sha256, snapshot_digest=shown_digest):
+                    already = store.adopted_decision_id(key)
+                    _redirect("err=adopt-failed") if already is None else self._headers(
+                        303, "text/html; charset=utf-8",
+                        extra=[("Location", f"/decision/{already}?msg=already-adopted")],
+                        body_len=0)
                     return
                 try:
                     new_envelope = verify_mod.adopt_live_envelope(envelope, snapshot)
@@ -829,9 +869,13 @@ class _Handler(BaseHTTPRequestHandler):
                                   f"{shown_at} · confirmed {snapshot['fetched_at']} · snapshot "
                                   f"{shown_digest} · {urls} · {values}"),
                         case_id=source.case_id, made_by="human")
-                except Exception:  # noqa: BLE001 - partial/unreadable snapshot must not create
+                except ValueError:            # partial snapshot / rejected proposal: policy
                     _redirect("err=adopt-failed")
                     return
+                except Exception as exc:  # noqa: BLE001 - a DEFECT, surfaced as a defect
+                    _redirect(f"err={self._record_internal_error('adopt-live/create', exc)}")
+                    return
+                store.complete_adoption(key, new_id)
                 self._headers(303, "text/html; charset=utf-8",
                               extra=[("Location", f"/decision/{new_id}?msg=adopted")],
                               body_len=0)
@@ -886,8 +930,8 @@ class _Handler(BaseHTTPRequestHandler):
             _redirect("err=invalid-transition")
         except DecisionError:
             _redirect("err=unknown")
-        except Exception:  # noqa: BLE001 - a mutation endpoint must answer, never hang the socket
-            _redirect("err=unknown")
+        except Exception as exc:  # noqa: BLE001 - answer, but never disguise a defect as policy
+            _redirect(f"err={self._record_internal_error(f'decision/{action}', exc)}")
 
     # ---- streaming execution ----
     def _stream_execute(self, op_id: str) -> None:
