@@ -334,6 +334,22 @@ def test_decisions_route_serves_history_and_home_links_it(console_env):
     assert f"/decision/{env.decision_id}" in bogus             # unknown filter falls back to all
 
 
+def test_modal_card_styles_are_scoped_and_never_clamp_page_sections():
+    """U4a.2 (owner acceptance observation): the Operations modal's dialog geometry (560px,
+    86vh, inner scrollbar) leaked onto every `section.card` via a bare `.card` selector,
+    compressing page content into nested scroll boxes. Dialog styles stay under `.modal`."""
+    import re
+
+    from tc_growth.console import _STYLE
+
+    assert ".modal .card" in _STYLE
+    assert not re.search(r"(?m)^\.card[\s{]", _STYLE)          # no bare .card rule may return
+    # The page-section style itself must not carry dialog geometry.
+    section_rule = re.search(r"(?m)^section\.card \{[^}]*\}", _STYLE).group(0)
+    for forbidden in ("max-height", "overflow", "width:560"):
+        assert forbidden not in section_rule
+
+
 def test_missing_decision_404s(console_env):
     env = console_env
     try:
