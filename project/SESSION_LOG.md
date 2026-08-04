@@ -95,8 +95,10 @@ Completed
 
 - U4a.2 MERGED (owner ok-go): PR #73 rebase-merged to main 9dd11ef; 266 green on merged tip. Queue emptied. Redeploy block issued (release 9dd11ef)
 
+- U4a FULLY CLOSED: release 9dd11ef deployed (health 200), owner's 5 eyes-on checks ALL PASS (full-width history, single scrollbar, 13 rows, modal contained, no mobile overflow). Closure record in WP-CONSOLE-USABILITY. Three PRs (#71/#72/#73), 8 review rounds total, 266 tests
+
 Current
-- Owner: redeploy + 5-check -> U4a FULLY CLOSED -> U4b build. Monday: artifact #1 + capstone
+- U4b next (verify_decision_execution: two-step live verification -> executed) on owner word. Monday 08-10: artifact #1 + behavioral capstone
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)

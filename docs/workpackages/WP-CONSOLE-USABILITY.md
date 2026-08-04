@@ -1,7 +1,27 @@
 # WP-CONSOLE-USABILITY — the owner can operate the platform
 
 **Status: U1 + U2 + U3b(+.1) ACCEPTED · U3a deployed (live acceptance = Monday 08-10 artifact
-#1) · U4a DEPLOYED + browser acceptance PASSED 2026-08-04 (below).**
+#1) · U4a FULLY CLOSED 2026-08-04 (acceptance below + two follow-ups) · next: U4b.**
+
+**U4a closure (2026-08-04).** Three increments, each through the full loop (PR -> on-thread
+review -> owner merge word -> owner-run deploy -> in-browser acceptance):
+- U4a (PR #71, 3 review rounds): the approval workflow itself — first production decision
+  approved entirely in the browser; record below.
+- U4a.1 (PR #72): decisions history — reviewer's post-merge finding (approved/rejected
+  decisions seemed to vanish; queue is proposed-only by design). /decisions destination +
+  filters + history links. Deployed release 8dafa5c; owner verified D#12/D#13 discoverable,
+  unapprove exercised live. Bonus: env truths SURVIVED this redeploy — the
+  /etc/tc-console.env persistence fix is proven across releases.
+- U4a.2 (PR #73, one-round review): owner acceptance observation -> real CSS defect (bare
+  .card modal selector clamped every section to 560px/86vh with an inner scrollbar — why the
+  history looked like "three decisions"). Scoped to .modal .card + regression test. Deployed
+  release 9dd11ef; owner's five eyes-on checks ALL PASS (full width, one scrollbar, all 13
+  rows, modal contained, no mobile overflow). Standing design rule adopted: the PAGE is the
+  scrolling surface; dialog geometry lives under .modal only.
+The D#12→D#13 supersede recorded the as-applied content (owner enriched copy at apply time);
+live ES+EN pages verified by lead fetch. Eliminated-actions row 1 (CLI approval chore) is
+retired in practice. U4b (verify live change -> executed) is the next increment; U2 basic-auth
+retirement review triggers at U4 acceptance per the spec.
 
 **U4a acceptance record (owner-run, 2026-08-04, app converged d391247→a3104a8, Console release
 a3104a8).** The first decision approved entirely in the browser — the CLI approval chore is
