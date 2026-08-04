@@ -99,6 +99,16 @@ class SqliteStore:
     def list_decision_events(self, decision_id: int) -> list[DecisionEvent]:
         return records.list_decision_events(self._conn, decision_id)
 
+    # -- adopt-live idempotence (U4c) --
+    def adopted_decision_id(self, key: str) -> int | None:
+        return records.adopted_decision_id(self._conn, key)
+
+    def claim_adoption(self, key: str, **kw) -> bool:
+        return records.claim_adoption(self._conn, key, **kw)
+
+    def complete_adoption(self, key: str, decision_id: int) -> None:
+        records.complete_adoption(self._conn, key, decision_id)
+
     # -- verification (U4b) --
     def record_verify_attempt(self, **kw) -> int:
         return records.record_verify_attempt(self._conn, **kw)

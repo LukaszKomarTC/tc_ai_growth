@@ -133,6 +133,16 @@ class Store(Protocol):
 
     def list_decision_events(self, decision_id: int) -> list[DecisionEvent]: ...
 
+    # -- adopt-live idempotence (U4c) --
+    # CONSTITUTIONAL: duplicate prevention is a UNIQUE KEY in the backend, never an application
+    # scan over recent rows — the guarantee must not decay as the archive grows.
+    def adopted_decision_id(self, key: str) -> int | None: ...
+
+    def claim_adoption(self, key: str, *, source_id: int, source_revision: int,
+                       envelope_sha256: str, snapshot_digest: str) -> bool: ...
+
+    def complete_adoption(self, key: str, decision_id: int) -> None: ...
+
     # -- verification (U4b) --
     # CONSTITUTIONAL INVARIANT: verification attempts are APPEND-ONLY at the storage layer
     # (SQLite: triggers) — a success can never rewrite or remove a failure, and

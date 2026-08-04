@@ -725,6 +725,59 @@ def execute_decision(conn: sqlite3.Connection, decision_id: int, *, expected_rev
     conn.commit()
 
 
+def adopt_key(*, source_id: int, source_revision: int, envelope_sha256: str,
+              snapshot_digest: str) -> str:
+    """The exact, durable identity of one adoption: which decision, at which revision, bound to
+    which envelope, from which displayed snapshot. Never a substring search over prose."""
+    return f"{source_id}:{source_revision}:{envelope_sha256}:{snapshot_digest}"
+
+
+def adopted_decision_id(conn: sqlite3.Connection, key: str) -> int | None:
+    """The decision this exact adoption already created, or None. An O(1) keyed lookup — it
+    keeps working when the archive holds a hundred thousand decisions (review #76)."""
+    row = conn.execute(
+        "SELECT created_decision_id FROM decision_adoptions WHERE adopt_key = ?;",
+        (key,)).fetchone()
+    return row["created_decision_id"] if row else None
+
+
+def claim_adoption(conn: sqlite3.Connection, key: str, *, source_id: int,
+                   source_revision: int, envelope_sha256: str, snapshot_digest: str) -> bool:
+    """Reserve the key before creating anything. False = it is already taken by a COMPLETED
+    adoption (the caller redirects to it). A claim left incomplete by a failed attempt is
+    reclaimed here rather than blocking retries forever — an interrupted adoption must not
+    become a permanent refusal."""
+    row = conn.execute("SELECT created_decision_id FROM decision_adoptions WHERE adopt_key = ?;",
+                       (key,)).fetchone()
+    if row is not None:
+        if row["created_decision_id"] is not None:
+            return False
+        conn.execute("DELETE FROM decision_adoptions WHERE adopt_key = ?;", (key,))
+    try:
+        conn.execute(
+            "INSERT INTO decision_adoptions (adopt_key, source_id, source_revision, "
+            "source_envelope, snapshot_digest, at) VALUES (?, ?, ?, ?, ?, ?);",
+            (key, source_id, source_revision, envelope_sha256, snapshot_digest, _now()))
+    except sqlite3.IntegrityError:
+        # Distinguish the two IntegrityErrors that can land here (review #76's own lesson,
+        # applied one level down): a DUPLICATE KEY means someone else claimed it — that is
+        # policy, answer False. Anything else (e.g. a foreign-key violation from a bad
+        # source_id) is a DEFECT and must stay loud rather than look like a refusal.
+        taken = conn.execute("SELECT 1 FROM decision_adoptions WHERE adopt_key = ?;",
+                             (key,)).fetchone()
+        if taken is None:
+            raise
+        return False
+    conn.commit()
+    return True
+
+
+def complete_adoption(conn: sqlite3.Connection, key: str, decision_id: int) -> None:
+    conn.execute("UPDATE decision_adoptions SET created_decision_id = ? WHERE adopt_key = ?;",
+                 (decision_id, key))
+    conn.commit()
+
+
 def list_decision_events(conn: sqlite3.Connection, decision_id: int) -> list[DecisionEvent]:
     rows = conn.execute(
         "SELECT * FROM decision_events WHERE decision_id = ? ORDER BY id ASC;",

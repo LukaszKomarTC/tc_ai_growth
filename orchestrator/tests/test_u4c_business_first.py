@@ -312,3 +312,98 @@ def test_u4c_adds_no_production_write_capability(env):
 
     assert {op.id for op in OPERATIONS if op.enabled} == {
         "smtp_test", "run_integrity_scan", "redeliver_latest_report"}
+
+
+# --- criteria (review #76 round 2): durable idempotence + defects never wear policy's clothes ---
+
+
+def test_duplicate_detection_survives_a_large_archive(env):
+    """The guarantee must not decay as decisions accumulate: >200 later rows, still no twin."""
+    page = env.opener.open(f"{env.base}/decision/{env.decision_id}?live=1").read().decode()
+    form = _adopt_form(page)
+    assert "New proposal created" in _post_adopt(env, **form)
+
+    s = SqliteStore(env.db)
+    for i in range(220):                                        # bury the adoption in history
+        s.record_decision(title=f"filler {i}", status="active")
+    assert len(s.list_decisions(limit=1000)) > 220
+
+    again = _post_adopt(env, **form)                            # same displayed snapshot
+    assert "already adopted" in again
+    created = [d for d in s.list_decisions(limit=1000)
+               if d.title.startswith("Adopt live wording")]
+    assert len(created) == 1                                    # still exactly one
+
+
+def test_identity_is_the_exact_key_not_evidence_text():
+    """Two unrelated decisions whose evidence merely CONTAINS similar text must not collide."""
+    from tc_growth.store.records import adopt_key
+
+    s = SqliteStore(":memory:")
+    src = s.record_decision(title="source", status="approved")
+    other = s.record_decision(title="another", status="approved")
+    k1 = adopt_key(source_id=src, source_revision=1, envelope_sha256="aa", snapshot_digest="dd")
+    k2 = adopt_key(source_id=src, source_revision=2, envelope_sha256="aa", snapshot_digest="dd")
+    k3 = adopt_key(source_id=other, source_revision=1, envelope_sha256="aa",
+                   snapshot_digest="dd")
+    assert len({k1, k2, k3}) == 3                               # revision and source both bind
+
+    # A decision whose evidence text happens to contain the digest is NOT an adoption record.
+    created = s.propose_decision(title="Mentions a digest", envelope=_envelope(),
+                                 evidence="snapshot dd — pasted into a note by hand", **_CTX)
+    assert s.adopted_decision_id(k1) is None                    # only the keyed table counts
+
+    assert s.claim_adoption(k1, source_id=src, source_revision=1, envelope_sha256="aa",
+                            snapshot_digest="dd") is True
+    s.complete_adoption(k1, created)
+    assert s.adopted_decision_id(k1) == created
+    assert s.adopted_decision_id(k2) is None                    # neighbouring keys unaffected
+    assert s.claim_adoption(k1, source_id=src, source_revision=1, envelope_sha256="aa",
+                            snapshot_digest="dd") is False      # completed claims are final
+
+
+def test_a_bad_source_reference_raises_instead_of_looking_like_a_duplicate():
+    """The FK violation is a DEFECT: it must not be reported as 'already claimed'."""
+    import sqlite3 as _sqlite3
+
+    from tc_growth.store.records import adopt_key
+
+    s = SqliteStore(":memory:")
+    k = adopt_key(source_id=999, source_revision=0, envelope_sha256="a", snapshot_digest="d")
+    with pytest.raises(_sqlite3.IntegrityError):
+        s.claim_adoption(k, source_id=999, source_revision=0, envelope_sha256="a",
+                         snapshot_digest="d")
+
+
+def test_an_incomplete_claim_does_not_block_a_retry():
+    """A claim orphaned by a failed attempt must be reclaimable — an interrupted adoption
+    cannot become a permanent refusal."""
+    from tc_growth.store.records import adopt_key
+
+    s = SqliteStore(":memory:")
+    src = s.record_decision(title="source", status="approved")
+    k = adopt_key(source_id=src, source_revision=0, envelope_sha256="a", snapshot_digest="d")
+    assert s.claim_adoption(k, source_id=src, source_revision=0, envelope_sha256="a",
+                            snapshot_digest="d") is True        # claimed, never completed
+    assert s.claim_adoption(k, source_id=src, source_revision=0, envelope_sha256="a",
+                            snapshot_digest="d") is True        # retry allowed
+
+
+def test_unexpected_defect_is_visible_as_a_defect_not_a_policy_refusal(env):
+    """An injected programming error must NOT render as an ordinary refusal: the owner sees it
+    is a defect, and it lands in the evidence ledger for diagnosis."""
+    page = env.opener.open(f"{env.base}/decision/{env.decision_id}?live=1").read().decode()
+    form = _adopt_form(page)
+
+    def _boom(*a, **k):
+        raise RuntimeError("injected defect in snapshot handling")
+    env.monkeypatch.setattr(verify, "adopt_live_envelope", _boom)
+
+    out = _post_adopt(env, **form)
+    assert "WRONG INSIDE THE CONSOLE" in out and "defect, not a policy refusal" in out
+    assert "Could not adopt the live content" not in out        # never the policy wording
+    s = SqliteStore(env.db)
+    assert len([d for d in s.list_decisions() if d.id != env.decision_id]) == 0  # created nothing
+    errors = [r for r in s.list_runs(kind="console-error", limit=10)]
+    assert errors and "RuntimeError" in (errors[0].summary or "")
+    assert "injected defect" in (errors[0].detail or "")        # traceback kept as evidence
