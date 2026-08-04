@@ -61,8 +61,10 @@ Completed
 
 - U4 spec MERGED (owner GO): PR #69 rebase-merged to main f37dfb8. Queue emptied (U4-SPEC decided). U4a build begins on feature/u4a-decision-detail against the 10 thread criteria
 
+- U4a BUILT + PR #71 opened (626b5ce, subscribed): schema v4 additive migration (proven on production-shaped v3 store), canonical envelope hashing (byte-exact pinned fixtures), storage-trigger lifecycle guards (approved immutable / executed terminal / events append-only), revision concurrency, /decision/<id> detail page (owner-first order), genuine two-step browser Approve + Reject-with-reason, decision-propose CLI seed. 250 green (36 new); branch CI green. PR body addresses the 10 criteria point-by-point. Awaiting reviewer round
+
 Current
-- U4a build in flight (schema v4 + decision detail + browser approve/reject). Monday: artifact #1 + capstone
+- PR #71 (U4a) under review on-thread; owner word merges. Monday: artifact #1 + capstone
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)

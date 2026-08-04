@@ -18,20 +18,21 @@ _Index, not authority (PROTOCOL.md). If this disagrees with git or the server, t
 ## Current work
 
 **WP-CONSOLE-USABILITY: U1+U2+U3a+U3b(+.1) ACCEPTED and deployed. U4 spec MERGED (PR #69 r4,
-owner GO 2026-08-04, rebase-merged to main f37dfb8).** Now building **U4a** on
-`feature/u4a-decision-detail`: schema v4 (additive), target-bound approval envelopes with
-canonical hashing, decision detail page, browser two-step Approve / Reject-with-reason,
-storage-layer lifecycle guards, legacy decisions visible-but-unapprovable. Review gate: the 10
-acceptance criteria on the PR #69 thread (reviewer, 2026-08-04). Spec authority:
+owner GO 2026-08-04, main f37dfb8). U4a BUILT — under review on PR #71** (branch
+`feature/u4a-decision-detail`, 626b5ce, lead subscribed): schema v4 additive migration, canonical
+envelope hashing, storage-trigger lifecycle guards, revision concurrency, /decision/<id> page
+with two-step browser Approve / Reject-with-reason. 250 tests green, branch CI green. Review
+gate: the 10 acceptance criteria on the PR #69 thread. Spec authority:
 docs/workpackages/WP-U4-DECISION-WORKFLOW.md.
 
 ## Blocked on
 
-Nothing — U4a proceeds; owner queue empty.
+Nothing — PR #71 review proceeds on-thread; owner queue empty.
 
 ## Next action
 
-1. Lead: finish U4a, open its PR, subscribe, drive review on-thread; owner word merges.
+1. Reviewer round on PR #71 → lead fixes on-thread → owner word merges → deploy via runbook →
+   owner acceptance click-through (seed decision via `decision-propose`).
 2. Monday 08-10: artifact #1 (U3a live acceptance) + the Gmail-vs-Console behavioral capstone.
 
 ## Standing constraints
