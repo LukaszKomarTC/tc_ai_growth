@@ -214,6 +214,10 @@ would hide the mixed-source reality and invite trusting staging Woo data as prod
 
 ## U4 — Controlled decision workflow (capstone)
 
+**Implementable spec: docs/workpackages/WP-U4-DECISION-WORKFLOW.md** (charter: issue #68;
+includes the auditable eliminated-actions table, schema v4, approval semantics, the
+verify-execution loop, and build order U4a→U4b→U4c).
+
 **Opening requirement (reviewer, 2026-08-03, from U3b's honestly-flagged weakest item):**
 U3b answers *"what needs my attention?"* — U4 answers *"why should I approve this?"* Every
 queued decision renders its evidence, reasoning, and (where estimable) revenue impact BEFORE
