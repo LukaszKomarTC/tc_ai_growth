@@ -83,8 +83,10 @@ Completed
 
 - Reviewer post-merge finding on #71 (under AGENTS.md header): NO decision-history view — approved/rejected decisions vanish from homepage (proposed-only queue), reachable only by remembered URL; Unapprove effectively undiscoverable. "Real UX defect… fix promptly before U4a is called fully closed." U4a.1 build begins: /decisions destination (all statuses, filterable), nav tab, post-action history link
 
+- U4a.1 BUILT + PR #72 opened (c6c5c72, subscribed): /decisions history destination (all statuses, whitelisted filters, legacy labeled), Decisions nav tab, history links where items leave the queue + on detail pages; queue semantics unchanged. 265 green (3 new incl. e2e approve→leaves-queue→discoverable). Replied on #71 thread; awaiting reviewer round
+
 Current
-- U4a.1 (decision history view) build → PR → review → owner merge → console redeploy. Monday: artifact #1 + capstone
+- PR #72 (U4a.1) under review; owner word merges; then console redeploy closes U4a fully. Monday: artifact #1 + capstone
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)
