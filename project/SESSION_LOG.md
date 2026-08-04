@@ -47,8 +47,10 @@ Completed
 
 - O2 closed: dev.tourdegirona.com confirmed as Tossa's staging WP (intentional cross-domain; recorded in STANDING-CAUTIONS to prevent future false alarms). U3b observation set fully resolved
 
+- GitHub bus round-trip complete on #68: reviewer accepted all points on-thread + added U4 requirement (auditable eliminated-actions table: disappears vs intentionally-manual); lead committed to it on-thread. Zero owner clipboard involved
+
 Current
-- U4 spec PR next (charter: #68); Monday: artifact #1 + behavioral capstone
+- U4 spec PR next (charter: #68, incl. eliminated-actions table); Monday: artifact #1 + behavioral capstone
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)
