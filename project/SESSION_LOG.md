@@ -113,8 +113,10 @@ Completed
 
 - Product finding: copy drift is a PATTERN (D#12->D#13->D#14 — owner improves wording while applying). Candidate: 'adopt live content' action proposing a pre-filled decision from the live page (U4c). U2 basic-auth retirement review now triggered per spec exit condition 4
 
+- Reviewer posted 4 post-acceptance UX tasks on the MERGED #69 thread at 02:11 (business-first titles, before/after diff, quantified impact, expandable explanation) — unseen for ~17h because the lead only wakes on SUBSCRIBED PRs and a merged thread is not one. Mechanism restated on-thread: cross-increment guidance goes on the open PR of the day or a fresh issue referenced there. All 4 adopted into U4c with cost/priority; item 3 bounded (real GSC numbers or absent — never invented); item 1 conceded as lead's own authoring fault (technical titles came from the seed files)
+
 Current
-- U4c (smart card, business-review block, labels, adopt-live-content candidate) + U2 retirement review. Monday 08-10: artifact #1 + behavioral capstone (Console-first vs Gmail-first)
+- U4c scope proposed on #69: business-first titles + live before/after diff (nearly free — reuses verify.py fetch/compare) + expandable explanation + adopt-live-content; quantified impact split to its own increment (touches GSC data path). Build on owner word. Then U2 retirement review. Monday 08-10: artifact #1 + behavioral capstone
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)
