@@ -31,7 +31,9 @@ def _envelope() -> dict:
         "environment": "production",
         "kind": "seo_meta_update",
         "target": {"object_type": "wp_post", "post_id": 13699,
-                   "expected_urls": {"es": "https://www.tossacycling.com/alquiler_bicicletas/"}},
+                   "expected_urls": {
+                       "es": "https://www.tossacycling.com/alquiler_bicicletas/",
+                       "en": "https://www.tossacycling.com/en/alquiler_bicicletas/"}},
         "payload": {"title_es": "Alquiler de bicicletas en Tossa de Mar"},
     }
 
@@ -39,6 +41,8 @@ def _envelope() -> dict:
 def _seed(store: SqliteStore) -> int:
     return store.propose_decision(
         title="Bilingual SEO for the rental page", envelope=_envelope(),
+        expected_profile="tossa-cycling", allowed_environments=("production",),
+        allowed_hosts=("www.tossacycling.com",),
         rationale="1,502 impressions at position 14.9 — title/meta rewrite lifts CTR",
         evidence="report artifact #1 · GSC query export",
         impact={"value": "+200–500 visits/mo", "label": "estimate",
@@ -77,7 +81,9 @@ def test_detail_reads_owner_first_then_technical():
 
 def test_missing_provenance_renders_unknown_never_invented():
     s = SqliteStore(":memory:")
-    did = s.propose_decision(title="No numbers", envelope=_envelope())
+    did = s.propose_decision(title="No numbers", envelope=_envelope(),
+                             expected_profile="tossa-cycling",
+                             allowed_environments=("production",))
     out = console_views.decision_body(s.get_decision(did), [], csrf="t")
     assert out.count("unknown") >= 2                           # impact AND confidence
 
@@ -110,7 +116,9 @@ def test_store_strings_are_escaped_on_the_detail_page():
     s = SqliteStore(":memory:")
     env = _envelope()
     env["payload"] = {"title_es": evil}
-    did = s.propose_decision(title=evil, envelope=env, rationale=evil, evidence=evil)
+    did = s.propose_decision(title=evil, envelope=env, rationale=evil, evidence=evil,
+                             expected_profile="tossa-cycling",
+                             allowed_environments=("production",))
     out = console_views.decision_body(s.get_decision(did), s.list_decision_events(did),
                                       csrf="t")
     assert "<script>" not in out and "&lt;script&gt;" in out

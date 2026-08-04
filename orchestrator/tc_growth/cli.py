@@ -416,6 +416,23 @@ def cmd_decision_propose(path: str) -> int:
     if not isinstance(doc, dict) or "envelope" not in doc or "title" not in doc:
         print('The file must be a JSON object with at least "title" and "envelope".')
         return 1
+    # Proposal context comes from the RUNTIME, never from the file (review #71 finding 1): the
+    # active profile id, the environments this deployment may target, and the profile's
+    # legitimate URL hosts. Missing host config fails closed — an unconstrained target host is
+    # not a default, it's a decision the owner hasn't made yet.
+    from .config import active_site, get_settings
+
+    settings = get_settings()
+    expected_profile = active_site() or "default"
+    allowed_environments = (("production",) if settings.env_kind.strip().lower() == "production"
+                            else ("staging",))
+    hosts = tuple(h.strip().lower() for h in settings.decision_url_hosts.split(",") if h.strip())
+    if not hosts:
+        print("REFUSED: TC_DECISION_URL_HOSTS is not set for this profile — the proposal "
+              "boundary cannot verify target URL hosts. Set it (e.g. "
+              "TC_DECISION_URL_HOSTS=www.tossacycling.com,tossacycling.com) and retry.")
+        return 1
+
     s = store.open_store()
     case_id = None
     if doc.get("case"):
@@ -427,6 +444,8 @@ def cmd_decision_propose(path: str) -> int:
     try:
         did = s.propose_decision(
             title=str(doc["title"]), envelope=doc["envelope"],
+            expected_profile=expected_profile, allowed_environments=allowed_environments,
+            allowed_hosts=hosts,
             rationale=doc.get("rationale"), evidence=doc.get("evidence"),
             impact=doc.get("impact"), confidence=doc.get("confidence"),
             case_id=case_id, made_by="human")

@@ -85,18 +85,25 @@ class Store(Protocol):
     def update_decision(self, decision_id: int, **fields: object) -> None: ...
 
     # -- decision approval workflow (U4a) --
-    # CONSTITUTIONAL INVARIANTS (backend-neutral, same standing as the artifact rule below):
-    # an APPROVED envelope is immutable at the storage layer of whatever backend implements
-    # this protocol (SQLite: trigger; a PostgresStore must bring an equivalent) — the only path
-    # away is the explicit unapprove transition. EXECUTED decisions are terminal. Every
-    # lifecycle mutation carries the caller's expected revision (stale views fail loudly) and
-    # appends one immutable audit event. API discipline without storage enforcement does not
-    # satisfy this protocol.
+    # CONSTITUTIONAL INVARIANTS (backend-neutral, same standing as the artifact rule below),
+    # stated with their precise enforcement layer (review #71): the STORAGE layer of whatever
+    # backend implements this protocol (SQLite: triggers; a PostgresStore must bring an
+    # equivalent) enforces — even against raw SQL — that an APPROVED envelope is immutable
+    # (only path away: the explicit unapprove transition), that EXECUTED is terminal, that
+    # audit events are append-only, and that workflow rows move only along the spec's
+    # transition graph. The STORE API additionally guarantees revision-based concurrency,
+    # proposal-boundary context checks, and that every successful transition appends its audit
+    # event in the same transaction — that coupling is an API guarantee, deliberately not
+    # claimed of the database. An implementation without the storage-layer half does not
+    # satisfy this protocol, regardless of API discipline.
     def propose_decision(
         self,
         *,
         title: str,
         envelope: dict,
+        expected_profile: str,
+        allowed_environments: tuple[str, ...],
+        allowed_hosts: tuple[str, ...] | None = None,
         rationale: str | None = None,
         evidence: str | None = None,
         impact: dict | None = None,
@@ -119,7 +126,9 @@ class Store(Protocol):
 
     def repropose_decision(
         self, decision_id: int, *, expected_revision: int, envelope: dict | None = None,
-        actor: str = "owner"
+        expected_profile: str | None = None,
+        allowed_environments: tuple[str, ...] | None = None,
+        allowed_hosts: tuple[str, ...] | None = None, actor: str = "owner"
     ) -> None: ...
 
     def list_decision_events(self, decision_id: int) -> list[DecisionEvent]: ...
