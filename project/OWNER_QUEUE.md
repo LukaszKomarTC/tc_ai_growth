@@ -7,7 +7,6 @@ objects (PROTOCOL.md, Phase 2). Pointers, not copies — evidence lives where it
 
 | ID | Priority | Decision / action | Evidence | Recommendation | Waiting since | Status |
 |---|---|---|---|---|---|---|
-| U3B-O2 | Medium | Confirm WordPress host: is `dev.tourdegirona.com` really Tossa's staging WP? | WP §U3b acceptance O2 (truth-panel catch) | Confirm or correct `TC_WP_BASE_URL` in Console env | 2026-08-03 | waiting |
 
 ## Decided (index — details live at the pointer)
 
@@ -26,3 +25,4 @@ objects (PROTOCOL.md, Phase 2). Pointers, not copies — evidence lives where it
 | U3B-1 | U3b merge authorized (owner GO 2026-08-03) and merged to main; Console redeploy + in-browser acceptance next | WP-CONSOLE-USABILITY.md §U3b |
 | U3B-O1 | Production-writes cap set (TC_ALLOW_WRITES=false in release env, deployed fd8f682) | WP §U3b acceptance O1 |
 | U3B-O3 | Store synced: D#9/D#10/D#11 proposed→approved via decision-approve (correct CLI verb; 'decision-set' was a lead command-name error, caught by usage output) | WP §U3b acceptance O3 |
+| U3B-O2 | Owner confirmed: `dev.tourdegirona.com` IS Tossa's staging WordPress host (cross-domain by design, not a config error) | docs/STANDING-CAUTIONS.md note |

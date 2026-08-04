@@ -29,3 +29,10 @@ because the failure is one habitual keystroke away.)
 Never paste tokens/passwords into AI chats. It happened once (TC_CONSOLE_TOKEN, ledger F4) and
 forced a rotation. Tokens are read on the server (`sudo cat /etc/tc-console.env`) and go straight
 into the login form or a password manager.
+
+## ℹ️ Staging WordPress lives on a different domain (intentional)
+
+Tossa Cycling's staging WordPress/WooCommerce host is **dev.tourdegirona.com** — owner-confirmed
+2026-08-04. This is deliberate cross-domain staging, NOT a configuration error. Do not "fix"
+`TC_WP_BASE_URL` on sight of the unfamiliar domain; the Console truth panel showing it is
+correct behavior.

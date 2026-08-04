@@ -45,8 +45,10 @@ Completed
 
 - Reviewer wrote issue #68 (U3b UX review + U4 charter) — first reviewer write artifact. Lead replied on-thread (gap 4's simple card already shipped in fd8f682). GitHub-bus workflow ADOPTED (PR threads for increments; owner only authorizes); defer-Issues decision reversed with rationale. PROTOCOL updated
 
+- O2 closed: dev.tourdegirona.com confirmed as Tossa's staging WP (intentional cross-domain; recorded in STANDING-CAUTIONS to prevent future false alarms). U3b observation set fully resolved
+
 Current
-- Owner: O2 answer + look at new Home; U4 spec PR next (charter: #68); Monday: artifact #1 + capstone
+- U4 spec PR next (charter: #68); Monday: artifact #1 + behavioral capstone
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)
