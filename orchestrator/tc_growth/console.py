@@ -232,12 +232,17 @@ section.card > div { padding:3px 0; }
 .modal { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none; align-items:center;
   justify-content:center; padding:20px; }
 .modal.on { display:flex; }
-.card { background:var(--panel); border:1px solid var(--line); border-radius:10px; width:560px;
-  max-width:100%; max-height:86vh; overflow:auto; }
-.card header { border-bottom:1px solid var(--line); }
-.card .body { padding:16px 18px; }
-.card .foot { padding:14px 18px; border-top:1px solid var(--line); display:flex; gap:10px;
-  justify-content:flex-end; }
+/* Modal dialog card ONLY — scoped under .modal on purpose (U4a.2): the bare `.card` selector
+   also matched every `section.card` content panel, silently clamping page sections to 560px
+   with an inner 86vh scrollbar. On short pages it read as "narrow cards"; on the decisions
+   history it compressed the list into a scroll-box-in-a-scroll-box. Page sections are styled
+   by `section.card` above and must never inherit dialog geometry. */
+.modal .card { background:var(--panel); border:1px solid var(--line); border-radius:10px;
+  width:560px; max-width:100%; max-height:86vh; overflow:auto; }
+.modal .card header { border-bottom:1px solid var(--line); }
+.modal .card .body { padding:16px 18px; }
+.modal .card .foot { padding:14px 18px; border-top:1px solid var(--line); display:flex;
+  gap:10px; justify-content:flex-end; }
 ul.actions { margin:8px 0; padding-left:18px; } ul.actions li { margin:2px 0; }
 #stream { font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace; background:#0a0d12;
   border:1px solid var(--line); border-radius:8px; padding:12px; margin-top:12px; min-height:60px;
