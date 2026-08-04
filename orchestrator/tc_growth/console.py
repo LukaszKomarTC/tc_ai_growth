@@ -53,12 +53,16 @@ _KEEPALIVE_FRAME = b": keepalive\n\n"  # SSE comment — MUST start with ':' so 
 
 # U4a decision actions: POST /decision/<id>/<act>. Outcome text is server-fixed and selected by
 # WHITELISTED query keys only — the redirect target can never carry reflected content.
-_DECISION_ACT = re.compile(r"^/decision/(\d+)/(approve|reject|unapprove)$")
+_DECISION_ACT = re.compile(r"^/decision/(\d+)/(approve|reject|unapprove|verify|verify-confirm)$")
 _DECISION_NOTICES = {
     "approved": "Approved. The envelope is now bound and immutable.",
     "already-approved": "Already approved — nothing changed (duplicate submission is safe).",
     "rejected": "Rejected. The reason is recorded in the history below.",
     "unapproved": "Unapproved — back to proposed; the envelope can be revised again.",
+    "verify-pending": "Read #1 matched the approved envelope. Confirm arms after the minimum "
+                      "interval — reload this page in about a minute.",
+    "executed": "Verified twice against the live pages — this decision is now EXECUTED and "
+                "has left the queue. The evidence trail is below.",
 }
 _DECISION_ERRORS = {
     "stale": "This page was stale — the decision changed underneath it. Review the current "
@@ -67,6 +71,16 @@ _DECISION_ERRORS = {
                       "nothing to approve.",
     "invalid-transition": "That action does not apply to the decision's current state.",
     "reason-required": "A rejection reason is required — nothing was changed.",
+    "verify-mismatch": "The live pages do NOT match the approved envelope — the decision stays "
+                       "approved, and the mismatch is recorded below. Check the pages in WP "
+                       "and verify again.",
+    "verify-error": "A page could not be fetched — nothing was concluded. The attempt is "
+                    "recorded below; try again.",
+    "verify-too-soon": "The confirm step is not armed yet — the minimum interval between the "
+                       "two reads has not passed.",
+    "verify-no-pending": "There is no matching first read to confirm — run Verify live change "
+                         "first.",
+    "verify-unavailable": "Verification is not available for this decision.",
     "unknown": "The action could not be completed — nothing was changed. Check the state below.",
 }
 
@@ -543,15 +557,21 @@ class _Handler(BaseHTTPRequestHandler):
             except ValueError:
                 self._send(404, b"not found", "text/plain; charset=utf-8")
                 return
+            from . import verify as verify_mod
+
             try:
                 from .store import open_store
 
                 store = open_store()
                 decision = store.get_decision(decision_id)
                 events = store.list_decision_events(decision_id) if decision else []
+                attempts = store.list_verify_attempts(decision_id) if decision else []
+                pending = (store.pending_verify_attempt(decision_id,
+                                                        revision=decision.revision)
+                           if decision and decision.status == "approved" else None)
             except Exception:  # noqa: BLE001 - store trouble -> not found, never 500
                 decision = None
-                events = []
+                events, attempts, pending = [], [], None
             if decision is None:
                 self._send(404, b"no such decision", "text/plain; charset=utf-8")
                 return
@@ -559,7 +579,11 @@ class _Handler(BaseHTTPRequestHandler):
             notice = _DECISION_NOTICES.get(q.get("msg", [""])[0], "")
             error = _DECISION_ERRORS.get(q.get("err", [""])[0], "")
             body = console_views.decision_body(
-                decision, events, csrf=csrf_for(session, secret), notice=notice, error=error)
+                decision, events, csrf=csrf_for(session, secret), notice=notice, error=error,
+                verifiable=decision.kind in verify_mod.VERIFIABLE_KINDS,
+                pending=pending,
+                wait_s=verify_mod.confirm_wait_s(pending) if pending else 0,
+                attempts=attempts)
             self._html(200, _shell(f"Decision D#{decision.id}", "decisions", body, **chrome))
         elif path.startswith("/report/"):
             from . import console_views
@@ -684,6 +708,31 @@ class _Handler(BaseHTTPRequestHandler):
                 self._html(200, _shell(f"Confirm D#{decision.id}", "decisions", body,
                                        site_name=s.site_name or (active_site() or "Tossa Cycling"),
                                        env_kind=s.env_kind))
+                return
+            if action in ("verify", "verify-confirm"):
+                # U4b: revision must match what the owner's page showed — a stale view must
+                # never trigger reads against an envelope the owner has since revisited.
+                from . import verify as verify_mod
+
+                decision = store.get_decision(decision_id)
+                if decision is None:
+                    self._send(404, b"no such decision", "text/plain; charset=utf-8")
+                    return
+                if decision.revision != revision:
+                    _redirect("err=stale")
+                    return
+                outcome = verify_mod.verify_step(
+                    store, decision, step=1 if action == "verify" else 2)
+                _redirect({
+                    "pending": "msg=verify-pending",
+                    "executed": "msg=executed",
+                    "read-mismatch": "err=verify-mismatch",
+                    "read-error": "err=verify-error",
+                    "too-soon": "err=verify-too-soon",
+                    "no-pending": "err=verify-no-pending",
+                    "not-approved": "err=invalid-transition",
+                    "not-verifiable": "err=verify-unavailable",
+                }.get(outcome, "err=unknown"))
                 return
             if action == "approve":
                 outcome = store.approve_decision(decision_id, expected_revision=revision,

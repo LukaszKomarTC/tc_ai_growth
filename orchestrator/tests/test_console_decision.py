@@ -89,10 +89,12 @@ def test_missing_provenance_renders_unknown_never_invented():
     assert out.count("unknown") >= 2                           # impact AND confidence
 
 
-def test_no_control_overstates_authority_in_u4a():
-    """U4a ships approve/reject/unapprove only. Any Apply/Execute/Verify control on this page
-    would claim a capability whose acceptance has not happened (spec: eliminated-actions
-    table)."""
+def test_no_control_overstates_authority():
+    """No control may claim a capability whose acceptance has not happened (spec:
+    eliminated-actions table). Apply/Execute stay forbidden EVERYWHERE — the platform never
+    writes to production. Verify became a registered capability in U4b, but only for approved
+    decisions of verifiable kinds; without a registered path, only the plain 'not available'
+    reason may render, never a button."""
     s = SqliteStore(":memory:")
     did = _seed(s)
     for status_fixture in ("proposed", "approved"):
@@ -100,8 +102,12 @@ def test_no_control_overstates_authority_in_u4a():
             s.approve_decision(did, expected_revision=0)
         out = console_views.decision_body(s.get_decision(did),
                                           s.list_decision_events(did), csrf="t")
-        for forbidden in (">Apply", ">Execute", ">Verify", "Verify live change"):
+        for forbidden in (">Apply", ">Execute"):
             assert forbidden not in out
+        # verifiable=False (no registered path): the reason renders, a control never does.
+        assert "/verify" not in out
+        if status_fixture == "proposed":
+            assert "Verify live change" not in out             # approve first, always
 
 
 def test_legacy_decision_shows_plain_reason_and_no_forms():

@@ -280,7 +280,77 @@ def decision_controls(decision, *, csrf: str) -> str:
             "change it is to unapprove first.</p>"
             f"<form method='post' action='/decision/{d.id}/unapprove'>{hidden}"
             "<button class='ghost' type='submit'>Unapprove (back to proposed)</button></form>")
+    if d.status == "executed":
+        return (f"<p><span class='badge ok'>executed</span> at {_e(d.executed_at or '—')} · "
+                f"evidence <code>{_e(d.execution_evidence or '—')}</code>. Terminal — "
+                "corrections are new decisions.</p>")
     return (f"<p class='muted'>No actions: this decision is <b>{_e(d.status)}</b>.</p>")
+
+
+def verification_section(decision, *, csrf: str, verifiable: bool, pending=None,
+                         wait_s: int = 0) -> str:
+    """The U4b 'Verify live change' control (spec §Verification): the platform never writes to
+    production — the owner applies in WP, the platform verifies the live pages against the
+    approved envelope in TWO owner-triggered steps and marks the decision executed. Rendered
+    ONLY for approved decisions; the control may never overstate authority, so kinds without a
+    registered verify path get the plain reason instead."""
+    d = decision
+    if d.status != "approved":
+        return ""
+    if not verifiable:
+        return _section("Verify live change",
+                        f"<div class='muted'>Not available: kind {_e(d.kind or '—')} has no "
+                        "registered verification path yet.</div>")
+    hidden = (f"<input type='hidden' name='csrf' value='{_e(csrf)}'>"
+              f"<input type='hidden' name='revision' value='{d.revision}'>")
+    intro = ("<div class='muted'>Apply the approved change in WordPress first — verification "
+             "reads the LIVE pages and compares them with the approved envelope. Two reads, "
+             "both matching, mark this decision executed. Nothing is written to the site."
+             "</div>")
+    if pending is None:
+        body = (intro +
+                f"<form method='post' action='/decision/{d.id}/verify' style='margin-top:8px'>"
+                f"{hidden}<button type='submit'>Verify live change</button></form>")
+    elif wait_s > 0:
+        body = (intro +
+                f"<div style='margin-top:8px'>Read #1 matched at {_e(pending.finished_at)} "
+                f"(attempt #{pending.id}). Confirm arms in <b>{wait_s}s</b> — two reads "
+                "separated in time, so a transient state cannot self-confirm. Reload this "
+                "page to refresh.</div>"
+                "<button disabled title='minimum interval not reached'>Confirm verification"
+                "</button>")
+    else:
+        body = (intro +
+                f"<div style='margin-top:8px'>Read #1 matched at {_e(pending.finished_at)} "
+                f"(attempt #{pending.id}). Ready to confirm.</div>"
+                f"<form method='post' action='/decision/{d.id}/verify-confirm' "
+                f"style='margin-top:8px'>{hidden}"
+                "<button type='submit'>Confirm verification</button></form>")
+    return _section("Verify live change", body)
+
+
+def verify_attempts_section(attempts) -> str:
+    """Every verification read, newest last, individually inspectable — failures accumulate
+    and success never erases them (append-only evidence)."""
+    if not attempts:
+        return ""
+    rows = []
+    for a in attempts:
+        cls = {"match": "ok", "mismatch": "err", "error": "warn"}.get(str(a.outcome), "")
+        summary = ""
+        try:
+            urls = json.loads(a.detail or "{}")
+            problems = [f"{lang}: {p}" for lang, u in urls.items()
+                        for p in (u.get("problems") or [])]
+            if problems:
+                summary = " · " + _e("; ".join(problems)[:220])
+        except (ValueError, TypeError):
+            pass
+        rows.append(
+            f"<div><span class='tag'>{_e(a.finished_at)}</span> read #{a.read_number} · "
+            f"<span class='badge {cls}'>{_e(a.outcome)}</span> · attempt #{a.id} · "
+            f"rev {a.revision}{summary}</div>")
+    return _section(f"Verification attempts ({len(attempts)})", "".join(rows))
 
 
 _DECISION_FILTERS = ("all", "proposed", "approved", "rejected", "executed")
@@ -322,9 +392,12 @@ def decisions_body(store, *, status: str = "all") -> str:
             + _section(f"Decisions ({len(shown)})", body))
 
 
-def decision_body(decision, events, *, csrf: str, notice: str = "", error: str = "") -> str:
+def decision_body(decision, events, *, csrf: str, notice: str = "", error: str = "",
+                  verifiable: bool = False, pending=None, wait_s: int = 0,
+                  attempts=()) -> str:
     """The decision detail page (/decision/<id>) — why approve, what exactly changes, then the
-    technical trail."""
+    technical trail. U4b adds the Verify-live-change section (approved decisions) and the
+    append-only verification-attempt evidence."""
     d = decision
     banner = ""
     if error:
@@ -373,7 +446,12 @@ def decision_body(decision, events, *, csrf: str, notice: str = "", error: str =
             + extra + "</div>")
     tech = _section("History & integrity", "".join(tech_rows))
 
-    return (banner + head + why + evidence + numbers + change + controls + tech
+    verify = verification_section(d, csrf=csrf, verifiable=verifiable, pending=pending,
+                                  wait_s=wait_s)
+    attempts_html = verify_attempts_section(attempts)
+
+    return (banner + head + why + evidence + numbers + change + controls + verify
+            + attempts_html + tech
             + "<p><a href='/'>&larr; Home</a> · <a href='/decisions'>All decisions</a></p>")
 
 

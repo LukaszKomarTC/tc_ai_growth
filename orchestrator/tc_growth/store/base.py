@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from .records import Case, Decision, DecisionEvent, ReportArtifact, Run
+from .records import Case, Decision, DecisionEvent, ReportArtifact, Run, VerifyAttempt
 
 
 @runtime_checkable
@@ -132,6 +132,34 @@ class Store(Protocol):
     ) -> None: ...
 
     def list_decision_events(self, decision_id: int) -> list[DecisionEvent]: ...
+
+    # -- verification (U4b) --
+    # CONSTITUTIONAL INVARIANT: verification attempts are APPEND-ONLY at the storage layer
+    # (SQLite: triggers) — a success can never rewrite or remove a failure, and
+    # execution_evidence only POINTS at the terminal attempt. executed remains terminal.
+    def record_verify_attempt(
+        self,
+        *,
+        decision_id: int,
+        revision: int,
+        envelope_sha256: str,
+        read_number: int,
+        outcome: str,
+        detail: str,
+        started_at: str,
+        pair_id: int | None = None,
+    ) -> int: ...
+
+    def list_verify_attempts(self, decision_id: int) -> list[VerifyAttempt]: ...
+
+    def pending_verify_attempt(
+        self, decision_id: int, *, revision: int
+    ) -> VerifyAttempt | None: ...
+
+    def execute_decision(
+        self, decision_id: int, *, expected_revision: int, evidence_attempt_id: int,
+        actor: str = "platform"
+    ) -> None: ...
 
     # -- report artifacts (U3a: immutable, hash-verified) --
     # CONSTITUTIONAL INVARIANT (backend-neutral): the artifact core (body, hash, verdict,

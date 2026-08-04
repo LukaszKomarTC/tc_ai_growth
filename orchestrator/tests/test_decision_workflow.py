@@ -515,8 +515,11 @@ BEGIN SELECT RAISE(ABORT, 'report artifact is immutable'); END;
     raw.commit()
     raw.close()
 
+    from tc_growth.store.db import SCHEMA_VERSION
+
     s = SqliteStore(path)
-    assert s._conn.execute("SELECT version FROM schema_version;").fetchone()[0] == 4
+    assert s._conn.execute(
+        "SELECT version FROM schema_version;").fetchone()[0] == SCHEMA_VERSION
     # Legacy decision survived with NULL workflow fields and default revision 0.
     d = s.get_decision(1)
     assert d.title == "Apply bilingual SEO" and d.status == "approved"
