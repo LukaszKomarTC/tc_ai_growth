@@ -121,8 +121,10 @@ Completed
 
 - Issue #75 opened by reviewer as the U4c coordination surface (the new process rule working as designed) with 7 acceptance criteria — all adopted on-thread. Three restated precisely: titles enforced at PROPOSAL time (lead proposed an objective constraint — title = owner headline, required, <=60 chars, technical detail to rationale, enforced at the store boundary — rather than a fuzzy jargon detector that would eventually refuse a legitimate title; schema-v6 headline-column alternative offered as the owner/reviewer's call BEFORE build); live comparison values timestamped with honest failure (no silent fallback to an older read — an unreadable page must look unreadable); adopt-live-content composes a NEW envelope through the unchanged proposal boundary at revision 0 with provenance (source decision id, URLs, fetch time, fetched strings) and never touches the source
 
+- U4c BUILT + PR #76 opened (ee1833e, subscribed, references #75 per its criterion 1): headline constraint at the proposal boundary (objective <=60 chars, not a heuristic — a fail-closed boundary must not guess; legacy titles untouched); live comparison via the VERIFIER's own fetch/parse/normalize path, on request only (?live=1), timestamped, unreadable page shows NO value and withholds adopt; progressive disclosure (<details> for history/attempts/ops); adopt-live composes a new envelope through the UNCHANGED proposal boundary -> proposed rev 0 with provenance, source untouched, partial snapshots and stale revisions refused. Plus smart card (headline + provenance impact/confidence) and Action-required/Keep-an-eye-on labels. 307 green (10 new). Business-review block deliberately deferred (needs Monday's artifact #1 — no verifiable view before then). decision_proposal_context moved cli->config (a UI must not import the CLI)
+
 Current
-- U4c build on owner word; one design question open on #75 (title constraint vs new headline column). Then U2 retirement review. Monday 08-10: artifact #1 + behavioral capstone
+- PR #76 (U4c) under review on-thread; owner word merges; deploy = console release only. Then U2 retirement review. Monday 08-10: artifact #1 + behavioral capstone
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)
