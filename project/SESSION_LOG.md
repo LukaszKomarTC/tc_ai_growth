@@ -63,8 +63,10 @@ Completed
 
 - U4a BUILT + PR #71 opened (626b5ce, subscribed): schema v4 additive migration (proven on production-shaped v3 store), canonical envelope hashing (byte-exact pinned fixtures), storage-trigger lifecycle guards (approved immutable / executed terminal / events append-only), revision concurrency, /decision/<id> detail page (owner-first order), genuine two-step browser Approve + Reject-with-reason, decision-propose CLI seed. 250 green (36 new); branch CI green. PR body addresses the 10 criteria point-by-point. Awaiting reviewer round
 
+- PR #70 discovered (reviewer's FIRST PR: AGENTS.md attribution protocol — identity headers, reserved authority language, review format). Lead review posted on-thread (adopting the header in the same comment): substance sound; 2 non-blocking findings (dual role-truth divergence risk -> pointer sentences both ways; reviewer write-surface widening -> PROTOCOL update on merge). Recommended for owner authorization; queued AGENTS-1
+
 Current
-- PR #71 (U4a) under review on-thread; owner word merges. Monday: artifact #1 + capstone
+- PR #71 (U4a) under review on-thread; PR #70 (AGENTS.md) awaits owner word. Monday: artifact #1 + capstone
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)

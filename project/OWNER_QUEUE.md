@@ -7,6 +7,7 @@ objects (PROTOCOL.md, Phase 2). Pointers, not copies — evidence lives where it
 
 | ID | Priority | Decision / action | Evidence | Recommendation | Waiting since | Status |
 |---|---|---|---|---|---|---|
+| AGENTS-1 | normal | Authorize merge of PR #70 (AGENTS.md attribution protocol, reviewer-authored, docs-only). Your word also amends the reviewer write-surface record | PR #70 thread (lead review posted; CI green 59189e0) | Lead: recommended for owner authorization (2 non-blocking record alignments executed on merge) | 2026-08-04 | waiting |
 
 ## Decided (index — details live at the pointer)
 
