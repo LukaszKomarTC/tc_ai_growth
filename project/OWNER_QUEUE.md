@@ -7,9 +7,7 @@ objects (PROTOCOL.md, Phase 2). Pointers, not copies — evidence lives where it
 
 | ID | Priority | Decision / action | Evidence | Recommendation | Waiting since | Status |
 |---|---|---|---|---|---|---|
-| U3B-O1 | Medium | Cap production writes in Console env (`TC_ALLOW_WRITES=false` + restart) | WP §U3b acceptance O1 (truth-panel catch) | One-liner in chat; panel then reads Disabled | 2026-08-03 | waiting |
 | U3B-O2 | Medium | Confirm WordPress host: is `dev.tourdegirona.com` really Tossa's staging WP? | WP §U3b acceptance O2 (truth-panel catch) | Confirm or correct `TC_WP_BASE_URL` in Console env | 2026-08-03 | waiting |
-| U3B-O3 | Low | Sync the store: D#9/D#10 approved+executed, D#11 approved (3 CLI one-liners) | WP §U3b acceptance O3; WP work already done 2026-08-03 | Run the block in chat; U4 retires this class of chore | 2026-08-03 | waiting |
 
 ## Decided (index — details live at the pointer)
 
@@ -26,3 +24,5 @@ objects (PROTOCOL.md, Phase 2). Pointers, not copies — evidence lives where it
 | P3-ES | Closed on business evidence: real ES orders/bookings arriving; page-level rate stays under weekly monitoring | docs/decisions/2026-08-D9-D10-D11.md |
 | D#11 | Closed, REVISED rationale: GA4 pipeline operational; WooCommerce = order/revenue truth, GA4 = attribution (93 orders / €11,604 net in window ≠ mismatch) | docs/decisions/2026-08-D9-D10-D11.md |
 | U3B-1 | U3b merge authorized (owner GO 2026-08-03) and merged to main; Console redeploy + in-browser acceptance next | WP-CONSOLE-USABILITY.md §U3b |
+| U3B-O1 | Production-writes cap set (TC_ALLOW_WRITES=false in release env, deployed fd8f682) | WP §U3b acceptance O1 |
+| U3B-O3 | Store synced: D#9/D#10/D#11 proposed→approved via decision-approve (correct CLI verb; 'decision-set' was a lead command-name error, caught by usage output) | WP §U3b acceptance O3 |

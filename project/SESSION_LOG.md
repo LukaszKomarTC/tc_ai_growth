@@ -41,8 +41,10 @@ Completed
 
 - U3b.1 built+merged (94463c3, CI green, 214 tests): status card first (green all-clear / red top-decision with rationale+age), truth panel to bottom, severity accents, heading hierarchy. Reviewer's 10%-polish budget respected
 
+- O1+O3 executed + U3b.1 DEPLOYED (Console release fd8f682, health 200): decisions approved in store (after lead's decision-set/decision-approve command-name fix), TC_ALLOW_WRITES=false live. O2 (WP host question) still open
+
 Current
-- Owner: 3 config/sync one-liners + one Console redeploy (picks up U3b.1); U4 spec next; Monday: artifact #1 + capstone
+- Owner: O2 answer + browser look at the new Home; U4 spec next; Monday: artifact #1 + capstone
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)
