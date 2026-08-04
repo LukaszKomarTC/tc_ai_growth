@@ -407,3 +407,50 @@ def test_unexpected_defect_is_visible_as_a_defect_not_a_policy_refusal(env):
     errors = [r for r in s.list_runs(kind="console-error", limit=10)]
     assert errors and "RuntimeError" in (errors[0].summary or "")
     assert "injected defect" in (errors[0].detail or "")        # traceback kept as evidence
+
+
+def test_v5_store_migrates_to_v6_leaving_every_existing_record_intact(tmp_path):
+    """Criterion 1 of the deployment gate, evidenced BEFORE the deploy: v5→v6 adds the
+    adoptions table and touches nothing else — decisions, events, verify attempts, artifacts
+    and runs all survive byte-for-byte, and U4a/U4b history stays readable."""
+    from tc_growth.store.db import SCHEMA_VERSION
+
+    path = tmp_path / "v5.db"
+    s = SqliteStore(path)
+    # A production-shaped store: an executed decision with its full U4a/U4b trail.
+    did = s.propose_decision(title="Improve homepage SEO", envelope=_envelope(), **_CTX)
+    s.approve_decision(did, expected_revision=0)
+    attempt = s.record_verify_attempt(decision_id=did, revision=1,
+                                      envelope_sha256=s.get_decision(did).envelope_sha256,
+                                      read_number=1, outcome="match", detail="{}",
+                                      started_at="2026-08-04T19:39:00+00:00")
+    s.execute_decision(did, expected_revision=1, evidence_attempt_id=attempt)
+    s.log_run(kind="weekly-report", status="ok", summary="run")
+    s.persist_report_artifact(kind="weekly-report", body="report", validator_ok=True,
+                              validator_reason=None, validator_version="1")
+    before = {
+        "decision": s.get_decision(did),
+        "events": [(e.action, e.revision) for e in s.list_decision_events(did)],
+        "attempts": [(a.id, a.outcome) for a in s.list_verify_attempts(did)],
+        "runs": len(s.list_runs(limit=50)),
+        "artifacts": len(s.list_report_artifacts()),
+    }
+    # Rewind to v5: drop the v6 table and stamp the old version.
+    s._conn.execute("DROP TABLE decision_adoptions;")
+    s._conn.execute("UPDATE schema_version SET version = 5;")
+    s._conn.commit()
+    s.close()
+
+    s = SqliteStore(path)                                        # reopen under current code
+    assert s._conn.execute(
+        "SELECT version FROM schema_version;").fetchone()[0] == SCHEMA_VERSION
+    assert s._conn.execute(
+        "SELECT name FROM sqlite_master WHERE name = 'decision_adoptions';").fetchone()
+    after = s.get_decision(did)
+    assert after == before["decision"]                            # every field, unchanged
+    assert after.status == "executed" and after.execution_evidence == f"verify_attempt:{attempt}"
+    assert [(e.action, e.revision) for e in s.list_decision_events(did)] == before["events"]
+    assert [(a.id, a.outcome) for a in s.list_verify_attempts(did)] == before["attempts"]
+    assert len(s.list_runs(limit=50)) == before["runs"]
+    assert len(s.list_report_artifacts()) == before["artifacts"]
+    s.close()
