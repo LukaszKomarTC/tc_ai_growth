@@ -127,11 +127,17 @@ connector is unavailable — the owner uploads a bundle:
 
     git archive --format=zip -o /tmp/tc-review-bundle.zip HEAD docs project orchestrator
 
-**Reviewer write surface (updated 2026-08-04): recommendation artifacts only.** The reviewer
-can create GitHub issues and PR reviews/comments (first: issue #68, the U3b UX review) — these
-are recommendations in durable form, not repo content. Code, merges, and releases remain
-outside its authority, by its own recommendation and owner governance: separation of duties is
-a strength of this model. The owner's word remains the only merge/deploy authority.
+**Reviewer write surface (updated 2026-08-04, twice): recommendation artifacts + governance-doc
+PRs.** The reviewer can create GitHub issues and PR reviews/comments (first: issue #68), and —
+since PR #70 (AGENTS.md, owner-merged) — may open GOVERNANCE-ONLY documentation PRs through the
+full review loop (lead review, owner merge word), the same earned-scope mechanism every non-lead
+engineer uses. Code, merges, and releases remain outside its authority. The owner's word remains
+the only merge/deploy authority.
+
+**Attribution mechanics live in `/AGENTS.md`** (reviewer-authored, PR #70): identity headers on
+every AI-posted GitHub artifact, reserved owner-authority language, the finding→risk→
+recommendation→criteria→verdict review format. On role boundaries, THIS file is authority;
+AGENTS.md carries the mechanics.
 
 **The GitHub bus (adopted 2026-08-04, reversing the earlier defer-Issues decision — the pain it
 solves materialized as transcript relaying):** engineering increments now run as PR threads.

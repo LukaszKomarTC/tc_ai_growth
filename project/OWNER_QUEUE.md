@@ -7,7 +7,6 @@ objects (PROTOCOL.md, Phase 2). Pointers, not copies — evidence lives where it
 
 | ID | Priority | Decision / action | Evidence | Recommendation | Waiting since | Status |
 |---|---|---|---|---|---|---|
-| AGENTS-1 | normal | Authorize merge of PR #70 (AGENTS.md attribution protocol, reviewer-authored, docs-only). Your word also amends the reviewer write-surface record | PR #70 thread (lead review posted; CI green 59189e0) | Lead: recommended for owner authorization (2 non-blocking record alignments executed on merge) | 2026-08-04 | waiting |
 
 ## Decided (index — details live at the pointer)
 
@@ -28,3 +27,4 @@ objects (PROTOCOL.md, Phase 2). Pointers, not copies — evidence lives where it
 | U3B-O3 | Store synced: D#9/D#10/D#11 proposed→approved via decision-approve (correct CLI verb; 'decision-set' was a lead command-name error, caught by usage output) | WP §U3b acceptance O3 |
 | U3B-O2 | Owner confirmed: `dev.tourdegirona.com` IS Tossa's staging WordPress host (cross-domain by design, not a config error) | docs/STANDING-CAUTIONS.md note |
 | U4-SPEC | Owner GO 2026-08-04 → PR #69 rebase-merged (main f37dfb8); U4a opened against the 10 thread criteria | PR #69 thread; docs/workpackages/WP-U4-DECISION-WORKFLOW.md |
+| AGENTS-1 | PR #70 merged to main (365f623): AGENTS.md attribution protocol in force; lead's 2 record alignments executed (AGENTS.md→PROTOCOL pointer; PROTOCOL reviewer-surface update) | PR #70 thread; /AGENTS.md; project/PROTOCOL.md §Reviewer access |

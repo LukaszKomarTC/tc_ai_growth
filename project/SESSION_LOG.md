@@ -65,8 +65,12 @@ Completed
 
 - PR #70 discovered (reviewer's FIRST PR: AGENTS.md attribution protocol — identity headers, reserved authority language, review format). Lead review posted on-thread (adopting the header in the same comment): substance sound; 2 non-blocking findings (dual role-truth divergence risk -> pointer sentences both ways; reviewer write-surface widening -> PROTOCOL update on merge). Recommended for owner authorization; queued AGENTS-1
 
+- PR #70 MERGED (main 365f623): AGENTS.md in force. Lead's committed alignments executed: authority-pointer sentence in AGENTS.md (PROTOCOL wins on role boundaries), PROTOCOL reviewer write-surface widened to governance-doc PRs, AGENTS-1 decided
+
+- PR #71 review round 1 (reviewer, under AGENTS.md header): 3 findings — profile/environment must be ENFORCED at proposal boundary not displayed; target schema must be closed per kind; storage-enforcement claim overstated. ALL implemented in r2 (ec894e3, rebased onto post-#70 main): runtime-context params required on propose/repropose (fail closed, no row no event), TC_DECISION_URL_HOSTS setting (fail closed unset), closed kind schemas (unknown kinds unproposable; seo_meta_update: wp_post + post_id + both es/en HTTPS URLs), transition-graph trigger vs raw SQL, claims narrowed to precise layer. 258 green (+8). PR body rewritten to r2 with attribution header; replied on-thread
+
 Current
-- PR #71 (U4a) under review on-thread; PR #70 (AGENTS.md) awaits owner word. Monday: artifact #1 + capstone
+- PR #71 (U4a r2) awaiting reviewer round 2 / verdict; owner word merges. Monday: artifact #1 + capstone
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)

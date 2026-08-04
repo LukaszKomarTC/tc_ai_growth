@@ -2,6 +2,8 @@
 
 This repository is operated through multiple AI systems that may post to GitHub using the owner's connected account. GitHub's visible author field is therefore not sufficient evidence of who produced a comment or what authority it carries.
 
+Authority on roles and governance decisions: `project/PROTOCOL.md`. This file adds the attribution MECHANICS — identity headers, reserved language, review format — for agents posting through the shared GitHub identity; if the two files ever disagree on a role boundary, PROTOCOL.md wins and this file gets fixed (PR #70 lead review, finding 2).
+
 ## Mandatory identity header
 
 Every AI-generated pull-request review, issue comment, design response, implementation summary, or automated governance note MUST begin with an explicit identity block:
