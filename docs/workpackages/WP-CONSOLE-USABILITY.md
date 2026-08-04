@@ -19,7 +19,13 @@ review -> owner merge word -> owner-run deploy -> in-browser acceptance):
   rows, modal contained, no mobile overflow). Standing design rule adopted: the PAGE is the
   scrolling surface; dialog geometry lives under .modal only.
 The D#12→D#13 supersede recorded the as-applied content (owner enriched copy at apply time);
-live ES+EN pages verified by lead fetch. Eliminated-actions row 1 (CLI approval chore) is
+live ES+EN pages verified by lead fetch. RECORD CORRECTION (2026-08-04 19:25): this file and
+SESSION_LOG previously stated D#12 was rejected during the U4a acceptance — it was not. The
+store's decision_events showed only propose/approve/unapprove for D#12 (5 events total where 6
+were claimed); the lead had written the reject from chat memory instead of reading the store.
+The owner rejected D#12 for real at the start of the U4b deploy. The audit trail caught a
+false record — the exact failure mode chat-is-not-canon exists to prevent, now with a
+first-class example. Eliminated-actions row 1 (CLI approval chore) is
 retired in practice. U4b (verify live change -> executed) is the next increment; U2 basic-auth
 retirement review triggers at U4 acceptance per the spec.
 

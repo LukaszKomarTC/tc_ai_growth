@@ -79,7 +79,7 @@ Completed
 
 - U4a closeout progress: VPS suite 262 passed (criterion 3 closed); EN homepage VERIFIED LIVE on re-fetch (was page cache) — BOTH languages of D#12's change now live; owner ran the /etc/tc-console.env persist fix + restart (badge/writes re-check pending owner refresh). Hosts .env line mangled a SECOND time by the owner's chat client (renders www URLs as markdown links even in code blocks) — new fix avoids contiguous www.host text; TARGET_ENVIRONMENTS line also duplicated (dedupe in same fix)
 
-- U4a closeout confirmed by owner: badge PRODUCTION + writes Disabled restored (env persist works across releases now); D#13 (as-applied content) APPROVED in browser; D#12 unapproved→REJECTED "superseded" — unapprove and reject controls exercised live. Record now matches live content. Hosts-line hygiene fix output still unpasted (non-blocking: valid first entry carried every proposal)
+- U4a closeout confirmed by owner: badge PRODUCTION + writes Disabled restored (env persist works across releases now); D#13 (as-applied content) APPROVED in browser; D#12 UNAPPROVED (the reject was claimed but never happened — see 08-04 correction). Record now matches live content. Hosts-line hygiene fix output still unpasted (non-blocking: valid first entry carried every proposal)
 
 - Reviewer post-merge finding on #71 (under AGENTS.md header): NO decision-history view — approved/rejected decisions vanish from homepage (proposed-only queue), reachable only by remembered URL; Unapprove effectively undiscoverable. "Real UX defect… fix promptly before U4a is called fully closed." U4a.1 build begins: /decisions destination (all statuses, filterable), nav tab, post-action history link
 
@@ -105,8 +105,12 @@ Completed
 
 - U4b MERGED (owner go): PR #74 rebase-merged to main 3edb0de; 297 green on merged tip. Queue emptied. Deploy plan issued (app v5 convergence + console redeploy; D#13 acceptance script covers all 6 criteria incl. deliberate-mismatch and failed-confirm-consumes-pair)
 
+- U4b DEPLOYED: app converged to 3edb0de (297 on VPS, schema v5, 13 decisions/26 runs/3 cases intact, verify table + both append-only triggers armed); Console release 3edb0de, health 200
+
+- RECORD CORRECTION: the store's decision_events (5, not 6) proved D#12 was never rejected — only unapproved. The lead had recorded the reject from chat memory without reading the store; D#12 sat back in the owner's queue unnoticed for ~13h. Owner rejected it for real 19:25 before the U4b acceptance. Lesson re-earned: verify state from the store before writing it into a record (PROTOCOL invariant 2)
+
 Current
-- Owner: run U4b deploy plan + D#13 acceptance -> eliminated-actions row 2 retired. Monday 08-10: artifact #1 + capstone
+- Owner: D#13 acceptance (6 criteria) -> eliminated-actions row 2 retired. Monday 08-10: artifact #1 + capstone
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)
