@@ -7,6 +7,7 @@ objects (PROTOCOL.md, Phase 2). Pointers, not copies — evidence lives where it
 
 | ID | Priority | Decision / action | Evidence | Recommendation | Waiting since | Status |
 |---|---|---|---|---|---|---|
+| U4A1-1 | normal | Authorize merge of PR #72 (decision history view, read-only) — then one Console-redeploy block closes U4a fully | PR #72 thread (c6c5c72, CI green ×2, 265 tests) | Reviewer: "safe for owner authorization to merge and deploy" | 2026-08-04 | waiting |
 
 ## Decided (index — details live at the pointer)
 

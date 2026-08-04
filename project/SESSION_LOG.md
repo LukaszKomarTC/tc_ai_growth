@@ -85,8 +85,10 @@ Completed
 
 - U4a.1 BUILT + PR #72 opened (c6c5c72, subscribed): /decisions history destination (all statuses, whitelisted filters, legacy labeled), Decisions nav tab, history links where items leave the queue + on detail pages; queue semantics unchanged. 265 green (3 new incl. e2e approve→leaves-queue→discoverable). Replied on #71 thread; awaiting reviewer round
 
+- PR #72 reviewer verdict: "safe for owner authorization to merge and deploy" (after self-correcting a restated-requirement comment — second connector-lag episode). 5 post-deploy acceptance checks adopted; pagination/search noted as future (U4c). Queued U4A1-1
+
 Current
-- PR #72 (U4a.1) under review; owner word merges; then console redeploy closes U4a fully. Monday: artifact #1 + capstone
+- PR #72 awaiting OWNER merge word; then console redeploy + 5-check acceptance closes U4a fully. Monday: artifact #1 + capstone
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)
