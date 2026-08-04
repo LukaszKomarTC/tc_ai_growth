@@ -123,8 +123,10 @@ Completed
 
 - U4c BUILT + PR #76 opened (ee1833e, subscribed, references #75 per its criterion 1): headline constraint at the proposal boundary (objective <=60 chars, not a heuristic — a fail-closed boundary must not guess; legacy titles untouched); live comparison via the VERIFIER's own fetch/parse/normalize path, on request only (?live=1), timestamped, unreadable page shows NO value and withholds adopt; progressive disclosure (<details> for history/attempts/ops); adopt-live composes a new envelope through the UNCHANGED proposal boundary -> proposed rev 0 with provenance, source untouched, partial snapshots and stale revisions refused. Plus smart card (headline + provenance impact/confidence) and Action-required/Keep-an-eye-on labels. 307 green (10 new). Business-review block deliberately deferred (needs Monday's artifact #1 — no verifiable view before then). decision_proposal_context moved cli->config (a UI must not import the CLI)
 
+- PR #76 review round 1: BLOCKING TOCTOU consent defect — adopt-live re-fetched on POST, so the proposal could bind wording the owner never reviewed (page can change between comparison and click). Conceded: binding the source REVISION protects the decision, not the consent. Fixed r2 (39f68b3): snapshot_digest over source id+revision+envelope and every displayed value (timestamp excluded — content must match, not the clock), signed adopt token (fetched_at|digest|sig), POST re-fetches and requires exact equality else refuses 'live content CHANGED', idempotent duplicate submit, provenance records BOTH reads. 312 green (5 new). Also found+fixed: `secret` out of scope in the decision handler made a NameError look like a policy refusal — broad except turning defects into polite refusals flagged as a pattern to watch
+
 Current
-- PR #76 (U4c) under review on-thread; owner word merges; deploy = console release only. Then U2 retirement review. Monday 08-10: artifact #1 + behavioral capstone
+- PR #76 (U4c r2) awaiting re-review; owner word merges; deploy = console release only. Then U2 retirement review. Monday 08-10: artifact #1 + behavioral capstone
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)
