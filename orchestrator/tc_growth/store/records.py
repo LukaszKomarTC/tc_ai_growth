@@ -423,6 +423,29 @@ def _provenance_json(value: dict | None, field: str) -> str | None:
     return json.dumps(value, ensure_ascii=False)
 
 
+# The owner-facing headline is enforced HERE, at proposal creation — not rewritten cosmetically
+# in the browser (review #75). The constraint is deliberately OBJECTIVE (required, single line,
+# length-capped) rather than a "does this look technical?" heuristic: this boundary fails closed,
+# and a guess that refuses a legitimate title would block real work. Long technical description
+# belongs in `rationale`, which the detail page renders under "Recommendation".
+MAX_TITLE_CHARS = 60
+
+
+def validate_headline(title: object) -> str:
+    """Return the trimmed owner-facing headline, or raise ValueError explaining the rule."""
+    if not isinstance(title, str) or not title.strip():
+        raise ValueError("title is required — it is the owner-facing headline")
+    t = title.strip()
+    if "\n" in t or "\r" in t:
+        raise ValueError("title must be a single line — the headline the owner reads first")
+    if len(t) > MAX_TITLE_CHARS:
+        raise ValueError(
+            f"title is the OWNER-FACING HEADLINE and must be at most {MAX_TITLE_CHARS} "
+            f"characters (got {len(t)}). Write what the owner gains — e.g. 'Improve homepage "
+            "SEO' — and move the technical description to `rationale`.")
+    return t
+
+
 def _check_envelope_context(envelope: dict, *, expected_profile: str,
                             allowed_environments: tuple[str, ...],
                             allowed_hosts: tuple[str, ...]) -> None:
@@ -484,6 +507,7 @@ def propose_decision(
     envelope itself."""
     from ..envelope import canonical_json, envelope_sha256, validate_envelope
 
+    headline = validate_headline(title)
     problems = validate_envelope(envelope)
     if problems:
         raise ValueError("invalid envelope: " + "; ".join(problems))
@@ -494,7 +518,7 @@ def propose_decision(
         "INSERT INTO decisions (made_at, title, rationale, status, made_by, case_id, kind, "
         "envelope, envelope_sha256, revision, evidence, impact, confidence) "
         "VALUES (?, ?, ?, 'proposed', ?, ?, ?, ?, ?, 0, ?, ?, ?);",
-        (_now(), title, rationale, made_by, case_id, envelope["kind"],
+        (_now(), headline, rationale, made_by, case_id, envelope["kind"],
          canonical_json(envelope), envelope_sha256(envelope), evidence,
          _provenance_json(impact, "impact"), _provenance_json(confidence, "confidence")))
     decision_id = int(cur.lastrowid)

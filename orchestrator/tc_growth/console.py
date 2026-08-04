@@ -53,7 +53,8 @@ _KEEPALIVE_FRAME = b": keepalive\n\n"  # SSE comment — MUST start with ':' so 
 
 # U4a decision actions: POST /decision/<id>/<act>. Outcome text is server-fixed and selected by
 # WHITELISTED query keys only — the redirect target can never carry reflected content.
-_DECISION_ACT = re.compile(r"^/decision/(\d+)/(approve|reject|unapprove|verify|verify-confirm)$")
+_DECISION_ACT = re.compile(
+    r"^/decision/(\d+)/(approve|reject|unapprove|verify|verify-confirm|adopt-live)$")
 _DECISION_NOTICES = {
     "approved": "Approved. The envelope is now bound and immutable.",
     "already-approved": "Already approved — nothing changed (duplicate submission is safe).",
@@ -63,6 +64,8 @@ _DECISION_NOTICES = {
                       "interval — reload this page in about a minute.",
     "executed": "Verified twice against the live pages — this decision is now EXECUTED and "
                 "has left the queue. The evidence trail is below.",
+    "adopted": "New proposal created from the live page content — it is waiting for your "
+               "approval. Nothing on this decision changed.",
 }
 _DECISION_ERRORS = {
     "stale": "This page was stale — the decision changed underneath it. Review the current "
@@ -81,6 +84,8 @@ _DECISION_ERRORS = {
     "verify-no-pending": "There is no matching first read to confirm — run Verify live change "
                          "first.",
     "verify-unavailable": "Verification is not available for this decision.",
+    "adopt-failed": "Could not adopt the live content — the pages could not be read in full. "
+                    "Nothing was created; try the comparison again.",
     "unknown": "The action could not be completed — nothing was changed. Check the state below.",
 }
 
@@ -578,12 +583,26 @@ class _Handler(BaseHTTPRequestHandler):
             q = parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
             notice = _DECISION_NOTICES.get(q.get("msg", [""])[0], "")
             error = _DECISION_ERRORS.get(q.get("err", [""])[0], "")
+            # U4c: the live comparison is fetched ON REQUEST (?live=1) — a detail page must not
+            # hit the site on every open. Failure renders as failure; no stale value is shown.
+            comparison = snapshot = None
+            if q.get("live", [""])[0] == "1" and decision.envelope_sha256:
+                try:
+                    envelope = json.loads(decision.envelope or "")
+                    snapshot = verify_mod.live_snapshot(envelope)
+                    comparison = verify_mod.compare_fields(envelope, snapshot)
+                except Exception as exc:  # noqa: BLE001 - a failed read is content, not a 500
+                    snapshot = {"fetched_at": "—"}
+                    comparison = [{"lang": "?", "label": "live read", "url": None,
+                                   "proposed": "", "current": None,
+                                   "error": _redact(f"{type(exc).__name__}: {exc}"),
+                                   "same": False}]
             body = console_views.decision_body(
                 decision, events, csrf=csrf_for(session, secret), notice=notice, error=error,
                 verifiable=decision.kind in verify_mod.VERIFIABLE_KINDS,
                 pending=pending,
                 wait_s=verify_mod.confirm_wait_s(pending) if pending else 0,
-                attempts=attempts)
+                attempts=attempts, comparison=comparison, snapshot=snapshot)
             self._html(200, _shell(f"Decision D#{decision.id}", "decisions", body, **chrome))
         elif path.startswith("/report/"):
             from . import console_views
@@ -708,6 +727,48 @@ class _Handler(BaseHTTPRequestHandler):
                 self._html(200, _shell(f"Confirm D#{decision.id}", "decisions", body,
                                        site_name=s.site_name or (active_site() or "Tossa Cycling"),
                                        env_kind=s.env_kind))
+                return
+            if action == "adopt-live":
+                # U4c: creates a NEW unapproved proposal from the live values, with provenance.
+                # It never mutates, approves, executes or closes the source decision (review
+                # #75) — superseding stays an explicit owner act.
+                from . import verify as verify_mod
+                from .config import decision_proposal_context
+
+                source = store.get_decision(decision_id)
+                if source is None or not source.envelope_sha256:
+                    _redirect("err=adopt-failed")
+                    return
+                if source.revision != revision:
+                    _redirect("err=stale")
+                    return
+                try:
+                    envelope = json.loads(source.envelope or "")
+                    snapshot = verify_mod.live_snapshot(envelope)
+                    new_envelope = verify_mod.adopt_live_envelope(envelope, snapshot)
+                    profile, envs, hosts = decision_proposal_context()
+                    urls = ", ".join(f"{k}={v['url']}" for k, v in snapshot["urls"].items())
+                    values = "; ".join(
+                        f"{k}: title={v['title']!r} meta={v['meta_description']!r}"
+                        for k, v in snapshot["urls"].items())
+                    new_id = store.propose_decision(
+                        title=f"Adopt live wording (from D#{source.id})",
+                        envelope=new_envelope,
+                        expected_profile=profile, allowed_environments=envs,
+                        allowed_hosts=hosts,
+                        rationale=(f"The live pages no longer match D#{source.id}'s approved "
+                                   "content. This proposal binds exactly what is serving now, "
+                                   "so verification can close the loop against reality. "
+                                   f"Approving it does not change the site."),
+                        evidence=(f"Adopted from D#{source.id} · fetched "
+                                  f"{snapshot['fetched_at']} · {urls} · {values}"),
+                        case_id=source.case_id, made_by="human")
+                except Exception:  # noqa: BLE001 - partial/unreadable snapshot must not create
+                    _redirect("err=adopt-failed")
+                    return
+                self._headers(303, "text/html; charset=utf-8",
+                              extra=[("Location", f"/decision/{new_id}?msg=adopted")],
+                              body_len=0)
                 return
             if action in ("verify", "verify-confirm"):
                 # U4b: revision must match what the owner's page showed — a stale view must
