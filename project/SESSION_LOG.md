@@ -89,8 +89,10 @@ Completed
 
 - U4a.1 MERGED (owner word): PR #72 rebase-merged to main 8dafa5c; 265 green on merged tip. Queue emptied. Console redeploy block issued (release 8dafa5c; no migration)
 
+- U4a.1 DEPLOYED (release 8dafa5c, health 200; env truths SURVIVED the redeploy — /etc/tc-console.env persist proven) + owner acceptance: Decisions nav live, D#12/D#13 discoverable, unapprove exercised. Owner observation -> real CSS bug: bare .card modal selector clamped every section.card (560px + 86vh inner scrollbar) — explains 'three decisions visible' compression. U4a.2 fix on PR #73 (scoped .modal .card + regression test, 266 green, subscribed)
+
 Current
-- Owner: run the redeploy block + 5-check in-browser acceptance -> U4a FULLY CLOSED. Then U4b. Monday: artifact #1 + capstone
+- PR #73 (CSS scoping) under review; owner word merges; one redeploy closes U4a fully. Then U4b. Monday: artifact #1 + capstone
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)
