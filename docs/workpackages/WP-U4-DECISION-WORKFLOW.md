@@ -17,7 +17,7 @@ acceptance checks this table row by row, like U1's button inventory.
 | Telling the store what happened after acting in WP admin (the D#9/D#10 sync chore, done twice this week) | **DISAPPEARS** (U4b: the platform verifies the live page against the approved content and marks executed itself) |
 | Reading "why should I approve this" out of a long email report | **DISAPPEARS** (U4a: evidence, impact, confidence on the decision itself) |
 | Applying approved SEO changes in production WP admin by hand | **REMAINS MANUAL for now** — production writes are a separate capability (WP-08 class) with its own acceptance; when it lands, connector apply slots into this same workflow with no redesign. Until then: approve in browser → apply in WP → platform verifies + closes |
-| Staging apply for draft-class decisions | Connector apply via the existing approved-apply path (already accepted, staging-only per D#7) |
+| Staging apply for draft-class decisions | **REMAINS MANUAL / DEFERRED** — no Console registry operation exists for apply on current `main` (tools sit behind DRAFTS/CONTROLLED_EXECUTION phases); a staging-bound registered operation needs its own acceptance first. Not part of U4 closure |
 | Release authorization, merges, deploys | **INTENTIONALLY MANUAL** — human by governance, not by limitation |
 
 ## Schema (store v4 — additive migration, same pattern as v3)
