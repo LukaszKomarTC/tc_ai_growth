@@ -7,6 +7,7 @@ objects (PROTOCOL.md, Phase 2). Pointers, not copies — evidence lives where it
 
 | ID | Priority | Decision / action | Evidence | Recommendation | Waiting since | Status |
 |---|---|---|---|---|---|---|
+| U4A2-1 | normal | Authorize merge of PR #73 (CSS scoping fix, one-round review) — then one redeploy closes U4a fully | PR #73 thread (e44a99b, CI green ×2, 266 tests) | Reviewer: "Safe to merge" | 2026-08-04 | waiting |
 
 ## Decided (index — details live at the pointer)
 
