@@ -7,14 +7,13 @@ _Index, not authority (PROTOCOL.md). If this disagrees with git or the server, t
 - `main`: NOT pinned here — a file committed to `main` cannot pin `main`'s HEAD (the commit that
   updates the pin invalidates it; Codex caught the stale value on 2026-08-03). Authority:
   `git rev-parse origin/main`. Only deployment pins belong below.
-- Production app checkout (`/opt/tc_ai_growth/app`): `d391247` — verified: owner-run
-  convergence @ 2026-08-03 ~19:40 UTC — ff b6779cc→d391247, 205 passed on the VPS, store
-  migrated v2→v3 (report_artifacts empty, ledger intact #25–27), Monday timer armed 08-10
+- Production app checkout (`/opt/tc_ai_growth/app`): `3edb0de` — verified: owner-run
+  convergence @ 2026-08-04 — 297 passed on the VPS, store migrated v4→v5 (decision_verify_attempts
+  + append-only triggers; 13 decisions / 26 runs / 3 cases intact), Monday timer armed 08-10
   05:00 UTC. Rollback marker: `backup/pre-u3a-b6779cc`.
-- Console release (tc-console): `9dd11ef` from `/opt/tc_ai_growth/releases/9dd11ef…` — verified:
-  owner-run apply + health 200 + 5-check acceptance @ 2026-08-04 (U4a.2). Env truths persist in
-  /etc/tc-console.env across releases (proven). Rollback: `releases/8dafa5c…` retained (N-1);
-  older release dirs removable
+- Console release (tc-console): `3edb0de` from `/opt/tc_ai_growth/releases/3edb0de…` — verified:
+  owner-run apply + health 200 @ 2026-08-04 (U4b). Env truths persist in /etc/tc-console.env
+  across releases (proven). Rollback: `releases/9dd11ef…` retained (N-1); older dirs removable
 
 ## Current work
 

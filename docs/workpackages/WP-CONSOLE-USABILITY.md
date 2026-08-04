@@ -1,7 +1,45 @@
 # WP-CONSOLE-USABILITY — the owner can operate the platform
 
 **Status: U1 + U2 + U3b(+.1) ACCEPTED · U3a deployed (live acceptance = Monday 08-10 artifact
-#1) · U4a FULLY CLOSED 2026-08-04 (acceptance below + two follow-ups) · next: U4b.**
+#1) · U4a FULLY CLOSED · U4b ACCEPTED 2026-08-04 — the platform closes its own loop · next:
+U4c (presentation) and the Monday capstone.**
+
+**U4b acceptance record (owner-run, 2026-08-04, app converged a3104a8→3edb0de, Console release
+3edb0de).** THE LOOP IS CLOSED: a production decision was proposed from live evidence, approved
+by the owner in the browser, applied by the owner in WP, and then VERIFIED AND CLOSED BY THE
+PLATFORM ITSELF — eliminated-actions row 2 (the store↔WP sync chore) retired in practice.
+Evidence, against the reviewer's six production criteria (PR #74 thread), read from the store,
+not from chat:
+
+1. **Full browser loop on a real production decision (D#14).** Event trail: `propose` (human)
+   19:39:03 → `approve` (owner) 19:39:32 → read #1 match 19:39:38 (attempt #2) → read #2 match
+   19:47:18 (attempt #3, paired to #2) → `execute` (actor **platform**) 19:47:18, revision 2,
+   `execution_evidence = verify_attempt:3`. Both reads recorded the fetched title/meta verbatim
+   for ES and EN with status 200 and matching canonicals.
+2. **Restart survival.** The owner restarted `tc-console` during the ~7m40s wait; the pending
+   read #1 remained valid and unpaired (verified in the store before the confirm) because the
+   pending state is derived from the attempts table, not the session. The confirm then
+   succeeded normally.
+3. **Fail-closed on a REAL mismatch (no synthetic break needed).** Before D#14, `Verify live
+   change` on D#13 failed closed (attempt #1): the owner had refined the ES meta description
+   again after D#13 was seeded, and the platform named the language and the field. D#13 stayed
+   approved; the attempt is permanent evidence.
+4. **Failed-confirm-consumes-the-pair: NOT exercised live** — the real mismatch occurred at
+   read #1, so the confirm-stage failure path was never triggered in production. It remains
+   covered by automated tests only (test_verify_workflow.py). Recorded honestly as the one
+   criterion proven in test but not in the owner's browser.
+5. **Queue vs history.** D#14 left the waiting queue on execution and remains in Decision
+   History with its Execution record (both reads, timestamps, envelope hash, revision).
+6. **No production write.** Every site change in this sequence was typed by the owner in WP
+   admin; the platform performed GETs only. `TC_ALLOW_WRITES=false` remained in force.
+
+Two findings recorded, neither blocking: (a) **copy drift is a pattern, not an accident** — for
+the second time the owner improved wording while applying, so the record had to chase reality
+(D#12→D#13→D#14). The honest fix is not discipline but an **"adopt live content"** action that
+proposes a pre-filled decision from the live page — a U4c candidate. (b) The D#12 record
+correction below (a rejection recorded from chat memory that never happened) was caught by the
+event trail; verification-before-recording is now applied to acceptance records themselves —
+this record's every claim comes from a store query pasted in the session.
 
 **U4a closure (2026-08-04).** Three increments, each through the full loop (PR -> on-thread
 review -> owner merge word -> owner-run deploy -> in-browser acceptance):

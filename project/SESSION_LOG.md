@@ -109,8 +109,12 @@ Completed
 
 - RECORD CORRECTION: the store's decision_events (5, not 6) proved D#12 was never rejected — only unapproved. The lead had recorded the reject from chat memory without reading the store; D#12 sat back in the owner's queue unnoticed for ~13h. Owner rejected it for real 19:25 before the U4b acceptance. Lesson re-earned: verify state from the store before writing it into a record (PROTOCOL invariant 2)
 
+- U4b ACCEPTED — THE PLATFORM CLOSED ITS OWN LOOP. D#13 verify failed closed on a REAL ES-meta drift (owner had refined copy again) -> D#13 rejected, D#14 seeded from live values, approved in browser, read#1 match 19:39:38, tc-console restarted mid-wait (pending survived, store-backed), read#2 match 19:47:18 -> EXECUTED by actor 'platform', evidence verify_attempt:3. 5 of 6 reviewer criteria proven live; criterion 4 (failed confirm consumes pair) honestly recorded as test-only. Record: WP-CONSOLE-USABILITY §U4b. Eliminated-actions row 2 retired
+
+- Product finding: copy drift is a PATTERN (D#12->D#13->D#14 — owner improves wording while applying). Candidate: 'adopt live content' action proposing a pre-filled decision from the live page (U4c). U2 basic-auth retirement review now triggered per spec exit condition 4
+
 Current
-- Owner: D#13 acceptance (6 criteria) -> eliminated-actions row 2 retired. Monday 08-10: artifact #1 + capstone
+- U4c (smart card, business-review block, labels, adopt-live-content candidate) + U2 retirement review. Monday 08-10: artifact #1 + behavioral capstone (Console-first vs Gmail-first)
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)
