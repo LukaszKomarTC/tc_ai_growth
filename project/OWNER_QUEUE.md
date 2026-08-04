@@ -7,7 +7,7 @@ objects (PROTOCOL.md, Phase 2). Pointers, not copies — evidence lives where it
 
 | ID | Priority | Decision / action | Evidence | Recommendation | Waiting since | Status |
 |---|---|---|---|---|---|---|
-| U4C-1 | normal | Authorize merge of PR #76 (U4c: business-first presentation, live comparison, adopt-live) — then deploy plan (app convergence for schema v6 + console release) against the 8 criteria | PR #76 thread (r3+ `5b400af`, 3 review rounds, CI green, 318 tests) | Reviewer: "recommended for owner authorization to merge and deploy" | 2026-08-04 | waiting |
+| _(empty)_ | — | — | — | — | — | — |
 
 ## Decided (index — details live at the pointer)
 
@@ -33,3 +33,4 @@ objects (PROTOCOL.md, Phase 2). Pointers, not copies — evidence lives where it
 | U4A1-1 | Owner "merge" 2026-08-04 → PR #72 rebase-merged (main 8dafa5c, 265 green); console redeploy + 5-check acceptance next | PR #72 thread |
 | U4A2-1 | Owner "ok-go" 2026-08-04 → PR #73 rebase-merged (main 9dd11ef, 266 green); redeploy + 5-check acceptance next | PR #73 thread |
 | U4B-1 | Owner "go" 2026-08-04 → PR #74 rebase-merged (main 3edb0de, 297 green on merged tip); deploy + D#13 acceptance per 6 criteria next | PR #74 thread |
+| U4C-1 | Owner "ok" 2026-08-04 → PR #76 rebase-merged (main 684681c, CI run #349 green, 318 tests on merged tip); TWO-PHASE deploy next (app convergence + v5→v6 migration, then Console release) per the 8 criteria | PR #76 thread; WP-U4-DECISION-WORKFLOW.md |

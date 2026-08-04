@@ -131,8 +131,10 @@ Completed
 
 - PR #76 review round 4 — BLOCKING on the RECORD, not the code: reviewer refused to authorize merge while the PR BODY still said "No schema change" and "Deploy = Console release only (no migration)" — both false since r3. I had conceded this in a thread comment and left the body untouched, which is conceding it in the wrong place: the body IS the durable acceptance scope, a comment is not, and the owner executes the deploy from the body hours later at a terminal. Body rewritten: schema v6 + decision_adoptions named, both false claims removed, deployment stated as an ORDERED three-phase sequence (app-checkout convergence -> v5->v6 migration from the converged checkout -> Console release/restart; order is load-bearing or a v5 Console binary meets a v6 store), head 5b400af / 318 green, 8 deployment criteria retained verbatim incl. both deliberate exercises. Documentation-only, no new head, CI unchanged. Second time this WP a durable record drifted while the code was correct (first: the D#12 "rejected" record the store disproved) — record drift is now treated as merge-blocking, same as a failing test
 
+- U4C-1 AUTHORIZED (owner "ok" 2026-08-04) -> PR #76 rebase-merged. main 684681c, CI run #349 green, 318 green locally on the merged tip. Schema v6 now on main, so the next deploy is TWO phases in order: app-checkout convergence (runs the v5->v6 migration on the shared store) THEN Console release/restart — a Console-only deploy would put a v6 binary or a v5 binary on the wrong side of the store
+
 Current
-- PR #76 awaiting OWNER merge word; then deploy (app v6 convergence + console release) + 8-criteria acceptance. Then U2 retirement review. Monday 08-10: artifact #1 + capstone
+- U4c merged; TWO-PHASE deploy pending owner terminal (app convergence + v5->v6 migration, then Console release) + 8-criteria browser acceptance incl. the 2 deliberate exercises (mid-comparison page change -> adopt refuses; injected defect -> shows as DEFECT not policy). Then U2 retirement review. Monday 08-10: artifact #1 + capstone
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)
