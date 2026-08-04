@@ -53,8 +53,10 @@ Completed
 
 - PR #69 review round 1: nine technical points (envelope binding, canonical hashing, state machine+concurrency, Verify-not-Execute naming, exact fail-closed verification, provenance on estimates, honest unknown counts, staging-apply OVERCLAIM conceded->dependency (verified on main), authority identity). ALL addressed in spec r2 (b02180a), point-by-point reply on thread. Fully on the bus — zero owner clipboard
 
+- PR #69 review round 2: six spec inconsistencies (dup paragraph; approval-edit contradiction -> resolved to storage-immutable + explicit Unapprove; 60s-open-request UX -> two owner-triggered verify steps with store-backed pending; URL equality defined; attempts as immutable rows; production-first exit condition). ALL fixed in r3 (7782f3c), replied on thread
+
 Current
-- PR #69 spec r2 awaiting re-review + owner merge word; then U4a build. Monday: artifact #1 + capstone
+- PR #69 spec r3 awaiting reviewer recommendation + owner merge word; then U4a build. Monday: artifact #1 + capstone
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)
