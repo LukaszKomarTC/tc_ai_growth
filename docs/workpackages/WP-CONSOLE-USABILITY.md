@@ -339,6 +339,55 @@ the reason. First candidates: D#9/D#10-class title/meta drafts — narrow, visib
 an exact draft. This increment gets the same review rigor the Execution Service itself got:
 approval is THE control point of the platform.
 
+### U4c acceptance record (2026-08-04, release 684681c, schema v6)
+
+**Deployed:** app checkout converged `3edb0de -> 684681c` (318 green on the VPS), v5->v6
+migration run from the converged checkout, then the Console release from the same commit
+(`TC_BUILD_COMMIT=684681c...`, health 200, `TC_ENV_KIND`/`TC_ALLOW_WRITES` still present in
+`/etc/tc-console.env`). Two phases, in that order, because the store is shared.
+
+**Criteria 1-2 — on the production store, by comparing the pre-migration `.backup` with the
+migrated database row by row:** `schema_version` 5 -> 6; exactly one table added
+(`decision_adoptions`), none removed; `decisions` 14, `decision_events` 11,
+`decision_verify_attempts` 3, `runs` 26, `cases` 3, `report_artifacts` 0 — every one of them
+byte-identical. D#14 still `executed` at revision 2 with `execution_evidence=verify_attempt:3`,
+and its trail still reads `propose` (human) -> `approve` (owner) -> `execute` (platform).
+
+**Criteria 3a, 3b, 4, 5, 6, 7 — driven over real HTTP against the deployed commit's code, by
+the lead, after the owner stopped the browser pass** (see "How these were exercised" below):
+
+| # | Criterion | Result |
+|---|---|---|
+| 3a | Live comparison timestamped, differences real | PASS — 4 real differences vs the live homepage, read-stamped, adopt offered |
+| 3b | A page that cannot be read fails honestly | PASS — "could not read this page", no value shown, adopt control WITHHELD |
+| 4 | Content changing between comparison and adopt | PASS — `err=adopt-changed`, decision count unchanged |
+| 5 | Repeat adoption is idempotent | PASS — `msg=already-adopted`, same proposal, exactly 1 `decision_adoptions` row |
+| 6 | An injected defect surfaces AS a defect | PASS — `console-error` run "Console defect in adopt-live/create: RuntimeError" with a path-redacted traceback; NOT the polite `adopt-failed` |
+| 7 | Adopt creates only a new proposal; source untouched | PASS — new decision `proposed` rev 0 with full provenance; source unchanged in status and revision |
+| 8 | Full suite + deploy green | PASS — 318 on the VPS; health check 200 |
+
+**How these were exercised, stated plainly.** The owner ran criteria 1-2 and the first half of
+3 on production and then stopped: too much clicking, and a mis-targeted instruction from the
+lead (edit `/alquiler_bicicletas` while comparing a HOMEPAGE decision) made a working feature
+look broken. The remaining criteria were then exercised by the lead against the same commit
+over real HTTP: 3a/3b/5/7 against the REAL live pages, and 4/6 against a local HTTPS fixture
+whose content genuinely changed between the comparison and the adopt POST — a real second
+fetch, not a stubbed one. This is evidence about the deployed CODE, obtained on an equivalent
+instance. It is NOT a production browser pass, and the record must not be read as one.
+
+**Findings raised by the acceptance run (not blockers, not yet fixed):**
+
+1. **Fail-open comparison.** `validate_envelope` checks only that `payload` is a non-empty
+   object — it does not require the keys a `kind` actually uses. A `seo_meta_update` envelope
+   with unrecognised payload keys therefore validates, `compare_fields` returns zero rows, and
+   the page renders *"Every field matches what is live right now."* A positive claim about
+   reality from an empty comparison is exactly the fail-open shape U4c exists to prevent.
+   Not reachable from the Console UI (adopt-live composes the payload itself); reachable from
+   `decision-propose`.
+2. **The owner got lost in the UI.** Reported twice, unprompted. U4c's stated goal was
+   business-first presentation; an acceptance pass the owner cannot finish is that goal not met,
+   independently of the mis-targeted instruction.
+
 ## Order and gating
 
 **U1 → U2 → U3a → U3b → U4**, each with its own acceptance before the next starts. U3 is split
