@@ -1,11 +1,14 @@
 """WP-U4a — the decision approval workflow's storage truth.
 
-What is proven here, per the acceptance criteria on PR #69:
+What is proven here, per the acceptance criteria on PR #69 (claims stated at their precise
+enforcement layer — review #71 finding 3):
 - canonical envelope hashing is byte-exact and deterministic (fixed fixtures), and every
   material change — payload, target, profile, environment — changes the hash;
-- the lifecycle is enforced at the storage layer: revision-based stale-view rejection,
-  immutable approved envelopes (SQLite trigger, not API politeness), executed as terminal,
-  append-only audit events;
+- DATABASE TRIGGERS enforce, even against raw SQL: approved-envelope immutability, executed
+  terminality, append-only audit events, and the legal transition graph for workflow rows;
+- the STORE API enforces revision-based stale-view rejection, proposal-boundary runtime-context
+  checks (profile / environment / target hosts), and audit-event append in the same
+  transaction as each transition — the audit COUPLING is an API guarantee, not a trigger one;
 - legacy decisions stay visible but are not approvable, with a plain-English reason;
 - the v3 -> v4 migration is additive and non-destructive against a production-shaped store.
 """
@@ -50,13 +53,20 @@ def _store() -> SqliteStore:
     return SqliteStore(":memory:")
 
 
+# The runtime context every proposal must present (review #71 finding 1) — tests state it
+# explicitly, exactly like the CLI derives it from settings.
+_CONTEXT = dict(expected_profile="tossa-cycling", allowed_environments=("production",),
+                allowed_hosts=("www.tossacycling.com",))
+
+
 def _propose(s: SqliteStore, **kw) -> int:
     defaults = dict(title="Bilingual SEO for the rental page", envelope=_envelope(),
                     rationale="1,502 impressions at position 14.9",
                     evidence="report artifact #1",
                     impact={"value": "+200–500 visits/mo", "label": "estimate",
                             "method": "GSC position/CTR heuristic",
-                            "source": "report artifact #1", "as_of": "2026-08-03"})
+                            "source": "report artifact #1", "as_of": "2026-08-03"},
+                    **_CONTEXT)
     defaults.update(kw)
     return s.propose_decision(**defaults)
 
@@ -114,6 +124,92 @@ def test_validate_envelope_refuses_bad_shapes():
                                                             "expected_urls": {}})))
     assert any("payload" in p for p in validate_envelope(_envelope(payload={})))
     assert validate_envelope(_envelope()) == []
+
+
+def test_target_schema_is_closed_per_kind():
+    """Review #71 finding 2: a hashed-but-unvalidated target field is a hole, not a feature."""
+    base_target = _envelope()["target"]
+    # Unknown target keys refused.
+    t = dict(base_target, hidden_semantics="surprise")
+    assert any("unknown target keys" in p for p in validate_envelope(_envelope(target=t)))
+    # Unknown kinds cannot be proposed at all — a kind starts with its schema.
+    assert any("unknown kind" in p for p in validate_envelope(_envelope(kind="mystery_kind")))
+    # seo_meta_update requires post_id (positive int) and BOTH language URLs.
+    t = {k: v for k, v in base_target.items() if k != "post_id"}
+    assert any("post_id" in p for p in validate_envelope(_envelope(target=t)))
+    t = dict(base_target, post_id=True)
+    assert any("post_id" in p for p in validate_envelope(_envelope(target=t)))
+    t = dict(base_target, expected_urls={"es": base_target["expected_urls"]["es"]})
+    assert any("missing required language" in p for p in validate_envelope(_envelope(target=t)))
+    # URLs must be well-formed HTTPS with a host.
+    for bad in ("http://www.tossacycling.com/x/", "ftp://x/", "not a url", "https://"):
+        t = dict(base_target,
+                 expected_urls={"es": bad, "en": base_target["expected_urls"]["en"]})
+        assert validate_envelope(_envelope(target=t)), bad
+
+
+def test_valid_bilingual_envelope_canonicalizes_to_stable_pinned_bytes():
+    """The FULL valid production envelope (both languages, real hosts) hashes to a pinned
+    value — tightened validation must never move canonical bytes for the same dict."""
+    assert envelope_sha256(_envelope()) == (
+        "5e01ed67d42139abe147ae03abd2d03d4ac698ccce7a13a42259d86b3e815fda")
+
+
+# --- proposal boundary: runtime context, not envelope self-authority ----------------------------
+
+
+def test_wrong_profile_fails_closed_with_no_decision_and_no_event():
+    s = _store()
+    with pytest.raises(ValueError, match="does not match the active profile"):
+        _propose(s, envelope=_envelope(profile="other-site"))
+    assert s.list_decisions() == []
+    assert s._conn.execute("SELECT COUNT(*) FROM decision_events;").fetchone()[0] == 0
+
+
+def test_disallowed_environment_fails_closed():
+    s = _store()
+    with pytest.raises(ValueError, match="not permitted in this context"):
+        _propose(s, envelope=_envelope(environment="staging"))  # context allows production only
+    assert s.list_decisions() == []
+
+
+def test_off_profile_host_fails_closed():
+    s = _store()
+    env = _envelope()
+    env["target"]["expected_urls"]["en"] = "https://evil.example.com/en/alquiler_bicicletas/"
+    with pytest.raises(ValueError, match="not among this profile's allowed hosts"):
+        _propose(s, envelope=env)
+    assert s.list_decisions() == []
+    # Host comparison is case-insensitive — equivalent hosts must not be refused.
+    env = _envelope()
+    env["target"]["expected_urls"]["en"] = env["target"]["expected_urls"]["en"].replace(
+        "www.tossacycling.com", "WWW.TossaCycling.com")
+    assert _propose(s, envelope=env) > 0
+
+
+def test_missing_context_is_refused_not_defaulted():
+    s = _store()
+    with pytest.raises(ValueError, match="expected_profile"):
+        s.propose_decision(title="t", envelope=_envelope(), expected_profile="",
+                           allowed_environments=("production",))
+    with pytest.raises(ValueError, match="allowed_environments"):
+        s.propose_decision(title="t", envelope=_envelope(), expected_profile="tossa-cycling",
+                           allowed_environments=())
+
+
+def test_repropose_with_new_envelope_reenters_the_full_boundary():
+    s = _store()
+    did = _propose(s)
+    s.reject_decision(did, expected_revision=0, reason="wrong title")
+    new_env = _envelope(profile="other-site")
+    # No context -> refused; wrong profile WITH context -> refused; decision stays rejected.
+    with pytest.raises(ValueError, match="requires the proposal context"):
+        s.repropose_decision(did, expected_revision=1, envelope=new_env)
+    with pytest.raises(ValueError, match="does not match the active profile"):
+        s.repropose_decision(did, expected_revision=1, envelope=new_env, **_CONTEXT)
+    assert s.get_decision(did).status == "rejected"
+    s.repropose_decision(did, expected_revision=1, envelope=_envelope(), **_CONTEXT)
+    assert s.get_decision(did).status == "proposed"
 
 
 # --- lifecycle: the exhaustive state machine ----------------------------------------------------
@@ -200,7 +296,7 @@ def test_repropose_after_reject_allows_a_new_envelope():
     did = _propose(s)
     s.reject_decision(did, expected_revision=0, reason="wrong title")
     new_env = _envelope(payload={"title_es": "Better title", "meta_es": "Better meta"})
-    s.repropose_decision(did, expected_revision=1, envelope=new_env)
+    s.repropose_decision(did, expected_revision=1, envelope=new_env, **_CONTEXT)
     d = s.get_decision(did)
     assert (d.status, d.revision) == ("proposed", 2)
     assert d.envelope_sha256 == envelope_sha256(new_env)
@@ -230,6 +326,23 @@ def test_executed_decision_is_terminal_at_the_database_layer():
     s._conn.execute("UPDATE decisions SET status = 'executed' WHERE id = ?;", (did,))
     with pytest.raises(sqlite3.IntegrityError, match="terminal"):
         s._conn.execute("UPDATE decisions SET title = 'edited' WHERE id = ?;", (did,))
+
+
+def test_illegal_raw_sql_transitions_are_refused_by_trigger():
+    """The transition graph holds even against raw SQL (review #71 finding 3): a future code
+    bug cannot move a workflow decision along an edge the spec does not list."""
+    s = _store()
+    did = _propose(s)
+    for illegal in ("executed",):                             # proposed -> executed: not listed
+        with pytest.raises(sqlite3.IntegrityError, match="illegal decision transition"):
+            s._conn.execute("UPDATE decisions SET status = ? WHERE id = ?;", (illegal, did))
+    s.reject_decision(did, expected_revision=0, reason="x")
+    for illegal in ("approved", "executed"):                  # rejected -> only proposed
+        with pytest.raises(sqlite3.IntegrityError, match="illegal decision transition"):
+            s._conn.execute("UPDATE decisions SET status = ? WHERE id = ?;", (illegal, did))
+    # Legacy rows (no envelope) keep their pre-U4 lifecycle, untouched by the graph.
+    lid = s.record_decision(title="legacy", status="proposed")
+    s._conn.execute("UPDATE decisions SET status = 'active' WHERE id = ?;", (lid,))
 
 
 def test_decision_events_are_append_only():

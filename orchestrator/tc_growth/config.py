@@ -68,6 +68,13 @@ class Settings(BaseSettings):
     site_name: str = Field(default="", description="Human label, e.g. 'Tossa Cycling Staging'")
     env_kind: str = Field(default="staging", description="staging | production — shown on every surface")
     allow_writes: bool = Field(default=True, description="False = profile-level cap: every run is clamped read-only regardless of requested phase (production default)")
+    decision_url_hosts: str = Field(
+        default="",
+        description="Comma-separated URL hosts this profile's decisions may legitimately "
+                    "target (U4 proposal boundary), e.g. 'www.tossacycling.com,"
+                    "tossacycling.com'. Empty = proposing decisions is refused (fail closed); "
+                    "deliberately separate from TC_WP_BASE_URL, which points at the staging "
+                    "WP connector host by design (see STANDING-CAUTIONS).")
 
     # --- WordPress connector ---
     wp_base_url: str = Field(default="", description="e.g. https://tossacycling.com")

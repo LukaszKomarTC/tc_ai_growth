@@ -85,10 +85,16 @@ class SqliteStore:
                                    expected_revision=expected_revision, actor=actor)
 
     def repropose_decision(self, decision_id: int, *, expected_revision: int,
-                           envelope: dict | None = None, actor: str = "owner") -> None:
+                           envelope: dict | None = None,
+                           expected_profile: str | None = None,
+                           allowed_environments: tuple[str, ...] | None = None,
+                           allowed_hosts: tuple[str, ...] | None = None,
+                           actor: str = "owner") -> None:
         records.repropose_decision(self._conn, decision_id,
                                    expected_revision=expected_revision, envelope=envelope,
-                                   actor=actor)
+                                   expected_profile=expected_profile,
+                                   allowed_environments=allowed_environments,
+                                   allowed_hosts=allowed_hosts, actor=actor)
 
     def list_decision_events(self, decision_id: int) -> list[DecisionEvent]:
         return records.list_decision_events(self._conn, decision_id)

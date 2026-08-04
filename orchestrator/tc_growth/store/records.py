@@ -362,10 +362,12 @@ def list_decisions(
 # The state machine is EXHAUSTIVE (spec table); anything not listed below is refused loudly.
 # Every mutation carries the caller's expected `revision` and lands atomically via
 # `UPDATE ... WHERE id AND revision AND status` — a stale tab can never silently overwrite a
-# fresher state. Every successful mutation appends one immutable decision_events row (actor,
-# timestamp, old/new status, resulting revision, bound envelope hash). Storage-layer triggers
-# (db.py) back the two constitutional rules: approved envelopes are immutable, executed is
-# terminal.
+# fresher state. The guarantee split is deliberate and precisely this (review #71): DATABASE
+# TRIGGERS (db.py) enforce approved-envelope immutability, executed terminality, append-only
+# audit rows, and the legal transition graph for workflow rows — even raw SQL cannot cross
+# them. The STORE API (these functions) enforces revision concurrency, context checks, and
+# that every successful transition appends its decision_events row in the same transaction —
+# audit-event coupling is an API guarantee, not a trigger guarantee.
 
 
 class DecisionError(Exception):
@@ -407,11 +409,47 @@ def _provenance_json(value: dict | None, field: str) -> str | None:
     return json.dumps(value, ensure_ascii=False)
 
 
+def _check_envelope_context(envelope: dict, *, expected_profile: str,
+                            allowed_environments: tuple[str, ...],
+                            allowed_hosts: tuple[str, ...] | None) -> None:
+    """The proposal boundary's CONTEXT check (review #71 finding 1): the envelope states a
+    profile/environment/target, but it must never be its own authority — the caller supplies
+    what the RUNTIME actually is (active profile, permitted target environments, the profile's
+    legitimate URL hosts) and a mismatch fails closed BEFORE anything persists. Hashing a wrong
+    profile makes the error tamper-evident; this check makes it impossible."""
+    from ..envelope import url_host
+
+    if not (expected_profile or "").strip():
+        raise ValueError("proposal context requires expected_profile (the active profile id)")
+    if not allowed_environments:
+        raise ValueError("proposal context requires allowed_environments")
+    if envelope.get("profile") != expected_profile:
+        raise ValueError(
+            f"envelope profile {envelope.get('profile')!r} does not match the active profile "
+            f"{expected_profile!r} — refusing to propose into a store the envelope does not "
+            "belong to")
+    if envelope.get("environment") not in allowed_environments:
+        raise ValueError(
+            f"envelope environment {envelope.get('environment')!r} is not permitted in this "
+            f"context (allowed: {', '.join(allowed_environments)})")
+    if allowed_hosts is not None:
+        allowed = {h.lower() for h in allowed_hosts}
+        for lang, url in (envelope.get("target", {}).get("expected_urls") or {}).items():
+            host = url_host(str(url))
+            if host is None or host not in allowed:
+                raise ValueError(
+                    f"target URL host {host!r} ({lang}) is not among this profile's allowed "
+                    f"hosts ({', '.join(sorted(allowed))}) — refusing an off-profile target")
+
+
 def propose_decision(
     conn: sqlite3.Connection,
     *,
     title: str,
     envelope: dict,
+    expected_profile: str,
+    allowed_environments: tuple[str, ...],
+    allowed_hosts: tuple[str, ...] | None = None,
     rationale: str | None = None,
     evidence: str | None = None,
     impact: dict | None = None,
@@ -420,13 +458,18 @@ def propose_decision(
     made_by: str = "agent",
 ) -> int:
     """Create a v4 workflow decision: validated envelope, canonical text + hash stored at birth.
-    The envelope's `kind` is denormalized onto the row for querying; the hashed truth stays the
+    `expected_profile` / `allowed_environments` (and `allowed_hosts` where the caller has them)
+    come from RUNTIME context, never from the envelope — see _check_envelope_context. The
+    envelope's `kind` is denormalized onto the row for querying; the hashed truth stays the
     envelope itself."""
     from ..envelope import canonical_json, envelope_sha256, validate_envelope
 
     problems = validate_envelope(envelope)
     if problems:
         raise ValueError("invalid envelope: " + "; ".join(problems))
+    _check_envelope_context(envelope, expected_profile=expected_profile,
+                            allowed_environments=allowed_environments,
+                            allowed_hosts=allowed_hosts)
     cur = conn.execute(
         "INSERT INTO decisions (made_at, title, rationale, status, made_by, case_id, kind, "
         "envelope, envelope_sha256, revision, evidence, impact, confidence) "
@@ -535,9 +578,15 @@ def unapprove_decision(conn: sqlite3.Connection, decision_id: int, *, expected_r
 
 
 def repropose_decision(conn: sqlite3.Connection, decision_id: int, *, expected_revision: int,
-                       envelope: dict | None = None, actor: str = "owner") -> None:
+                       envelope: dict | None = None,
+                       expected_profile: str | None = None,
+                       allowed_environments: tuple[str, ...] | None = None,
+                       allowed_hosts: tuple[str, ...] | None = None,
+                       actor: str = "owner") -> None:
     """rejected -> proposed (spec: new revision; a new envelope is allowed here — and ONLY
-    here, because the decision is neither approved nor terminal)."""
+    here, because the decision is neither approved nor terminal). A NEW envelope re-enters
+    through the full proposal boundary: validation AND runtime-context checks, exactly like
+    propose_decision — re-propose must never be the context-check bypass."""
     d = _workflow_decision(conn, decision_id)
     if d.status != "rejected":
         raise InvalidTransition(
@@ -548,6 +597,12 @@ def repropose_decision(conn: sqlite3.Connection, decision_id: int, *, expected_r
         problems = validate_envelope(envelope)
         if problems:
             raise ValueError("invalid envelope: " + "; ".join(problems))
+        if expected_profile is None or allowed_environments is None:
+            raise ValueError("re-proposing a NEW envelope requires the proposal context "
+                             "(expected_profile, allowed_environments)")
+        _check_envelope_context(envelope, expected_profile=expected_profile,
+                                allowed_environments=allowed_environments,
+                                allowed_hosts=allowed_hosts)
         new_canon, new_sha = canonical_json(envelope), envelope_sha256(envelope)
         new_kind = envelope["kind"]
     else:

@@ -183,6 +183,24 @@ WHEN OLD.status = 'executed'
 BEGIN
     SELECT RAISE(ABORT, 'executed decision is terminal — record a new decision instead');
 END;
+
+-- The legal transition graph for WORKFLOW rows (envelope-bearing), enforced independently of
+-- the Store API (review #71 finding 3): even raw SQL cannot move a workflow decision along an
+-- edge the spec's state machine does not list. Legacy rows (no envelope) are untouched — their
+-- lifecycle predates this machine. NOTE the honest boundary: triggers enforce WHICH transitions
+-- are possible; that every transition also appends its audit event is the Store API's
+-- transactional guarantee, not the database's.
+CREATE TRIGGER IF NOT EXISTS trg_decisions_workflow_transitions
+BEFORE UPDATE ON decisions
+WHEN OLD.envelope_sha256 IS NOT NULL
+ AND NEW.status IS NOT OLD.status
+ AND NOT (
+      (OLD.status = 'proposed' AND NEW.status IN ('approved', 'rejected'))
+   OR (OLD.status = 'approved' AND NEW.status IN ('proposed', 'executed'))
+   OR (OLD.status = 'rejected' AND NEW.status = 'proposed'))
+BEGIN
+    SELECT RAISE(ABORT, 'illegal decision transition — not in the U4 state machine');
+END;
 """
 
 
