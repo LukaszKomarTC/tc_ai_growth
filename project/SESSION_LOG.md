@@ -125,8 +125,10 @@ Completed
 
 - PR #76 review round 1: BLOCKING TOCTOU consent defect — adopt-live re-fetched on POST, so the proposal could bind wording the owner never reviewed (page can change between comparison and click). Conceded: binding the source REVISION protects the decision, not the consent. Fixed r2 (39f68b3): snapshot_digest over source id+revision+envelope and every displayed value (timestamp excluded — content must match, not the clock), signed adopt token (fetched_at|digest|sig), POST re-fetches and requires exact equality else refuses 'live content CHANGED', idempotent duplicate submit, provenance records BOTH reads. 312 green (5 new). Also found+fixed: `secret` out of scope in the decision handler made a NameError look like a policy refusal — broad except turning defects into polite refusals flagged as a pattern to watch
 
+- PR #76 review round 2: idempotence not durable (200-row scan + evidence substring — PR claimed "can never" while code guaranteed it only for recent rows) and broad excepts still able to disguise defects as policy. Both fixed r3 (006adae): schema v6 decision_adoptions with adopt_key PRIMARY KEY (source:revision:envelope:snapshot-digest), claim-then-complete with reclaimable orphan claims, O(1) size-independent; unexpected exceptions now recorded as console-error runs with traceback and rendered as DEFECTS, never adopt-failed. Same lesson found one level down: claim_adoption answered False for ANY IntegrityError, so an FK violation would have read as "already claimed" — now re-reads and re-raises unless the key truly exists. 317 green (5 new)
+
 Current
-- PR #76 (U4c r2) awaiting re-review; owner word merges; deploy = console release only. Then U2 retirement review. Monday 08-10: artifact #1 + behavioral capstone
+- PR #76 (U4c r3) awaiting re-review; owner word merges; deploy = console release only (schema v6 = additive table -> app convergence too). Then U2 retirement review. Monday 08-10: artifact #1 + capstone
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)
