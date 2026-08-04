@@ -87,8 +87,10 @@ Completed
 
 - PR #72 reviewer verdict: "safe for owner authorization to merge and deploy" (after self-correcting a restated-requirement comment — second connector-lag episode). 5 post-deploy acceptance checks adopted; pagination/search noted as future (U4c). Queued U4A1-1
 
+- U4a.1 MERGED (owner word): PR #72 rebase-merged to main 8dafa5c; 265 green on merged tip. Queue emptied. Console redeploy block issued (release 8dafa5c; no migration)
+
 Current
-- PR #72 awaiting OWNER merge word; then console redeploy + 5-check acceptance closes U4a fully. Monday: artifact #1 + capstone
+- Owner: run the redeploy block + 5-check in-browser acceptance -> U4a FULLY CLOSED. Then U4b. Monday: artifact #1 + capstone
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)
