@@ -7,7 +7,6 @@ objects (PROTOCOL.md, Phase 2). Pointers, not copies — evidence lives where it
 
 | ID | Priority | Decision / action | Evidence | Recommendation | Waiting since | Status |
 |---|---|---|---|---|---|---|
-| U4-SPEC | normal | Authorize merge of PR #69 (U4 spec r4, docs-only) — your word merges it and opens U4a | PR #69 thread (3 review rounds, r4 `7fcafe0`, CI green ×2) | Reviewer: "safe for owner authorization to merge"; lead concurs | 2026-08-04 | waiting |
 
 ## Decided (index — details live at the pointer)
 
@@ -27,3 +26,4 @@ objects (PROTOCOL.md, Phase 2). Pointers, not copies — evidence lives where it
 | U3B-O1 | Production-writes cap set (TC_ALLOW_WRITES=false in release env, deployed fd8f682) | WP §U3b acceptance O1 |
 | U3B-O3 | Store synced: D#9/D#10/D#11 proposed→approved via decision-approve (correct CLI verb; 'decision-set' was a lead command-name error, caught by usage output) | WP §U3b acceptance O3 |
 | U3B-O2 | Owner confirmed: `dev.tourdegirona.com` IS Tossa's staging WordPress host (cross-domain by design, not a config error) | docs/STANDING-CAUTIONS.md note |
+| U4-SPEC | Owner GO 2026-08-04 → PR #69 rebase-merged (main f37dfb8); U4a opened against the 10 thread criteria | PR #69 thread; docs/workpackages/WP-U4-DECISION-WORKFLOW.md |

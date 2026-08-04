@@ -11,28 +11,27 @@ _Index, not authority (PROTOCOL.md). If this disagrees with git or the server, t
   convergence @ 2026-08-03 ~19:40 UTC — ff b6779cc→d391247, 205 passed on the VPS, store
   migrated v2→v3 (report_artifacts empty, ledger intact #25–27), Monday timer armed 08-10
   05:00 UTC. Rollback marker: `backup/pre-u3a-b6779cc`.
-- Console release (tc-console): `ab9afa4` from `/opt/tc_ai_growth/releases/ab9afa4` — verified:
-  deploy apply plan + owner in-browser confirmation @ 2026-08-03 ~17:40 UTC (Sign out working).
-  Rollback: `releases/63448f3` retained (N-1 rule); `releases/d260726` removable
+- Console release (tc-console): `fd8f682` from `/opt/tc_ai_growth/releases/fd8f682` — verified:
+  owner-run apply + health 200 @ 2026-08-03 (U3b.1 + TC_ALLOW_WRITES=false live).
+  Rollback: `releases/48e91d7` retained (N-1 rule); older release dirs removable
 
 ## Current work
 
-**WP-CONSOLE-USABILITY: U1 + U2 ACCEPTED; U3a BUILT, awaiting review+merge.** U3a lives on
-branch `feature/u3a-report-artifacts` (1 commit on main tip): schema v3 report_artifacts with a
-database-layer immutability trigger, hash-verified persist-before-deliver wiring, hash-keyed
-delivery marking, CLI read commands, 201 tests green, v2→v3 migration proven non-destructive.
-CAUTION: this changes report.py/cli.py — the scheduled Monday path — so merge is
-owner-authorized and production convergence follows the controlled-ff runbook. Next Monday run:
-2026-08-10 (would produce production artifact #1 if deployed before then).
+**WP-CONSOLE-USABILITY: U1+U2+U3a+U3b(+.1) ACCEPTED and deployed. U4 spec MERGED (PR #69 r4,
+owner GO 2026-08-04, rebase-merged to main f37dfb8).** Now building **U4a** on
+`feature/u4a-decision-detail`: schema v4 (additive), target-bound approval envelopes with
+canonical hashing, decision detail page, browser two-step Approve / Reject-with-reason,
+storage-layer lifecycle guards, legacy decisions visible-but-unapprovable. Review gate: the 10
+acceptance criteria on the PR #69 thread (reviewer, 2026-08-04). Spec authority:
+docs/workpackages/WP-U4-DECISION-WORKFLOW.md.
 
 ## Blocked on
 
-Nothing — engineering (U3a) and the owner's business queue proceed independently.
+Nothing — U4a proceeds; owner queue empty.
 
 ## Next action
 
-1. Review PR #69 (U4 spec, charter #68) on its thread; owner authorizes merge; then U4a build
-   (schema v4 + decision detail + browser approve/reject).
+1. Lead: finish U4a, open its PR, subscribe, drive review on-thread; owner word merges.
 2. Monday 08-10: artifact #1 (U3a live acceptance) + the Gmail-vs-Console behavioral capstone.
 
 ## Standing constraints

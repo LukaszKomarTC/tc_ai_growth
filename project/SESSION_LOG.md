@@ -59,8 +59,10 @@ Completed
 
 - PR #69 reviewer verdict on r4: "safe for owner authorization to merge" + 10 U4a acceptance criteria (adopted verbatim as U4a review gate, durable on thread). Reviewer's no-CI observation answered: ci.yml green ×2 on 7fcafe0. Merge queued for owner (OWNER_QUEUE U4-SPEC)
 
+- U4 spec MERGED (owner GO): PR #69 rebase-merged to main f37dfb8. Queue emptied (U4-SPEC decided). U4a build begins on feature/u4a-decision-detail against the 10 thread criteria
+
 Current
-- PR #69 spec r4 awaiting OWNER merge word only (reviewer recommends); then U4a build against the 10 criteria. Monday: artifact #1 + capstone
+- U4a build in flight (schema v4 + decision detail + browser approve/reject). Monday: artifact #1 + capstone
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)
