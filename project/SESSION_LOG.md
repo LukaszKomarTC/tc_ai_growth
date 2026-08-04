@@ -75,8 +75,10 @@ Completed
 
 - U4a MERGED (owner word): PR #71 rebase-merged to main 95c7974; 262 green on merged tip locally. Queue emptied (U4A-1 decided). Deploy plan next (6 reviewer criteria: 2 env values, controlled v3→v4 migration, VPS suite, seeded real decision, browser approve/reject, no-overstated-controls check)
 
+- U4a DEPLOYED + BROWSER ACCEPTANCE PASSED: app converged d391247→a3104a8 (venv dev-extras reinstall needed); v3→v4 migration clean (schema 4, 11 decisions/26 runs/3 cases intact, 6 triggers); hosts env line markdown-mangled in paste — caught+fixed; D#12 seeded from live evidence (homepage 'Home | TOSSA CYCLING' both langs, post 11038); owner APPROVED in browser (two-step, audit rev 0→1); no Apply/Execute/Verify anywhere (screenshots). Owner applied in WP by hand; ES title/meta VERIFIED LIVE by lead fetch. Findings: owner enriched copy at apply (live ≠ envelope -> D#13 supersede plan); EN still cached/old on first check; Console redeploy regressed env truths (STAGING badge + writes Enabled) — release env seeded from app .env; fix = persist TC_ENV_KIND/TC_ALLOW_WRITES in /etc/tc-console.env. Record: WP-CONSOLE-USABILITY §U4a
+
 Current
-- U4a deploy plan + owner-run deployment + browser acceptance. Monday: artifact #1 + capstone
+- U4a closeout: EN recheck, env-truth persist fix, VPS suite count + hosts-fix confirmation, D#13 supersede. Monday: artifact #1 + capstone
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)

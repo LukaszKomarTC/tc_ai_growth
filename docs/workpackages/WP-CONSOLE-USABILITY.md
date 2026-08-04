@@ -1,8 +1,36 @@
 # WP-CONSOLE-USABILITY — the owner can operate the platform
 
-**Status: U1 + U2 ACCEPTED · U3a DEPLOYED to production 2026-08-03 (converged at d391247, 205
-on VPS, v2→v3 migration clean; live acceptance = Monday 08-10 artifact #1 hash-vs-email) ·
-next: U3b.** U3a review round (2026-08-03): approved after four conditions — rebase onto main,
+**Status: U1 + U2 + U3b(+.1) ACCEPTED · U3a deployed (live acceptance = Monday 08-10 artifact
+#1) · U4a DEPLOYED + browser acceptance PASSED 2026-08-04 (below).**
+
+**U4a acceptance record (owner-run, 2026-08-04, app converged d391247→a3104a8, Console release
+a3104a8).** The first decision approved entirely in the browser — the CLI approval chore is
+GONE (eliminated-actions row 1 verified live). Evidence, per the 6 reviewer deployment criteria
+(PR #71 thread): (1) TC_DECISION_TARGET_ENVIRONMENTS=production + TC_DECISION_URL_HOSTS
+configured in the app .env (a chat-paste markdown mangling of the hosts line was caught and
+fixed mid-deploy); (2) v3→v4 migration verified additive on the shared store — schema_version 4,
+all 11 decisions / 26 runs / 3 cases intact, all six triggers armed; (3) VPS suite green after
+reinstalling dev extras (the venv had lost pytest); (4) real decision D#12 seeded from live
+evidence (homepage post 11038 titled 'Home | TOSSA CYCLING' in BOTH languages — live fetch);
+(5) owner reviewed the detail page (recommendation → evidence → estimate-labeled
+impact/confidence → exact change with PRODUCTION unmissable → controls → hash/history) and
+APPROVED via the genuine two-step flow (audit trail: propose rev 0 → approve rev 1, same
+envelope sha, actor owner); (6) screenshots confirm NO Apply/Execute/Verify control exists —
+Approve…/Reject/Unapprove only. Owner then applied the change in WP admin by hand (the
+remains-manual row, exactly as specified) — ES title/meta verified LIVE by lead fetch.
+
+Findings from the acceptance (recorded, not blocking): (a) the owner enriched the copy at apply
+time (added eRoad/eBTT/gravel; '· Costa Brava' in the ES title), so the LIVE content ≠ the
+approved envelope — exactly the divergence U4b's verification is designed to catch; record
+hygiene plan: supersede D#12 with a D#13 binding the as-applied content once EN is confirmed
+live. (b) EN homepage still served the OLD title on first verification (page cache ~1h TTL or
+unsaved [:en] block — recheck pending). (c) The Console redeploy REGRESSED two accepted env
+truths (badge PRODUCTION→STAGING, production-writes cap Disabled→Enabled): the release env is
+seeded from the app .env, which never carried TC_ENV_KIND/TC_ALLOW_WRITES — they lived only in
+the previous release's env. The truth panel caught its second real config drift; fix = persist
+both in /etc/tc-console.env (survives releases).
+
+U3a review round (2026-08-03): approved after four conditions — rebase onto main,
 delivery bound to the artifact ROW (id identifies, hash verifies; twin-artifact regression
 proven), one-artifact-many-delivery-attempts (`report-redeliver`), 205 tests green. Immutability
 is constitutional in the Store protocol, storage-layer enforced. Accepted debt: split report.py
