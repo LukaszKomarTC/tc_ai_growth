@@ -77,8 +77,10 @@ Completed
 
 - U4a DEPLOYED + BROWSER ACCEPTANCE PASSED: app converged d391247→a3104a8 (venv dev-extras reinstall needed); v3→v4 migration clean (schema 4, 11 decisions/26 runs/3 cases intact, 6 triggers); hosts env line markdown-mangled in paste — caught+fixed; D#12 seeded from live evidence (homepage 'Home | TOSSA CYCLING' both langs, post 11038); owner APPROVED in browser (two-step, audit rev 0→1); no Apply/Execute/Verify anywhere (screenshots). Owner applied in WP by hand; ES title/meta VERIFIED LIVE by lead fetch. Findings: owner enriched copy at apply (live ≠ envelope -> D#13 supersede plan); EN still cached/old on first check; Console redeploy regressed env truths (STAGING badge + writes Enabled) — release env seeded from app .env; fix = persist TC_ENV_KIND/TC_ALLOW_WRITES in /etc/tc-console.env. Record: WP-CONSOLE-USABILITY §U4a
 
+- U4a closeout progress: VPS suite 262 passed (criterion 3 closed); EN homepage VERIFIED LIVE on re-fetch (was page cache) — BOTH languages of D#12's change now live; owner ran the /etc/tc-console.env persist fix + restart (badge/writes re-check pending owner refresh). Hosts .env line mangled a SECOND time by the owner's chat client (renders www URLs as markdown links even in code blocks) — new fix avoids contiguous www.host text; TARGET_ENVIRONMENTS line also duplicated (dedupe in same fix)
+
 Current
-- U4a closeout: EN recheck, env-truth persist fix, VPS suite count + hosts-fix confirmation, D#13 supersede. Monday: artifact #1 + capstone
+- U4a closeout: hosts-line python fix, badge/writes confirmation, D#13 supersede (as-applied content) + D#12 retire. Monday: artifact #1 + capstone
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)
