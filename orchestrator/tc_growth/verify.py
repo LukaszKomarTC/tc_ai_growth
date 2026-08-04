@@ -295,3 +295,76 @@ def verify_step(store, decision, *, step: int, fetch=None,
     store.execute_decision(decision.id, expected_revision=decision.revision,
                            evidence_attempt_id=attempt_id, actor="platform")
     return "executed"
+
+
+# --- U4c: read-only live comparison + adopt-live-content -----------------------------------------
+
+
+def live_snapshot(envelope: dict, *, fetch=None) -> dict:
+    """Read the CURRENT live values for an envelope's target URLs, for display beside the
+    proposed ones. Uses the SAME fetch/parse path as verification, so the comparison the owner
+    reads can never disagree with the verifier's own judgement.
+
+    Returns `{"fetched_at": iso, "urls": {lang: {"title", "meta_description", "canonical",
+    "error"}}}`. A failed read carries `error` and NO values — an unreadable page must look
+    unreadable; a previous read is never substituted (review #75: stale cache is never presented
+    as current truth)."""
+    fetch = fetch or fetch_page
+    urls = (envelope.get("target") or {}).get("expected_urls") or {}
+    out: dict = {}
+    for lang, url in urls.items():
+        r = fetch(url)
+        out[lang] = {
+            "url": url,
+            "error": r.error or (None if r.status == 200 else f"HTTP {r.status}"),
+            "title": None if r.error else r.title,
+            "meta_description": None if r.error else r.meta_description,
+            "canonical": None if r.error else r.canonical,
+        }
+    return {"fetched_at": _now_iso(), "urls": out}
+
+
+def compare_fields(envelope: dict, snapshot: dict) -> list[dict]:
+    """Field-by-field current-vs-proposed rows for the detail page. `same` uses the verifier's
+    normalization (NFC + whitespace collapse), so 'differs' here means 'verification would
+    fail' — one truth, two surfaces."""
+    payload = envelope.get("payload") or {}
+    rows: list[dict] = []
+    for lang, live in (snapshot.get("urls") or {}).items():
+        for label, payload_key, live_key in (("Title", f"title_{lang}", "title"),
+                                             ("Meta description", f"meta_{lang}",
+                                              "meta_description")):
+            proposed = payload.get(payload_key)
+            if proposed is None:
+                continue
+            current = live.get(live_key)
+            rows.append({
+                "lang": lang, "label": label, "url": live.get("url"),
+                "proposed": proposed, "current": current, "error": live.get("error"),
+                "same": (current is not None and live.get("error") is None
+                         and normalize_text(current) == normalize_text(proposed)),
+            })
+    return rows
+
+
+def adopt_live_envelope(envelope: dict, snapshot: dict) -> dict:
+    """Compose a NEW envelope whose payload is the live content, keeping target/profile/
+    environment/kind unchanged. Raises ValueError when any language could not be read — adopting
+    half a page would bind a payload the owner never saw."""
+    urls = snapshot.get("urls") or {}
+    if not urls:
+        raise ValueError("nothing was fetched — cannot adopt live content")
+    payload: dict = {}
+    for lang, live in urls.items():
+        if live.get("error"):
+            raise ValueError(f"the {lang} page could not be read ({live['error']}) — "
+                             "refusing to adopt a partial snapshot")
+        for payload_key, live_key in ((f"title_{lang}", "title"),
+                                      (f"meta_{lang}", "meta_description")):
+            value = live.get(live_key)
+            if value is None:
+                raise ValueError(f"the {lang} page has no {live_key} — refusing to adopt")
+            payload[payload_key] = value
+    new = {k: v for k, v in envelope.items() if k != "payload"}
+    new["payload"] = payload
+    return new

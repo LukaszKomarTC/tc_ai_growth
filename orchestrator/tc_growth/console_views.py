@@ -72,10 +72,19 @@ def status_card(waiting: list) -> str:
                 "<div class='why'>No decisions are waiting for your approval.</div></div>")
     top = min(waiting, key=lambda d: str(d.made_at or ""))  # waited longest = first in line
     why = top.rationale or "Proposed by the platform — details in the latest weekly report."
-    return (f"<div class='statuscard act'><p class='lead'>🔴 "
-            f"{len(waiting)} decision{'s' if len(waiting) != 1 else ''} waiting — "
-            f"top: {_e(top.title)}</p>"
-            f"<div class='why'>D#{top.id} · proposed {_e(_age(top.made_at))} · {_e(why)}</div>"
+    # U4c: the card leads with the business headline and carries the estimate-labelled
+    # impact/confidence the schema now holds — enough to decide whether to open it at all.
+    numbers = ""
+    if top.impact or top.confidence:
+        numbers = (f"<div class='why' style='margin-top:6px'>"
+                   f"<span class='tag'>impact</span> {_provenance(top.impact)} · "
+                   f"<span class='tag'>confidence</span> {_provenance(top.confidence)}</div>")
+    return (f"<div class='statuscard act'><p class='lead'>🔴 Action required — "
+            f"{_e(top.title)}</p>"
+            f"<div class='why'>D#{top.id} · waiting {_e(_age(top.made_at))}"
+            + (f" · {len(waiting)} decisions in the queue" if len(waiting) > 1 else "")
+            + f" · {_e(why)}</div>{numbers}"
+            f"<div style='margin-top:8px'><a href='/decision/{top.id}'>Review →</a></div>"
             "</div>")
 
 
@@ -114,13 +123,14 @@ def home_body(store, *, profile: str, env_kind: str, wp_host: str, allow_writes:
     attention = [c for status in ("open", "monitoring")
                  for c in store.list_cases(status=status, limit=10)]
     if attention:
-        def _sev(c) -> str:
+        def _label(c) -> tuple[str, str]:
             urgent = str(c.status) == "open" and str(c.priority) in ("high", "critical")
-            return "sev-err" if urgent else "sev-warn"
+            return ("sev-err", "🔴 Action required") if urgent else ("sev-warn",
+                                                                    "🟡 Keep an eye on")
         items = "".join(
-            f"<div class='{_sev(c)}'><span class='tag'>{_e(c.status)}</span> "
-            f"<b>{_e(c.ref or c.id)}</b> {_e(c.title)} · {_e(c.priority)} · "
-            f"updated {_e(_age(c.updated_at))}</div>"
+            (lambda cls_label: f"<div class='{cls_label[0]}'><b>{_e(cls_label[1])}</b> "
+                               f"<b>{_e(c.ref or c.id)}</b> {_e(c.title)} · {_e(c.status)} · "
+                               f"updated {_e(_age(c.updated_at))}</div>")(_label(c))
             for c in attention)
     else:
         items = "<div class='ok'>Nothing requires attention.</div>"
@@ -167,7 +177,10 @@ def home_body(store, *, profile: str, env_kind: str, wp_host: str, allow_writes:
         items += "<div class='muted'><a href='/logs'>Full operation log → Evidence</a></div>"
     else:
         items = "<div class='muted'>No operations run through the Console yet.</div>"
-    parts.append(_section("Recent operations", items))
+    parts.append("<details class='card' style='padding:14px 16px'>"
+                 "<summary style='cursor:pointer;font-weight:700;font-size:15px'>"
+                 f"Recent operations ({len(ops)})</summary>"
+                 f"<div style='margin-top:10px'>{items}</div></details>")
 
     parts.append(env_truth_panel(profile=profile, env_kind=env_kind, wp_host=wp_host,
                                  allow_writes=allow_writes))
@@ -329,6 +342,62 @@ def verification_section(decision, *, csrf: str, verifiable: bool, pending=None,
     return _section("Verify live change", body)
 
 
+def comparison_section(decision, *, csrf: str, comparison=None, snapshot=None,
+                       adoptable: bool = False) -> str:
+    """Current-vs-proposed, read-only (U4c item 2). Loaded ON DEMAND (`?live=1`) rather than on
+    every page view: it performs real fetches, and a detail page must not silently hammer the
+    site each time it is opened. Values carry the fetch timestamp; a page that could not be read
+    says so and shows NO value — a previous read is never substituted for current truth."""
+    d = decision
+    if not d.envelope_sha256:
+        return ""
+    if comparison is None:
+        return _section(
+            "Compare with the live pages",
+            "<div class='muted'>Not fetched yet — the comparison reads the live pages through "
+            "the same parser the verifier uses.</div>"
+            f"<div style='margin-top:8px'><a href='/decision/{d.id}?live=1'>"
+            "Compare with the live pages now →</a></div>")
+    rows = []
+    for r in comparison:
+        if r["error"]:
+            body = (f"<div class='err'>could not read this page: {_e(r['error'])} — no current "
+                    "value shown</div>")
+        elif r["same"]:
+            body = (f"<div class='ok'>matches</div>"
+                    f"<div class='tag'>{_e(r['current'])}</div>")
+        else:
+            body = (f"<div><span class='tag'>now live</span> {_e(r['current'] or '(missing)')}</div>"
+                    f"<div class='sev-warn'><span class='tag'>proposed</span> "
+                    f"{_e(r['proposed'])}</div>")
+        rows.append(f"<div style='margin:6px 0'><b>{_e(r['label'])} ({_e(r['lang'].upper())})</b>"
+                    f"{body}</div>")
+    differing = [r for r in comparison if not r["same"] and not r["error"]]
+    unreadable = [r for r in comparison if r["error"]]
+    if unreadable:
+        head = ("<div class='err'>Some pages could not be read — the comparison below is "
+                "incomplete.</div>")
+    elif differing:
+        head = (f"<div class='sev-warn'>{len(differing)} field(s) differ from the live pages."
+                "</div>")
+    else:
+        head = "<div class='ok'>Every field matches what is live right now.</div>"
+    stamp = (f"<div class='muted' style='margin-top:8px'>Live values read at "
+             f"{_e((snapshot or {}).get('fetched_at', '—'))} · "
+             f"<a href='/decision/{d.id}?live=1'>re-read</a></div>")
+    adopt = ""
+    if adoptable and differing and not unreadable:
+        adopt = (
+            f"<form method='post' action='/decision/{d.id}/adopt-live' style='margin-top:10px'>"
+            f"<input type='hidden' name='csrf' value='{_e(csrf)}'>"
+            f"<input type='hidden' name='revision' value='{d.revision}'>"
+            "<button class='ghost' type='submit'>Adopt live content as a new proposal</button>"
+            "<div class='muted' style='margin-top:4px'>Creates a NEW decision in "
+            "<b>proposed</b>, carrying the live values and their provenance. This decision is "
+            "not changed, approved, or closed.</div></form>")
+    return _section("Compare with the live pages", head + "".join(rows) + stamp + adopt)
+
+
 def last_verify_failure_callout(decision, attempts) -> str:
     """Plain language FIRST, raw evidence after (review #74): when the latest read failed, the
     owner sees which language and what was wrong — URL, canonical, title or meta — in one
@@ -417,7 +486,10 @@ def verify_attempts_section(attempts) -> str:
             f"<div><span class='tag'>{_e(a.finished_at)}</span> read #{a.read_number} · "
             f"<span class='badge {cls}'>{_e(a.outcome)}</span> · attempt #{a.id} · "
             f"rev {a.revision}{summary}</div>")
-    return _section(f"Verification attempts ({len(attempts)})", "".join(rows))
+    return ("<details class='card' style='padding:14px 16px'>"
+            f"<summary style='cursor:pointer;font-weight:700;font-size:15px'>"
+            f"Verification attempts ({len(attempts)})</summary>"
+            f"<div style='margin-top:10px'>{''.join(rows)}</div></details>")
 
 
 _DECISION_FILTERS = ("all", "proposed", "approved", "rejected", "executed")
@@ -464,7 +536,7 @@ def decisions_body(store, *, status: str = "all") -> str:
 
 def decision_body(decision, events, *, csrf: str, notice: str = "", error: str = "",
                   verifiable: bool = False, pending=None, wait_s: int = 0,
-                  attempts=()) -> str:
+                  attempts=(), comparison=None, snapshot=None) -> str:
     """The decision detail page (/decision/<id>) — why approve, what exactly changes, then the
     technical trail. U4b adds the Verify-live-change section (approved decisions) and the
     append-only verification-attempt evidence."""
@@ -514,15 +586,23 @@ def decision_body(decision, events, *, csrf: str, notice: str = "", error: str =
             f"{arrow} · rev {ev.revision}"
             + (f" · <code>{_e(str(ev.envelope_sha256)[:12])}</code>" if ev.envelope_sha256 else "")
             + extra + "</div>")
-    tech = _section("History & integrity", "".join(tech_rows))
+    # Progressive disclosure (U4c item 3): the technical trail is available, not imposed —
+    # routine approvals stay short, auditors lose nothing.
+    tech = ("<details class='card' style='padding:14px 16px'>"
+            "<summary style='cursor:pointer;font-weight:700;font-size:15px'>"
+            "History &amp; integrity</summary>"
+            f"<div style='margin-top:10px'>{''.join(tech_rows)}</div></details>")
 
+    compare = comparison_section(d, csrf=csrf, comparison=comparison, snapshot=snapshot,
+                                 adoptable=verifiable and d.status in ("proposed", "approved",
+                                                                      "rejected", "executed"))
     verify = verification_section(d, csrf=csrf, verifiable=verifiable, pending=pending,
                                   wait_s=wait_s)
     failure = last_verify_failure_callout(d, attempts)
     execution = execution_record_section(d, attempts)
     attempts_html = verify_attempts_section(attempts)
 
-    return (banner + head + why + evidence + numbers + change + controls + execution
+    return (banner + head + why + evidence + numbers + change + compare + controls + execution
             + failure + verify + attempts_html + tech
             + "<p><a href='/'>&larr; Home</a> · <a href='/decisions'>All decisions</a></p>")
 
