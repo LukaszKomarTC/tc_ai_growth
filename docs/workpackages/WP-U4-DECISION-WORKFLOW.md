@@ -59,8 +59,6 @@ report validity or the validator. Structured recommendation metadata at generati
 better long-term source — recorded as a candidate improvement, introduced only via its own
 reviewed change to the generation path.
 
-`report_artifacts` gains nullable `recommendations_count` (best-effort parse of the Recommended
-Actions section at persist time) — feeds the business-review homepage block.
 
 ## Approval semantics + state machine (constitutional; review #69 pts 1–4, 9)
 
@@ -71,7 +69,7 @@ Actions section at persist time) — feeds the business-review homepage block.
 | proposed | approve | approved | records envelope_sha256, approved_at/by; requires confirmation step |
 | proposed | reject (reason required) | rejected | reason stored |
 | approved | unapprove | proposed | explicit human act; approval fields cleared |
-| approved | envelope edit | proposed | automatic void: storage guard refuses envelope/hash change while approved — edit requires unapprove first (v3-trigger style) |
+| approved | envelope edit | — | **REFUSED at the storage layer** (v3-trigger style): an approved envelope is immutable. The ONLY path to editing is explicit Unapprove (above), which increments `revision`. No silent auto-void — the table, trigger, UI, and tests all implement this one rule |
 | approved | verify/apply FAILED | approved | attempt recorded with evidence; decision does NOT close |
 | approved | verify/apply SUCCESS | executed | executed_at + execution_evidence stored; leaves the queue |
 | rejected | re-propose | proposed | new revision; new envelope allowed |
@@ -106,12 +104,28 @@ is met). No control may overstate its authority.
   the site's qTranslate routing; language-correct values must appear on their own URL).
 - Requirements per URL: final HTTP 200; redirect chain permitted only if the FINAL URL equals
   the expected canonical; the page's `<link rel=canonical>` must equal the expected URL.
+- **URL equality is defined, not assumed (r2 review pt 4):** lowercase scheme and host; strip
+  fragment; normalize default ports (`:443`/`:80`); percent-decoding normalized to a canonical
+  encoding before compare; the CONFIGURED trailing-slash form is required exactly; any query
+  parameters = NOT equal. Path text is otherwise compared as-is — no broad path normalization
+  that could hide a wrong target. Fixtures cover equivalent-safe forms (port/case/fragment) AND
+  genuinely wrong targets (different slug, extra query, wrong language prefix).
 - Comparison: `<title>` and `meta[name=description]` vs the approved payload — Unicode NFC
   normalization, whitespace collapsed, then exact match.
-- Cache policy: requests sent with cache-bypassing headers; **two consistent reads ≥ 60s apart**
-  are required before marking executed (a cached page must not close a decision).
-- Evidence stored either way: both URLs, final status/redirect chains, fetched title/meta
-  verbatim, response body hashes, timestamps of both reads.
+- **Verification is TWO OWNER-TRIGGERED STEPS, never one long request (r2 review pt 3):**
+  "Verify live change" performs read #1 with cache-bypassing headers, stores the attempt, and
+  sets a visible `verification_pending` state; the control becomes "Confirm verification",
+  enabled after the minimum interval (≥60s). The confirm step performs read #2, compares BOTH
+  reads, and only consistent full matches mark executed. No browser request stays open beyond a
+  normal fetch; pending state survives page reloads, sign-outs, and service restarts (it lives
+  in the store, not the session). If a platform-scheduled second read arrives later (the
+  orchestrator horizon), it replaces the manual confirm with no schema change.
+- **Attempts are first-class immutable rows (r2 review pt 5):** table
+  `decision_verify_attempts` — decision id + `revision` + `envelope_sha256`, read number,
+  per-URL final status/redirect chain, fetched title/meta verbatim, response body hashes,
+  timestamps, outcome. Repeated failures accumulate individually inspectable rows; nothing is
+  overwritten. The decision's `execution_evidence` is only a POINTER to the terminal successful
+  attempt — success can never erase prior failures.
 - **Fail-closed:** ALL languages must match on BOTH reads. One language matching is a MISMATCH —
   recorded, surfaced, decision stays approved-not-executed. This workflow is exactly what the
   lead did by hand for D#9/D#10, now with rules instead of judgment.
@@ -145,9 +159,11 @@ notifications (post-U4, per roadmap) · multi-user/roles.
 ## Exit conditions
 
 1. Eliminated-actions table verified row by row in the owner's browser.
-2. One real decision completes the full loop: proposed (with evidence) → approved in browser →
-   applied (staging: connector; production: WP admin) → verified + auto-marked executed →
-   disappeared from the queue, evidence retrievable.
+2. One real PRODUCTION decision completes the full loop: proposed (with evidence) → approved in
+   browser → owner applies in WP admin → platform verifies (two-step) → executed → disappeared
+   from the queue, attempts and evidence retrievable. Staging Apply is an OPTIONAL later
+   acceptance once its registered operation exists — U4 closes without pretending that
+   dependency has shipped.
 3. Package-gate items 5–8 close (see WP-CONSOLE-USABILITY product gate).
 4. **U2 basic-auth retirement review triggers** — criterion (b) "U4 approval authority goes
    live for daily use" is met at U4 acceptance; the Console-native single login gets scheduled.
