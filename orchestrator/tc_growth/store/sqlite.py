@@ -11,7 +11,7 @@ from pathlib import Path
 
 from . import records, seed
 from .db import connect
-from .records import Case, Decision, DecisionEvent, ReportArtifact, Run
+from .records import Case, Decision, DecisionEvent, ReportArtifact, Run, VerifyAttempt
 
 
 class SqliteStore:
@@ -98,6 +98,21 @@ class SqliteStore:
 
     def list_decision_events(self, decision_id: int) -> list[DecisionEvent]:
         return records.list_decision_events(self._conn, decision_id)
+
+    # -- verification (U4b) --
+    def record_verify_attempt(self, **kw) -> int:
+        return records.record_verify_attempt(self._conn, **kw)
+
+    def list_verify_attempts(self, decision_id: int) -> list[VerifyAttempt]:
+        return records.list_verify_attempts(self._conn, decision_id)
+
+    def pending_verify_attempt(self, decision_id: int, *, revision: int) -> VerifyAttempt | None:
+        return records.pending_verify_attempt(self._conn, decision_id, revision=revision)
+
+    def execute_decision(self, decision_id: int, *, expected_revision: int,
+                         evidence_attempt_id: int, actor: str = "platform") -> None:
+        records.execute_decision(self._conn, decision_id, expected_revision=expected_revision,
+                                 evidence_attempt_id=evidence_attempt_id, actor=actor)
 
     # -- report artifacts --
     def persist_report_artifact(self, **kw) -> int:

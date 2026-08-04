@@ -16,7 +16,7 @@ from pathlib import Path
 
 from ..config import BASE_DIR, active_site, get_settings
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 # One statement per table; CREATE ... IF NOT EXISTS makes init idempotent.
 _SCHEMA = """
@@ -122,6 +122,33 @@ CREATE INDEX IF NOT EXISTS idx_decisions_case  ON decisions(case_id);
 CREATE INDEX IF NOT EXISTS idx_artifacts_kind  ON report_artifacts(kind);
 CREATE INDEX IF NOT EXISTS idx_artifacts_sha   ON report_artifacts(content_sha256);
 CREATE INDEX IF NOT EXISTS idx_decision_events ON decision_events(decision_id);
+
+CREATE TABLE IF NOT EXISTS decision_verify_attempts (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    decision_id     INTEGER NOT NULL REFERENCES decisions(id),
+    revision        INTEGER NOT NULL,             -- decision revision this read verified against
+    envelope_sha256 TEXT NOT NULL,                -- the envelope the read compared to
+    read_number     INTEGER NOT NULL,             -- 1 = verify, 2 = confirm (spec: two steps)
+    pair_id         INTEGER REFERENCES decision_verify_attempts(id),  -- read 2 -> its read 1
+    started_at      TEXT NOT NULL,
+    finished_at     TEXT NOT NULL,
+    outcome         TEXT NOT NULL,                -- match | mismatch | error
+    detail          TEXT NOT NULL                 -- per-URL JSON: final status, redirect chain,
+                                                  -- fetched title/meta verbatim, body sha256,
+                                                  -- problems[] (spec: first-class evidence)
+);
+
+CREATE INDEX IF NOT EXISTS idx_verify_attempts ON decision_verify_attempts(decision_id);
+
+-- Verification attempts are append-only evidence (WP-U4b): repeated failures accumulate as
+-- individually inspectable rows and a later success can never rewrite or remove them.
+CREATE TRIGGER IF NOT EXISTS trg_verify_attempts_no_update
+BEFORE UPDATE ON decision_verify_attempts
+BEGIN SELECT RAISE(ABORT, 'verify attempts are immutable (append-only evidence)'); END;
+
+CREATE TRIGGER IF NOT EXISTS trg_verify_attempts_no_delete
+BEFORE DELETE ON decision_verify_attempts
+BEGIN SELECT RAISE(ABORT, 'verify attempts are immutable (append-only evidence)'); END;
 
 -- Audit rows are append-only evidence (WP-U4): every lifecycle act records actor, timestamp,
 -- revision, old/new state and the bound envelope hash — and no act, including a later success,
@@ -289,3 +316,8 @@ def _migrate(conn: sqlite3.Connection, *, from_version: int) -> None:
             except sqlite3.OperationalError as exc:
                 if "duplicate column" not in str(exc).lower():
                     raise
+    if from_version < 5:
+        # v4 -> v5 (WP-U4b): decision_verify_attempts table + its append-only triggers —
+        # purely additive, created by the CREATE IF NOT EXISTS statements in _SCHEMA (which
+        # init_db runs before migrating). No column changes.
+        pass

@@ -75,6 +75,20 @@ class Decision:
 
 
 @dataclass
+class VerifyAttempt:
+    id: int
+    decision_id: int
+    revision: int
+    envelope_sha256: str
+    read_number: int
+    pair_id: int | None
+    started_at: str
+    finished_at: str
+    outcome: str
+    detail: str
+
+
+@dataclass
 class DecisionEvent:
     id: int
     decision_id: int
@@ -619,6 +633,71 @@ def repropose_decision(conn: sqlite3.Connection, decision_id: int, *, expected_r
     _record_event(conn, decision_id=d.id, actor=actor, action="re-propose",
                   from_status="rejected", to_status="proposed",
                   revision=expected_revision + 1, envelope_sha256=new_sha)
+    conn.commit()
+
+
+def record_verify_attempt(
+    conn: sqlite3.Connection,
+    *,
+    decision_id: int,
+    revision: int,
+    envelope_sha256: str,
+    read_number: int,
+    outcome: str,
+    detail: str,
+    started_at: str,
+    pair_id: int | None = None,
+) -> int:
+    """Append one immutable verification-read row (WP-U4b evidence). finished_at is stamped
+    here — the row records when the read actually completed."""
+    cur = conn.execute(
+        "INSERT INTO decision_verify_attempts (decision_id, revision, envelope_sha256, "
+        "read_number, pair_id, started_at, finished_at, outcome, detail) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);",
+        (decision_id, revision, envelope_sha256, read_number, pair_id, started_at, _now(),
+         outcome, detail))
+    conn.commit()
+    return int(cur.lastrowid)
+
+
+def list_verify_attempts(conn: sqlite3.Connection, decision_id: int) -> list[VerifyAttempt]:
+    rows = conn.execute(
+        "SELECT * FROM decision_verify_attempts WHERE decision_id = ? ORDER BY id ASC;",
+        (decision_id,)).fetchall()
+    return [VerifyAttempt(**r) for r in rows]
+
+
+def pending_verify_attempt(conn: sqlite3.Connection, decision_id: int, *,
+                           revision: int) -> VerifyAttempt | None:
+    """The store-backed pending state (spec: survives reloads, sign-outs and restarts): the
+    newest MATCHING read #1 for the CURRENT revision that no read #2 has answered yet. A
+    revision change (unapprove/re-approve) orphans old reads by construction — verification
+    can never confirm against an envelope the owner has since revisited."""
+    row = conn.execute(
+        "SELECT * FROM decision_verify_attempts a WHERE a.decision_id = ? AND a.revision = ? "
+        "AND a.read_number = 1 AND a.outcome = 'match' "
+        "AND NOT EXISTS (SELECT 1 FROM decision_verify_attempts b WHERE b.pair_id = a.id) "
+        "ORDER BY a.id DESC LIMIT 1;",
+        (decision_id, revision)).fetchone()
+    return VerifyAttempt(**row) if row else None
+
+
+def execute_decision(conn: sqlite3.Connection, decision_id: int, *, expected_revision: int,
+                     evidence_attempt_id: int, actor: str = "platform") -> None:
+    """approved -> executed (terminal): only the verification service calls this, and only on
+    two consistent full matches. execution_evidence POINTS at the terminal successful attempt —
+    it never restates it, and prior failed attempts stay untouched (append-only table)."""
+    d = _workflow_decision(conn, decision_id)
+    if d.status != "approved":
+        raise InvalidTransition(
+            f"cannot execute decision D#{d.id}: it is {d.status!r}, not approved.")
+    _transition(conn, d, expected_revision=expected_revision, from_status="approved",
+                set_sql="status = 'executed', executed_at = ?, execution_evidence = ?",
+                params=(_now(), f"verify_attempt:{evidence_attempt_id}"))
+    _record_event(conn, decision_id=d.id, actor=actor, action="execute",
+                  from_status="approved", to_status="executed",
+                  revision=expected_revision + 1, envelope_sha256=d.envelope_sha256,
+                  detail=f"verified live (attempt #{evidence_attempt_id})")
     conn.commit()
 
 
