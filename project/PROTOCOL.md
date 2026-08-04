@@ -125,10 +125,19 @@ connector is unavailable — the owner uploads a bundle:
 
     git archive --format=zip -o /tmp/tc-review-bundle.zip HEAD docs project orchestrator
 
-**The reviewer holds no write authority, by its own recommendation and owner governance** —
-separation of duties is a strength of this model, not a workaround. Recommendations return
-through the owner; changes land via the lead — recommendation → evidence → approval →
-execution, the same shape as the platform itself.
+**Reviewer write surface (updated 2026-08-04): recommendation artifacts only.** The reviewer
+can create GitHub issues and PR reviews/comments (first: issue #68, the U3b UX review) — these
+are recommendations in durable form, not repo content. Code, merges, and releases remain
+outside its authority, by its own recommendation and owner governance: separation of duties is
+a strength of this model. The owner's word remains the only merge/deploy authority.
+
+**The GitHub bus (adopted 2026-08-04, reversing the earlier defer-Issues decision — the pain it
+solves materialized as transcript relaying):** engineering increments now run as PR threads.
+Lead opens the PR and subscribes to it (events push into the lead's session) · reviewer reviews
+on the thread · lead replies/fixes on the thread · auditor audits on the thread · the owner
+steps in ONLY to authorize. Issues carry cross-increment charters (e.g. #68 = U4 UX charter).
+Chat remains for owner guidance and server work; agent-to-agent content stops flowing through
+the owner's clipboard.
 
 ## Deliberately NOT here
 
