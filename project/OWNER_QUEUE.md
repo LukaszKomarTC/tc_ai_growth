@@ -9,6 +9,10 @@ objects (PROTOCOL.md, Phase 2). Pointers, not copies — evidence lives where it
 |---|---|---|---|---|---|---|
 | _(empty)_ | — | — | — | — | — | — |
 
+_Not owner-queue items: issue #77 Decision 1 (U4c deploy sequencing) is with the REVIEWER on
+that thread by owner direction — decisions taken one at a time, on the issue, not in chat. The
+U4c production deploy is held until it is answered._
+
 ## Decided (index — details live at the pointer)
 
 | ID | Decision | Recorded at |
