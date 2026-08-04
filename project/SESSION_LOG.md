@@ -119,8 +119,10 @@ Completed
 
 - U4c SCOPE FIXED (reviewer-narrowed, lead-agreed): 1) business-first presentation 2) read-only current-vs-proposed comparison (reuses U4b fetch/compare — diff cannot disagree with the verifier) 3) progressive disclosure of technical evidence 4) adopt-live-content AS A NEW UNAPPROVED PROPOSAL WITH FULL PROVENANCE (never mutates an approved envelope, never shortcuts approval). External metrics (GSC/impact/ranking) explicitly OUT of U4c -> own increment
 
+- Issue #75 opened by reviewer as the U4c coordination surface (the new process rule working as designed) with 7 acceptance criteria — all adopted on-thread. Three restated precisely: titles enforced at PROPOSAL time (lead proposed an objective constraint — title = owner headline, required, <=60 chars, technical detail to rationale, enforced at the store boundary — rather than a fuzzy jargon detector that would eventually refuse a legitimate title; schema-v6 headline-column alternative offered as the owner/reviewer's call BEFORE build); live comparison values timestamped with honest failure (no silent fallback to an older read — an unreadable page must look unreadable); adopt-live-content composes a NEW envelope through the unchanged proposal boundary at revision 0 with provenance (source decision id, URLs, fetch time, fetched strings) and never touches the source
+
 Current
-- U4c build on owner word (PR carries complete acceptance scope per new rule). Then U2 retirement review. Monday 08-10: artifact #1 + behavioral capstone
+- U4c build on owner word; one design question open on #75 (title constraint vs new headline column). Then U2 retirement review. Monday 08-10: artifact #1 + behavioral capstone
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)
