@@ -9,9 +9,8 @@ objects (PROTOCOL.md, Phase 2). Pointers, not copies — evidence lives where it
 |---|---|---|---|---|---|---|
 | _(empty)_ | — | — | — | — | — | — |
 
-_Not owner-queue items: issue #77 Decision 1 (U4c deploy sequencing) is with the REVIEWER on
-that thread by owner direction — decisions taken one at a time, on the issue, not in chat. The
-U4c production deploy is held until it is answered._
+_Not owner-queue items: issue #77 Decision 2 (U4d trigger architecture) is with the REVIEWER on
+that thread — opened after U4c acceptance, with the detached-runner problem attached._
 
 ## Decided (index — details live at the pointer)
 
@@ -37,4 +36,5 @@ U4c production deploy is held until it is answered._
 | U4A1-1 | Owner "merge" 2026-08-04 → PR #72 rebase-merged (main 8dafa5c, 265 green); console redeploy + 5-check acceptance next | PR #72 thread |
 | U4A2-1 | Owner "ok-go" 2026-08-04 → PR #73 rebase-merged (main 9dd11ef, 266 green); redeploy + 5-check acceptance next | PR #73 thread |
 | U4B-1 | Owner "go" 2026-08-04 → PR #74 rebase-merged (main 3edb0de, 297 green on merged tip); deploy + D#13 acceptance per 6 criteria next | PR #74 thread |
+| U4D-SEQ | #77 Decision 1 RESOLVED by owner 2026-08-04: option A — deploy U4c now via the rehearsed procedure; build U4d after, with a staging dry run, first production exercise = the NEXT increment (not its own bootstrap). #77 stays open, scope and security boundary unreduced | issue #77 thread |
 | U4C-1 | Owner "ok" 2026-08-04 → PR #76 rebase-merged (main 684681c, CI run #349 green, 318 tests on merged tip); TWO-PHASE deploy next (app convergence + v5→v6 migration, then Console release) per the 8 criteria | PR #76 thread; WP-U4-DECISION-WORKFLOW.md |

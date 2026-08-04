@@ -137,8 +137,10 @@ Completed
 
 - Owner direction: take #77's decisions WITH THE REVIEWER, on the issue, ONE AT A TIME — not in chat. Reposted as Decision 1 only (sequencing: A deploy U4c now then build U4d / B hold per #77 / C build+prove U4d then let its install BE the U4c deploy / D runner built off a pre-U4c base). Recommended A, stated C is legitimate, B is C without honesty about the bootstrap. Decision 2 (trigger architecture) deliberately withheld until 1 is answered. U4c deploy HELD
 
+- #77 Decision 1 RESOLVED — owner approved A (2026-08-04), ahead of a reviewer response on the thread; recorded as an OWNER decision, not reviewer concurrence (owner is sole release/deploy authority — the model working, not a bypass). U4c deploys now via the rehearsed procedure; U4d built after with a staging dry run, first production exercise = the next increment. #77 STAYS OPEN, scope and security boundary unreduced — A fixes the sequencing, not the defect that the owner still pastes terminal blocks. Decision 2 (trigger architecture) still with the reviewer, to be opened after U4c acceptance with the detached-runner problem attached
+
 Current
-- U4c merged; deploy HELD pending issue #77 Decision 1 (reviewer). Was: TWO-PHASE deploy pending owner terminal (app convergence + v5->v6 migration, then Console release) + 8-criteria browser acceptance incl. the 2 deliberate exercises (mid-comparison page change -> adopt refuses; injected defect -> shows as DEFECT not policy). Then U2 retirement review. Monday 08-10: artifact #1 + capstone
+- U4c deploy UNBLOCKED (owner: A): two phases in order — app convergence + v5->v6 migration, then Console release — + 8-criteria browser acceptance incl. the 2 deliberate exercises. Then #77 Decision 2 -> U4d. Then U2 retirement review. Monday 08-10: artifact #1 + capstone (app convergence + v5->v6 migration, then Console release) + 8-criteria browser acceptance incl. the 2 deliberate exercises (mid-comparison page change -> adopt refuses; injected defect -> shows as DEFECT not policy). Then U2 retirement review. Monday 08-10: artifact #1 + capstone
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)
