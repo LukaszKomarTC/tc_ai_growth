@@ -93,8 +93,10 @@ Completed
 
 - PR #73 reviewer verdict (one round): "Safe to merge" + 5 post-deploy checks + standing design rule (page = the scrolling surface; dialog geometry under .modal only). Queued U4A2-1
 
+- U4a.2 MERGED (owner ok-go): PR #73 rebase-merged to main 9dd11ef; 266 green on merged tip. Queue emptied. Redeploy block issued (release 9dd11ef)
+
 Current
-- PR #73 awaiting OWNER word; merge -> redeploy -> 5-check acceptance closes U4a fully. Then U4b. Monday: artifact #1 + capstone
+- Owner: redeploy + 5-check -> U4a FULLY CLOSED -> U4b build. Monday: artifact #1 + capstone
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)

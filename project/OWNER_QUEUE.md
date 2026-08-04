@@ -7,7 +7,6 @@ objects (PROTOCOL.md, Phase 2). Pointers, not copies — evidence lives where it
 
 | ID | Priority | Decision / action | Evidence | Recommendation | Waiting since | Status |
 |---|---|---|---|---|---|---|
-| U4A2-1 | normal | Authorize merge of PR #73 (CSS scoping fix, one-round review) — then one redeploy closes U4a fully | PR #73 thread (e44a99b, CI green ×2, 266 tests) | Reviewer: "Safe to merge" | 2026-08-04 | waiting |
 
 ## Decided (index — details live at the pointer)
 
@@ -31,3 +30,4 @@ objects (PROTOCOL.md, Phase 2). Pointers, not copies — evidence lives where it
 | AGENTS-1 | PR #70 merged to main (365f623): AGENTS.md attribution protocol in force; lead's 2 record alignments executed (AGENTS.md→PROTOCOL pointer; PROTOCOL reviewer-surface update) | PR #70 thread; /AGENTS.md; project/PROTOCOL.md §Reviewer access |
 | U4A-1 | Owner "merge" 2026-08-04 → PR #71 rebase-merged (main 95c7974, 262 green on merged tip); deploy plan + browser acceptance next per the 6 thread criteria | PR #71 thread; WP-U4-DECISION-WORKFLOW.md |
 | U4A1-1 | Owner "merge" 2026-08-04 → PR #72 rebase-merged (main 8dafa5c, 265 green); console redeploy + 5-check acceptance next | PR #72 thread |
+| U4A2-1 | Owner "ok-go" 2026-08-04 → PR #73 rebase-merged (main 9dd11ef, 266 green); redeploy + 5-check acceptance next | PR #73 thread |
