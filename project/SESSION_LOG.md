@@ -99,8 +99,10 @@ Completed
 
 - U4b BUILT + PR #74 opened (d59f497, subscribed; owner go-U4b): tc_growth/verify.py (pinned URL-equality rules, NFC exact content match, cache-bypass fetch with redirect chain, per-language fail-closed reads); two-step flow store-backed (pending derived from attempts table — survives restarts; 60s from STORED read time; failed confirm consumes the pair); schema v5 additive (decision_verify_attempts, append-only triggers, migration proven); approved->executed atomic with evidence pointer + execute event; Console Verify-live-change section (countdown Confirm, attempts evidence, executed terminal display); control only for VERIFIABLE_KINDS. 297 green (31 new). D#13 = first live target
 
+- PR #74 review round 1: 3 UX recommendations (self-explanatory two-step; plain-language mismatch BEFORE raw evidence; execution evidence as permanent business record) — ALL implemented in r2 (02913bb): why-two-reads intro, failed-read callout (fixed text + store-derived problems, nothing reflected), Execution record paragraph + history row context. 4 production acceptance criteria adopted as U4b deployment gate. 297 green. Replied on thread
+
 Current
-- PR #74 (U4b) under review on-thread; owner word merges; deploy = app convergence (v5 additive) + console redeploy. Monday 08-10: artifact #1 + behavioral capstone
+- PR #74 (U4b r2) awaiting reviewer verdict; owner word merges; deploy = app convergence (v5 additive) + console redeploy; acceptance = D#13 verified live. Monday 08-10: artifact #1 + capstone
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)
