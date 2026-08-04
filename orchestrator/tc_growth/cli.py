@@ -391,6 +391,40 @@ def cmd_decision_set(decision_id: str, status: str, note: str = "") -> int:
     return 0
 
 
+def decision_proposal_context() -> tuple[str, tuple[str, ...], tuple[str, ...]]:
+    """The runtime context every decision proposal must present: (active profile id, allowed
+    TARGET environments, allowed target-URL hosts). Raises ValueError — fail closed — when the
+    owner has not configured a piece of it.
+
+    Three settings, three DIFFERENT concepts, kept independent on purpose (review #71 round 2):
+    TC_ENV_KIND says how this Console profile OPERATES; TC_ALLOW_WRITES says whether it may
+    EXECUTE writes; TC_DECISION_TARGET_ENVIRONMENTS says which environments an approval
+    envelope may TARGET. A STAGING/read-only Console legitimately proposes and reviews
+    decisions targeting the production site — that is U4's primary real use case, and deriving
+    target authority from env_kind would refuse it."""
+    from .config import active_site, get_settings
+
+    settings = get_settings()
+    envs = tuple(e.strip().lower()
+                 for e in settings.decision_target_environments.split(",") if e.strip())
+    if not envs:
+        raise ValueError(
+            "TC_DECISION_TARGET_ENVIRONMENTS is not set for this profile — the proposal "
+            "boundary cannot know which environments decisions may target. Set it "
+            "deliberately (e.g. TC_DECISION_TARGET_ENVIRONMENTS=production) and retry.")
+    bad = [e for e in envs if e not in ("staging", "production")]
+    if bad:
+        raise ValueError(f"TC_DECISION_TARGET_ENVIRONMENTS contains unknown value(s): "
+                         f"{', '.join(bad)} (allowed: staging, production)")
+    hosts = tuple(h.strip().lower() for h in settings.decision_url_hosts.split(",") if h.strip())
+    if not hosts:
+        raise ValueError(
+            "TC_DECISION_URL_HOSTS is not set for this profile — the proposal boundary "
+            "cannot verify target URL hosts. Set it (e.g. "
+            "TC_DECISION_URL_HOSTS=www.tossacycling.com,tossacycling.com) and retry.")
+    return (active_site() or "default", envs, hosts)
+
+
 def cmd_decision_propose(path: str) -> int:
     """Seed a WORKFLOW decision (U4a) from a JSON file:
 
@@ -416,21 +450,11 @@ def cmd_decision_propose(path: str) -> int:
     if not isinstance(doc, dict) or "envelope" not in doc or "title" not in doc:
         print('The file must be a JSON object with at least "title" and "envelope".')
         return 1
-    # Proposal context comes from the RUNTIME, never from the file (review #71 finding 1): the
-    # active profile id, the environments this deployment may target, and the profile's
-    # legitimate URL hosts. Missing host config fails closed — an unconstrained target host is
-    # not a default, it's a decision the owner hasn't made yet.
-    from .config import active_site, get_settings
-
-    settings = get_settings()
-    expected_profile = active_site() or "default"
-    allowed_environments = (("production",) if settings.env_kind.strip().lower() == "production"
-                            else ("staging",))
-    hosts = tuple(h.strip().lower() for h in settings.decision_url_hosts.split(",") if h.strip())
-    if not hosts:
-        print("REFUSED: TC_DECISION_URL_HOSTS is not set for this profile — the proposal "
-              "boundary cannot verify target URL hosts. Set it (e.g. "
-              "TC_DECISION_URL_HOSTS=www.tossacycling.com,tossacycling.com) and retry.")
+    # Proposal context comes from the RUNTIME, never from the file (review #71 finding 1).
+    try:
+        expected_profile, allowed_environments, hosts = decision_proposal_context()
+    except ValueError as exc:
+        print(f"REFUSED: {exc}")
         return 1
 
     s = store.open_store()

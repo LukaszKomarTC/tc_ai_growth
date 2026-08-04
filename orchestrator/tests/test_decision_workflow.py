@@ -188,13 +188,91 @@ def test_off_profile_host_fails_closed():
 
 
 def test_missing_context_is_refused_not_defaulted():
+    """Every piece of the proposal context is mandatory AT THE STORE BOUNDARY (review #71
+    round 2): there is no unconstrained mode a future agent caller could reach — an empty host
+    allowlist is a refusal, not a wildcard."""
     s = _store()
     with pytest.raises(ValueError, match="expected_profile"):
         s.propose_decision(title="t", envelope=_envelope(), expected_profile="",
-                           allowed_environments=("production",))
+                           allowed_environments=("production",),
+                           allowed_hosts=("www.tossacycling.com",))
     with pytest.raises(ValueError, match="allowed_environments"):
         s.propose_decision(title="t", envelope=_envelope(), expected_profile="tossa-cycling",
-                           allowed_environments=())
+                           allowed_environments=(),
+                           allowed_hosts=("www.tossacycling.com",))
+    with pytest.raises(ValueError, match="allowed_hosts"):
+        s.propose_decision(title="t", envelope=_envelope(), expected_profile="tossa-cycling",
+                           allowed_environments=("production",), allowed_hosts=())
+    with pytest.raises(TypeError):                            # not even omittable
+        s.propose_decision(title="t", envelope=_envelope(), expected_profile="tossa-cycling",
+                           allowed_environments=("production",))
+    assert s.list_decisions() == []
+
+
+def test_repropose_new_envelope_requires_hosts_too():
+    s = _store()
+    did = _propose(s)
+    s.reject_decision(did, expected_revision=0, reason="x")
+    with pytest.raises(ValueError, match="full proposal context"):
+        s.repropose_decision(did, expected_revision=1, envelope=_envelope(),
+                             expected_profile="tossa-cycling",
+                             allowed_environments=("production",))  # hosts missing
+    assert s.get_decision(did).status == "rejected"
+
+
+# --- CLI context derivation: three settings, three concepts -------------------------------------
+
+
+def _set_context_env(monkeypatch, *, env_kind="staging", targets="", hosts=""):
+    monkeypatch.setenv("TC_ENV_KIND", env_kind)
+    monkeypatch.setenv("TC_DECISION_TARGET_ENVIRONMENTS", targets)
+    monkeypatch.setenv("TC_DECISION_URL_HOSTS", hosts)
+
+
+def test_staging_console_proposes_production_when_explicitly_configured(monkeypatch):
+    """The reviewer's core round-2 case: env_kind describes how the Console OPERATES; the
+    target-environment setting says what decisions may TARGET. A STAGING/read-only Console with
+    an explicit production target setting proposes a production envelope successfully — U4's
+    primary real use case."""
+    from tc_growth.cli import decision_proposal_context
+
+    _set_context_env(monkeypatch, env_kind="staging", targets="production",
+                     hosts="www.tossacycling.com,tossacycling.com")
+    profile, envs, hosts = decision_proposal_context()
+    assert envs == ("production",) and "www.tossacycling.com" in hosts
+    s = _store()
+    did = s.propose_decision(title="prod decision from staging console", envelope=_envelope(),
+                             expected_profile="tossa-cycling", allowed_environments=envs,
+                             allowed_hosts=hosts)
+    assert s.get_decision(did).status == "proposed"
+
+
+def test_production_envelope_rejected_when_target_setting_excludes_it(monkeypatch):
+    from tc_growth.cli import decision_proposal_context
+
+    _set_context_env(monkeypatch, env_kind="production", targets="staging",
+                     hosts="www.tossacycling.com")
+    _, envs, hosts = decision_proposal_context()
+    s = _store()
+    with pytest.raises(ValueError, match="not permitted in this context"):
+        s.propose_decision(title="t", envelope=_envelope(),                # production envelope
+                           expected_profile="tossa-cycling", allowed_environments=envs,
+                           allowed_hosts=hosts)
+    assert s.list_decisions() == []
+
+
+def test_context_settings_fail_closed_and_validate_vocabulary(monkeypatch):
+    from tc_growth.cli import decision_proposal_context
+
+    _set_context_env(monkeypatch, targets="", hosts="www.tossacycling.com")
+    with pytest.raises(ValueError, match="TC_DECISION_TARGET_ENVIRONMENTS is not set"):
+        decision_proposal_context()
+    _set_context_env(monkeypatch, targets="prod", hosts="www.tossacycling.com")
+    with pytest.raises(ValueError, match="unknown value"):
+        decision_proposal_context()
+    _set_context_env(monkeypatch, targets="production", hosts="")
+    with pytest.raises(ValueError, match="TC_DECISION_URL_HOSTS is not set"):
+        decision_proposal_context()
 
 
 def test_repropose_with_new_envelope_reenters_the_full_boundary():
@@ -203,7 +281,7 @@ def test_repropose_with_new_envelope_reenters_the_full_boundary():
     s.reject_decision(did, expected_revision=0, reason="wrong title")
     new_env = _envelope(profile="other-site")
     # No context -> refused; wrong profile WITH context -> refused; decision stays rejected.
-    with pytest.raises(ValueError, match="requires the proposal context"):
+    with pytest.raises(ValueError, match="full proposal context"):
         s.repropose_decision(did, expected_revision=1, envelope=new_env)
     with pytest.raises(ValueError, match="does not match the active profile"):
         s.repropose_decision(did, expected_revision=1, envelope=new_env, **_CONTEXT)
