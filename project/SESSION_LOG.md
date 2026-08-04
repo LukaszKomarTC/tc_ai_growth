@@ -127,8 +127,10 @@ Completed
 
 - PR #76 review round 2: idempotence not durable (200-row scan + evidence substring — PR claimed "can never" while code guaranteed it only for recent rows) and broad excepts still able to disguise defects as policy. Both fixed r3 (006adae): schema v6 decision_adoptions with adopt_key PRIMARY KEY (source:revision:envelope:snapshot-digest), claim-then-complete with reclaimable orphan claims, O(1) size-independent; unexpected exceptions now recorded as console-error runs with traceback and rendered as DEFECTS, never adopt-failed. Same lesson found one level down: claim_adoption answered False for ANY IntegrityError, so an FK violation would have read as "already claimed" — now re-reads and re-raises unless the key truly exists. 317 green (5 new)
 
+- PR #76 reviewer verdict on r3: "recommended for owner authorization to merge and deploy" + 8 deployment criteria (adopted). Criterion 1 evidenced BEFORE deploy: new v5->v6 migration test on a POPULATED production-shaped store (executed decision + events + verify attempt + runs + artifact all byte-identical after migration) — 5b400af, 318 green. Corrected my own earlier PR line: U4c is NOT console-only, schema v6 means app convergence too. Queued U4C-1
+
 Current
-- PR #76 (U4c r3) awaiting re-review; owner word merges; deploy = console release only (schema v6 = additive table -> app convergence too). Then U2 retirement review. Monday 08-10: artifact #1 + capstone
+- PR #76 awaiting OWNER merge word; then deploy (app v6 convergence + console release) + 8-criteria acceptance. Then U2 retirement review. Monday 08-10: artifact #1 + capstone
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)

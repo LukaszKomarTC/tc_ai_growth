@@ -7,6 +7,7 @@ objects (PROTOCOL.md, Phase 2). Pointers, not copies — evidence lives where it
 
 | ID | Priority | Decision / action | Evidence | Recommendation | Waiting since | Status |
 |---|---|---|---|---|---|---|
+| U4C-1 | normal | Authorize merge of PR #76 (U4c: business-first presentation, live comparison, adopt-live) — then deploy plan (app convergence for schema v6 + console release) against the 8 criteria | PR #76 thread (r3+ `5b400af`, 3 review rounds, CI green, 318 tests) | Reviewer: "recommended for owner authorization to merge and deploy" | 2026-08-04 | waiting |
 
 ## Decided (index — details live at the pointer)
 
