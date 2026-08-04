@@ -103,8 +103,10 @@ Completed
 
 - PR #74 reviewer verdict on r2: "safe for owner authorization to merge and deploy" + 6 production acceptance criteria (adopted as U4b deployment gate; incl. deliberate one-language mismatch + failed-confirm-consumes-pair exercises). Authority boundary confirmed correct. Queued U4B-1
 
+- U4b MERGED (owner go): PR #74 rebase-merged to main 3edb0de; 297 green on merged tip. Queue emptied. Deploy plan issued (app v5 convergence + console redeploy; D#13 acceptance script covers all 6 criteria incl. deliberate-mismatch and failed-confirm-consumes-pair)
+
 Current
-- PR #74 awaiting OWNER merge word; then deploy (app v5 convergence + console redeploy) + D#13 live acceptance per the 6 criteria. Monday 08-10: artifact #1 + capstone
+- Owner: run U4b deploy plan + D#13 acceptance -> eliminated-actions row 2 retired. Monday 08-10: artifact #1 + capstone
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)

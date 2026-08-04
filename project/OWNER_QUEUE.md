@@ -7,7 +7,6 @@ objects (PROTOCOL.md, Phase 2). Pointers, not copies — evidence lives where it
 
 | ID | Priority | Decision / action | Evidence | Recommendation | Waiting since | Status |
 |---|---|---|---|---|---|---|
-| U4B-1 | normal | Authorize merge of PR #74 (U4b: verify live change -> executed) — then deploy plan (app convergence v5 + console redeploy) + D#13 live acceptance | PR #74 thread (r2 `02913bb`, CI green ×2, 297 tests) | Reviewer: "safe for owner authorization to merge and deploy" + 6 production criteria | 2026-08-04 | waiting |
 
 ## Decided (index — details live at the pointer)
 
@@ -32,3 +31,4 @@ objects (PROTOCOL.md, Phase 2). Pointers, not copies — evidence lives where it
 | U4A-1 | Owner "merge" 2026-08-04 → PR #71 rebase-merged (main 95c7974, 262 green on merged tip); deploy plan + browser acceptance next per the 6 thread criteria | PR #71 thread; WP-U4-DECISION-WORKFLOW.md |
 | U4A1-1 | Owner "merge" 2026-08-04 → PR #72 rebase-merged (main 8dafa5c, 265 green); console redeploy + 5-check acceptance next | PR #72 thread |
 | U4A2-1 | Owner "ok-go" 2026-08-04 → PR #73 rebase-merged (main 9dd11ef, 266 green); redeploy + 5-check acceptance next | PR #73 thread |
+| U4B-1 | Owner "go" 2026-08-04 → PR #74 rebase-merged (main 3edb0de, 297 green on merged tip); deploy + D#13 acceptance per 6 criteria next | PR #74 thread |
