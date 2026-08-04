@@ -101,8 +101,10 @@ Completed
 
 - PR #74 review round 1: 3 UX recommendations (self-explanatory two-step; plain-language mismatch BEFORE raw evidence; execution evidence as permanent business record) — ALL implemented in r2 (02913bb): why-two-reads intro, failed-read callout (fixed text + store-derived problems, nothing reflected), Execution record paragraph + history row context. 4 production acceptance criteria adopted as U4b deployment gate. 297 green. Replied on thread
 
+- PR #74 reviewer verdict on r2: "safe for owner authorization to merge and deploy" + 6 production acceptance criteria (adopted as U4b deployment gate; incl. deliberate one-language mismatch + failed-confirm-consumes-pair exercises). Authority boundary confirmed correct. Queued U4B-1
+
 Current
-- PR #74 (U4b r2) awaiting reviewer verdict; owner word merges; deploy = app convergence (v5 additive) + console redeploy; acceptance = D#13 verified live. Monday 08-10: artifact #1 + capstone
+- PR #74 awaiting OWNER merge word; then deploy (app v5 convergence + console redeploy) + D#13 live acceptance per the 6 criteria. Monday 08-10: artifact #1 + capstone
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)
