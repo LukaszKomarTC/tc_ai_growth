@@ -57,8 +57,10 @@ Completed
 
 - PR #69 review round 3: two stale-wording contradictions (eliminated-actions staging row still claimed an "already accepted" apply path; PR description still described round-1 design). Fixed in r4 (7fcafe0): row now REMAINS MANUAL / DEFERRED (no registry op on main, not part of U4 closure); description rewritten to r4 truth (Verify-live-change control, target-bound envelope hash, staging apply = deferred dependency). Replied on thread
 
+- PR #69 reviewer verdict on r4: "safe for owner authorization to merge" + 10 U4a acceptance criteria (adopted verbatim as U4a review gate, durable on thread). Reviewer's no-CI observation answered: ci.yml green ×2 on 7fcafe0. Merge queued for owner (OWNER_QUEUE U4-SPEC)
+
 Current
-- PR #69 spec r4 awaiting reviewer recommendation + owner merge word; then U4a build. Monday: artifact #1 + capstone
+- PR #69 spec r4 awaiting OWNER merge word only (reviewer recommends); then U4a build against the 10 criteria. Monday: artifact #1 + capstone
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)

@@ -7,6 +7,7 @@ objects (PROTOCOL.md, Phase 2). Pointers, not copies — evidence lives where it
 
 | ID | Priority | Decision / action | Evidence | Recommendation | Waiting since | Status |
 |---|---|---|---|---|---|---|
+| U4-SPEC | normal | Authorize merge of PR #69 (U4 spec r4, docs-only) — your word merges it and opens U4a | PR #69 thread (3 review rounds, r4 `7fcafe0`, CI green ×2) | Reviewer: "safe for owner authorization to merge"; lead concurs | 2026-08-04 | waiting |
 
 ## Decided (index — details live at the pointer)
 
