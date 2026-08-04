@@ -135,6 +135,9 @@ def home_body(store, *, profile: str, env_kind: str, wp_host: str, allow_writes:
             for d in waiting)
     else:
         items = "<div class='ok'>🟢 Nothing waiting — no decisions need you.</div>"
+    # The queue shows only what needs the owner NOW; everything that left it stays
+    # discoverable in the history (U4a.1 — approved decisions must never seem to vanish).
+    items += "<div class='muted'><a href='/decisions'>Decision history →</a></div>"
     parts.append(_section(f"Decisions waiting ({len(waiting)})", items))
 
     # 4 — Any infrastructure or data problems? (recent non-ok runs)
@@ -280,6 +283,45 @@ def decision_controls(decision, *, csrf: str) -> str:
     return (f"<p class='muted'>No actions: this decision is <b>{_e(d.status)}</b>.</p>")
 
 
+_DECISION_FILTERS = ("all", "proposed", "approved", "rejected", "executed")
+
+
+def decisions_body(store, *, status: str = "all") -> str:
+    """The Decisions destination (U4a.1, review #71 post-merge finding): EVERY decision stays
+    discoverable after it leaves the homepage queue. The queue answers 'what needs me NOW';
+    this page is the history — approved, rejected and executed decisions remain visible,
+    linked, and (where the state machine permits) manageable. Without it, Unapprove is
+    unreachable the moment approval succeeds."""
+    decisions = store.list_decisions(limit=200)
+    shown = [d for d in decisions if status == "all" or str(d.status) == status]
+
+    filters = " · ".join(
+        (f"<b>{_e(f.capitalize())}</b>" if f == status
+         else f"<a href='/decisions{'' if f == 'all' else '?status=' + f}'>{_e(f.capitalize())}</a>")
+        for f in _DECISION_FILTERS)
+
+    _badge = {"proposed": "warn", "approved": "ok", "executed": "ok", "rejected": "err"}
+    rows = []
+    for d in decisions:
+        if status != "all" and str(d.status) != status:
+            continue
+        cls = _badge.get(str(d.status), "")
+        kind = _e(d.kind) if d.kind else "<span class='muted'>legacy</span>"
+        extra = ""
+        if str(d.status) == "approved" and d.approved_at:
+            extra = f" · approved {_e(_age(d.approved_at))} by {_e(d.approved_by or '—')}"
+        rows.append(
+            f"<div><a href='/decision/{d.id}'><b>D#{d.id}</b></a> "
+            f"<span class='badge {cls}'>{_e(d.status)}</span> {_e(d.title)} · {kind} · "
+            f"proposed {_e(_age(d.made_at))}{extra}</div>")
+    if not rows:
+        body = f"<div class='muted'>No {'' if status == 'all' else status + ' '}decisions.</div>"
+    else:
+        body = "".join(rows)
+    return (f"<div class='muted' style='margin-bottom:10px'>{filters}</div>"
+            + _section(f"Decisions ({len(shown)})", body))
+
+
 def decision_body(decision, events, *, csrf: str, notice: str = "", error: str = "") -> str:
     """The decision detail page (/decision/<id>) — why approve, what exactly changes, then the
     technical trail."""
@@ -332,7 +374,7 @@ def decision_body(decision, events, *, csrf: str, notice: str = "", error: str =
     tech = _section("History & integrity", "".join(tech_rows))
 
     return (banner + head + why + evidence + numbers + change + controls + tech
-            + "<p><a href='/'>&larr; Home</a></p>")
+            + "<p><a href='/'>&larr; Home</a> · <a href='/decisions'>All decisions</a></p>")
 
 
 def decision_confirm_body(decision, *, csrf: str) -> str:

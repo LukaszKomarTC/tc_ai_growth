@@ -270,6 +270,70 @@ def test_home_links_waiting_decisions_to_their_detail_pages(console_env):
     assert f"/decision/{env.decision_id}" in home and "Review →" in home
 
 
+# --- U4a.1: decision history (review #71 post-merge finding) ------------------------------------
+#
+# A decision must never SEEM to vanish: the homepage queue shows only proposed (actionable)
+# decisions, and everything else stays discoverable in the /decisions history — approved items
+# reachable (so Unapprove stays reachable), rejected/executed visible as immutable record.
+
+
+def test_history_lists_every_status_and_queue_stays_proposed_only():
+    s = SqliteStore(":memory:")
+    d_approved = _seed(s)
+    s.approve_decision(d_approved, expected_revision=0)
+    d_rejected = _seed(s)
+    s.reject_decision(d_rejected, expected_revision=0, reason="superseded")
+    d_waiting = _seed(s)
+    lid = s.record_decision(title="Legacy row", status="active")
+
+    out = console_views.decisions_body(s, status="all")
+    for did in (d_approved, d_rejected, d_waiting, lid):
+        assert f"/decision/{did}" in out                       # discoverable without typing IDs
+    assert "legacy" in out                                     # legacy rows labeled, not hidden
+    assert f"Decisions ({4})".replace("4", "4") in out
+
+    # Filters narrow without losing the rest of the vocabulary.
+    approved_only = console_views.decisions_body(s, status="approved")
+    assert f"/decision/{d_approved}" in approved_only
+    assert f"/decision/{d_rejected}" not in approved_only
+
+    # The homepage queue still counts ONLY actionable proposed decisions...
+    waiting = [d for d in s.list_decisions() if str(d.status) == "proposed"]
+    assert [d.id for d in waiting] == [d_waiting]
+    # ...and the approved decision remains manageable from its detail page (Unapprove present).
+    detail = console_views.decision_body(s.get_decision(d_approved),
+                                         s.list_decision_events(d_approved), csrf="t")
+    assert "Unapprove" in detail and "/decisions" in detail    # history link after any action
+
+
+def test_history_escapes_store_strings():
+    evil = "<script>alert(1)</script>"
+    s = SqliteStore(":memory:")
+    s.record_decision(title=evil, status="proposed")
+    out = console_views.decisions_body(s)
+    assert "<script>" not in out and "&lt;script&gt;" in out
+
+
+def test_decisions_route_serves_history_and_home_links_it(console_env):
+    env = console_env
+    # Approve the seeded decision so it LEAVES the queue, then prove it stays discoverable.
+    detail = env.opener.open(f"{env.base}/decision/{env.decision_id}").read().decode()
+    _post(env, f"/decision/{env.decision_id}/approve", csrf=_csrf_from(detail), revision=0,
+          confirmed=1)
+    home = env.opener.open(f"{env.base}/").read().decode()
+    # The approved decision has LEFT the queue (only the legacy proposed row remains)...
+    assert "Decisions waiting (1)" in home
+    assert f"<a href='/decision/{env.decision_id}'><b>D#{env.decision_id}</b></a>" not in home
+    # ...and the path out of the queue is visible right where it disappeared from.
+    assert "Decision history" in home
+    history = env.opener.open(f"{env.base}/decisions").read().decode()
+    assert f"/decision/{env.decision_id}" in history and "approved" in history
+    filtered = env.opener.open(f"{env.base}/decisions?status=rejected").read().decode()
+    assert f"/decision/{env.decision_id}" not in filtered
+    bogus = env.opener.open(f"{env.base}/decisions?status=evil").read().decode()
+    assert f"/decision/{env.decision_id}" in bogus             # unknown filter falls back to all
+
+
 def test_missing_decision_404s(console_env):
     env = console_env
     try:

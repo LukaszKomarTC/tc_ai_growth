@@ -265,7 +265,7 @@ def _shell(title: str, active: str, body: str, *, site_name: str, env_kind: str)
     # ONE tab per destination (U1: "Evidence" and "Logs" both pointed at /logs — a nav item that
     # takes you somewhere other than what it says is a truth defect on this surface).
     nav = "".join([
-        _tab("Home", "/"), _tab("Operations", "/operations"),
+        _tab("Home", "/"), _tab("Decisions", "/decisions"), _tab("Operations", "/operations"),
         _tab("Evidence", "/logs"), _tab("Cases", "/cases"),
     ])
     kind = (env_kind or "staging").strip().lower()
@@ -511,6 +511,22 @@ class _Handler(BaseHTTPRequestHandler):
             csrf = csrf_for(session, secret)
             body = f"<script>window.__CSRF__={json.dumps(csrf)};</script>" + _operations_body()
             self._html(200, _shell("Operations", "operations", body, **chrome))
+        elif path == "/decisions":
+            # U4a.1: the decision history — everything that ever entered the workflow stays
+            # discoverable here after it leaves the homepage queue. Filter values are
+            # whitelisted; anything else falls back to 'all'.
+            from . import console_views
+
+            q = parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+            wanted = q.get("status", ["all"])[0]
+            status = wanted if wanted in console_views._DECISION_FILTERS else "all"
+            try:
+                from .store import open_store
+
+                body = console_views.decisions_body(open_store(), status=status)
+            except Exception as exc:  # noqa: BLE001 - degrade, never 500
+                body = f"<p class='muted'>Decisions unavailable: {_e(_redact(str(exc)))}</p>"
+            self._html(200, _shell("Decisions", "decisions", body, **chrome))
         elif path.startswith("/decision/"):
             # U4a: the decision detail page. Success/error state arrives as WHITELISTED keys in
             # the query string (PRG pattern — a refresh must never repeat a mutation), rendered
@@ -539,7 +555,7 @@ class _Handler(BaseHTTPRequestHandler):
             error = _DECISION_ERRORS.get(q.get("err", [""])[0], "")
             body = console_views.decision_body(
                 decision, events, csrf=csrf_for(session, secret), notice=notice, error=error)
-            self._html(200, _shell(f"Decision D#{decision.id}", "home", body, **chrome))
+            self._html(200, _shell(f"Decision D#{decision.id}", "decisions", body, **chrome))
         elif path.startswith("/report/"):
             from . import console_views
 
@@ -660,7 +676,7 @@ class _Handler(BaseHTTPRequestHandler):
                 session = self._authed(secret) if secret else None
                 body = console_views.decision_confirm_body(
                     decision, csrf=csrf_for(session, secret))
-                self._html(200, _shell(f"Confirm D#{decision.id}", "home", body,
+                self._html(200, _shell(f"Confirm D#{decision.id}", "decisions", body,
                                        site_name=s.site_name or (active_site() or "Tossa Cycling"),
                                        env_kind=s.env_kind))
                 return
