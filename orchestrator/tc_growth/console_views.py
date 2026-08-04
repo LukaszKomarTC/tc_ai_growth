@@ -130,7 +130,8 @@ def home_body(store, *, profile: str, env_kind: str, wp_host: str, allow_writes:
     waiting = waiting_now
     if waiting:
         items = "".join(
-            f"<div><b>D#{d.id}</b> {_e(d.title)} · proposed {_e(_age(d.made_at))}</div>"
+            f"<div><a href='/decision/{d.id}'><b>D#{d.id}</b></a> {_e(d.title)} · "
+            f"proposed {_e(_age(d.made_at))} · <a href='/decision/{d.id}'>Review →</a></div>"
             for d in waiting)
     else:
         items = "<div class='ok'>🟢 Nothing waiting — no decisions need you.</div>"
@@ -189,6 +190,172 @@ def report_body(artifact, *, redact: Callable[[str], str]) -> str:
     return (f"<section class='card'>{meta}</section>"
             f"<section class='card'>{body}</section>"
             "<p><a href='/'>&larr; Home</a></p>")
+
+
+# -- decision detail + approval workflow (WP-U4a) -------------------------------------------------
+#
+# Reading order is the spec's, owner-first: recommendation → evidence → impact/confidence →
+# the exact proposed change → controls — and only THEN the technical trail (hash, revision,
+# history). U4a adds approve/reject only; no Apply, Execute, or Verify control exists yet, and
+# none may appear here before its capability has its own acceptance (no control overstates
+# authority).
+
+
+def _provenance(raw: str | None) -> str:
+    """Impact/confidence render with their provenance, never as a bare number. A missing or
+    unparseable value renders 'unknown' — unknown beats invented precision (spec pt 6)."""
+    if not raw:
+        return "<span class='muted'>unknown</span>"
+    try:
+        p = json.loads(raw)
+    except (ValueError, TypeError):
+        return "<span class='muted'>unknown</span>"
+    if not isinstance(p, dict) or not p.get("value"):
+        return "<span class='muted'>unknown</span>"
+    label = p.get("label") or "estimate"
+    trail = " · ".join(_e(p[k]) for k in ("method", "source", "as_of") if p.get(k))
+    return (f"<b>{_e(p['value'])}</b> <span class='badge warn'>{_e(label)}</span>"
+            + (f" <span class='tag'>{trail}</span>" if trail else ""))
+
+
+def _envelope_dict(decision) -> dict | None:
+    try:
+        env = json.loads(decision.envelope or "")
+        return env if isinstance(env, dict) else None
+    except (ValueError, TypeError):
+        return None
+
+
+def _proposed_change(env: dict) -> str:
+    """The exact change, field by field — what the owner is actually approving. Escaped
+    verbatim; no summarization that could hide a wrong value."""
+    target = env.get("target") or {}
+    urls = target.get("expected_urls") or {}
+    env_kind = str(env.get("environment", ""))
+    env_cls = "err" if env_kind == "production" else "warn"
+    rows = [
+        f"<div><span class='tag'>environment</span> "
+        f"<span class='badge {env_cls}'>{_e(env_kind.upper())}</span> · "
+        f"profile {_e(env.get('profile', '—'))} · kind {_e(env.get('kind', '—'))}</div>",
+        f"<div><span class='tag'>target</span> {_e(target.get('object_type', '—'))}"
+        + (f" · post {_e(target['post_id'])}" if target.get("post_id") is not None else "")
+        + "</div>",
+    ]
+    rows += [f"<div><span class='tag'>url ({_e(lang)})</span> {_e(url)}</div>"
+             for lang, url in urls.items()]
+    payload = env.get("payload") or {}
+    rows += [f"<div><span class='tag'>{_e(field)}</span> {_e(value)}</div>"
+             for field, value in payload.items()]
+    return "".join(rows)
+
+
+def decision_controls(decision, *, csrf: str) -> str:
+    """Approve / Reject / Unapprove per current state — or the plain-English reason there are
+    no controls. Approve POSTs WITHOUT `confirmed`, which renders the confirmation step (two
+    genuine clicks, stateless server-side)."""
+    d = decision
+    if not d.envelope_sha256:
+        return ("<p class='muted'>This decision predates the approval workflow — it has no "
+                "bound envelope, so there is nothing for an approval to bind to. It stays "
+                "visible for the record; to act on it, record a new decision.</p>")
+    hidden = (f"<input type='hidden' name='csrf' value='{_e(csrf)}'>"
+              f"<input type='hidden' name='revision' value='{d.revision}'>")
+    if d.status == "proposed":
+        return (
+            f"<form method='post' action='/decision/{d.id}/approve' style='display:inline'>"
+            f"{hidden}<button type='submit'>Approve…</button></form> "
+            f"<form method='post' action='/decision/{d.id}/reject' "
+            "style='display:inline-flex;gap:8px;margin-left:12px'>"
+            f"{hidden}<input type='text' name='reason' placeholder='Rejection reason (required)'"
+            " style='font:inherit;padding:7px 10px;border-radius:6px;"
+            "border:1px solid var(--line);background:var(--bg);color:var(--fg);width:260px'>"
+            "<button class='ghost' type='submit'>Reject</button></form>")
+    if d.status == "approved":
+        return (
+            f"<p><span class='badge ok'>approved</span> by {_e(d.approved_by or '—')} at "
+            f"{_e(d.approved_at or '—')}. The envelope is now immutable; the only way to "
+            "change it is to unapprove first.</p>"
+            f"<form method='post' action='/decision/{d.id}/unapprove'>{hidden}"
+            "<button class='ghost' type='submit'>Unapprove (back to proposed)</button></form>")
+    return (f"<p class='muted'>No actions: this decision is <b>{_e(d.status)}</b>.</p>")
+
+
+def decision_body(decision, events, *, csrf: str, notice: str = "", error: str = "") -> str:
+    """The decision detail page (/decision/<id>) — why approve, what exactly changes, then the
+    technical trail."""
+    d = decision
+    banner = ""
+    if error:
+        banner = f"<div class='statuscard act'><p class='lead'>{_e(error)}</p></div>"
+    elif notice:
+        banner = f"<div class='statuscard calm'><p class='lead'>{_e(notice)}</p></div>"
+
+    head = (f"<h2 style='margin:0 0 2px;font-size:18px'>D#{d.id} · {_e(d.title)}</h2>"
+            f"<div class='muted'>status <b>{_e(d.status)}</b> · proposed {_e(_age(d.made_at))}"
+            f" by {_e(d.made_by or '—')}</div>")
+
+    why = _section("Recommendation",
+                   f"<div>{_e(d.rationale)}</div>" if d.rationale
+                   else "<div class='muted'>No rationale recorded.</div>")
+    evidence = _section("Evidence",
+                        f"<div>{_e(d.evidence)}</div>" if d.evidence
+                        else "<div class='muted'>No evidence pointer recorded.</div>")
+    numbers = _section("Expected impact / confidence",
+                       f"<div><span class='tag'>impact</span> {_provenance(d.impact)}</div>"
+                       f"<div><span class='tag'>confidence</span> {_provenance(d.confidence)}</div>")
+
+    env = _envelope_dict(d)
+    if env is not None:
+        change = _section("The exact proposed change", _proposed_change(env))
+    elif d.envelope_sha256:
+        change = _section("The exact proposed change",
+                          "<div class='err'>Envelope unreadable — refusing to summarize. "
+                          "Inspect via CLI before acting.</div>")
+    else:
+        change = _section("The exact proposed change",
+                          "<div class='muted'>None bound (legacy decision).</div>")
+
+    controls = _section("Actions", decision_controls(d, csrf=csrf))
+
+    tech_rows = [
+        f"<div><span class='tag'>envelope sha256</span> <code>{_e(d.envelope_sha256 or '—')}</code></div>",
+        f"<div><span class='tag'>revision</span> {d.revision}</div>",
+    ]
+    for ev in events:
+        arrow = f"{_e(ev.from_status or '∅')} → {_e(ev.to_status)}"
+        extra = f" · {_e(ev.detail)}" if ev.detail else ""
+        tech_rows.append(
+            f"<div><span class='tag'>{_e(ev.at)}</span> {_e(ev.action)} by {_e(ev.actor)} · "
+            f"{arrow} · rev {ev.revision}"
+            + (f" · <code>{_e(str(ev.envelope_sha256)[:12])}</code>" if ev.envelope_sha256 else "")
+            + extra + "</div>")
+    tech = _section("History & integrity", "".join(tech_rows))
+
+    return (banner + head + why + evidence + numbers + change + controls + tech
+            + "<p><a href='/'>&larr; Home</a></p>")
+
+
+def decision_confirm_body(decision, *, csrf: str) -> str:
+    """The second approval step — a page, not a JS dialog: stateless, survives reload, and
+    shows one more time exactly what is being bound before anything mutates."""
+    d = decision
+    env = _envelope_dict(d) or {}
+    env_kind = str(env.get("environment", ""))
+    warn = (f"<div class='statuscard act'><p class='lead'>You are approving this for "
+            f"{_e(env_kind.upper() or 'UNKNOWN ENVIRONMENT')}</p>"
+            "<div class='why'>Approval binds the exact envelope below (content + target + "
+            "environment). Nothing is executed by approving.</div></div>")
+    change = _section("Binding envelope", _proposed_change(env) if env else
+                      "<div class='err'>Envelope unreadable.</div>")
+    forms = (
+        f"<form method='post' action='/decision/{d.id}/approve' style='display:inline'>"
+        f"<input type='hidden' name='csrf' value='{_e(csrf)}'>"
+        f"<input type='hidden' name='revision' value='{d.revision}'>"
+        "<input type='hidden' name='confirmed' value='1'>"
+        "<button type='submit'>Confirm approval</button></form> "
+        f"<a href='/decision/{d.id}' style='margin-left:12px'>Cancel</a>")
+    return (warn + f"<h2 style='font-size:17px'>D#{d.id} · {_e(d.title)}</h2>" + change
+            + _section("Confirm", forms))
 
 
 def cases_body(store) -> str:

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from .records import Case, Decision, ReportArtifact, Run
+from .records import Case, Decision, DecisionEvent, ReportArtifact, Run
 
 
 @runtime_checkable
@@ -83,6 +83,46 @@ class Store(Protocol):
     def get_decision(self, decision_id: int) -> Decision | None: ...
 
     def update_decision(self, decision_id: int, **fields: object) -> None: ...
+
+    # -- decision approval workflow (U4a) --
+    # CONSTITUTIONAL INVARIANTS (backend-neutral, same standing as the artifact rule below):
+    # an APPROVED envelope is immutable at the storage layer of whatever backend implements
+    # this protocol (SQLite: trigger; a PostgresStore must bring an equivalent) — the only path
+    # away is the explicit unapprove transition. EXECUTED decisions are terminal. Every
+    # lifecycle mutation carries the caller's expected revision (stale views fail loudly) and
+    # appends one immutable audit event. API discipline without storage enforcement does not
+    # satisfy this protocol.
+    def propose_decision(
+        self,
+        *,
+        title: str,
+        envelope: dict,
+        rationale: str | None = None,
+        evidence: str | None = None,
+        impact: dict | None = None,
+        confidence: dict | None = None,
+        case_id: int | None = None,
+        made_by: str = "agent",
+    ) -> int: ...
+
+    def approve_decision(
+        self, decision_id: int, *, expected_revision: int, actor: str = "owner"
+    ) -> str: ...
+
+    def reject_decision(
+        self, decision_id: int, *, expected_revision: int, reason: str, actor: str = "owner"
+    ) -> None: ...
+
+    def unapprove_decision(
+        self, decision_id: int, *, expected_revision: int, actor: str = "owner"
+    ) -> None: ...
+
+    def repropose_decision(
+        self, decision_id: int, *, expected_revision: int, envelope: dict | None = None,
+        actor: str = "owner"
+    ) -> None: ...
+
+    def list_decision_events(self, decision_id: int) -> list[DecisionEvent]: ...
 
     # -- report artifacts (U3a: immutable, hash-verified) --
     # CONSTITUTIONAL INVARIANT (backend-neutral): the artifact core (body, hash, verdict,

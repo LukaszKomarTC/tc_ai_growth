@@ -11,7 +11,7 @@ from pathlib import Path
 
 from . import records, seed
 from .db import connect
-from .records import Case, Decision, ReportArtifact, Run
+from .records import Case, Decision, DecisionEvent, ReportArtifact, Run
 
 
 class SqliteStore:
@@ -64,6 +64,34 @@ class SqliteStore:
 
     def list_decisions(self, *, case_id: int | None = None, limit: int = 50) -> list[Decision]:
         return records.list_decisions(self._conn, case_id=case_id, limit=limit)
+
+    # -- decision approval workflow (U4a) --
+    def propose_decision(self, **kw) -> int:
+        return records.propose_decision(self._conn, **kw)
+
+    def approve_decision(self, decision_id: int, *, expected_revision: int,
+                         actor: str = "owner") -> str:
+        return records.approve_decision(self._conn, decision_id,
+                                        expected_revision=expected_revision, actor=actor)
+
+    def reject_decision(self, decision_id: int, *, expected_revision: int, reason: str,
+                        actor: str = "owner") -> None:
+        records.reject_decision(self._conn, decision_id, expected_revision=expected_revision,
+                                reason=reason, actor=actor)
+
+    def unapprove_decision(self, decision_id: int, *, expected_revision: int,
+                           actor: str = "owner") -> None:
+        records.unapprove_decision(self._conn, decision_id,
+                                   expected_revision=expected_revision, actor=actor)
+
+    def repropose_decision(self, decision_id: int, *, expected_revision: int,
+                           envelope: dict | None = None, actor: str = "owner") -> None:
+        records.repropose_decision(self._conn, decision_id,
+                                   expected_revision=expected_revision, envelope=envelope,
+                                   actor=actor)
+
+    def list_decision_events(self, decision_id: int) -> list[DecisionEvent]:
+        return records.list_decision_events(self._conn, decision_id)
 
     # -- report artifacts --
     def persist_report_artifact(self, **kw) -> int:

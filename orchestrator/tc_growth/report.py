@@ -100,6 +100,31 @@ class ArtifactBody(str):
     artifact_id: int | None = None
 
 
+# Best-effort recommendation counting (WP-U4 schema v4). Heading + list items only; any doubt
+# yields None, which the UI renders as "unknown" — an invented zero on a report that HAS
+# recommendations would misinform the owner, while "unknown" sends them to the report itself.
+_RECO_HEADING_RE = re.compile(r"^#{1,6}[^\n]*recommendation[^\n]*$", re.IGNORECASE | re.MULTILINE)
+_RECO_ITEM_RE = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+\S", re.MULTILINE)
+_NEXT_HEADING_RE = re.compile(r"^#{1,6}\s", re.MULTILINE)
+
+
+def count_recommendations(body: str) -> int | None:
+    """Count list items under the first 'recommendation' heading, stopping at the next heading.
+    Returns None when there is no such heading or no countable items. This value can never
+    affect report validity or the validator — it is display metadata only."""
+    try:
+        m = _RECO_HEADING_RE.search(body)
+        if not m:
+            return None
+        rest = body[m.end():]
+        nxt = _NEXT_HEADING_RE.search(rest)
+        section = rest[:nxt.start()] if nxt else rest
+        items = _RECO_ITEM_RE.findall(section)
+        return len(items) if items else None
+    except Exception:  # noqa: BLE001 - metadata parse failure must never matter
+        return None
+
+
 def persist_report_artifact(kind: str, body: str, *, validator_ok: bool, reason: str,
                             run_id: int | None, result: RuntimeResult) -> int | None:
     """Persist the exact report body as an immutable, hash-verified artifact (U3a trust chain:
@@ -122,6 +147,7 @@ def persist_report_artifact(kind: str, body: str, *, validator_ok: bool, reason:
             window=m.group(1) if m else None,
             model=result.model,
             cost_usd=estimate_cost(result.model, result.prompt_tokens, result.completion_tokens),
+            recommendations_count=count_recommendations(body),
         )
     except Exception as exc:  # noqa: BLE001 - persistence must never break the run
         print(f"[report artifact not persisted: {exc}]")
