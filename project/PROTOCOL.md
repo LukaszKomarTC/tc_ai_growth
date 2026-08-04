@@ -13,7 +13,7 @@ server). **The project remembers; the participants read.**
 | Product Owner | Łukasz | Release authority; the ONLY approver |
 | Lead Engineer | Claude | Implementation, deployment plans, evidence; merges after green suite |
 | Repository Auditor | Codex | Repository-consistency audits; docs-only PRs on branches (onboarded 2026-08-03 via PR #67 — audit → PR → lead review → merge, full loop proven) |
-| Architecture & Governance | ChatGPT | Design review, audits, risk; read access, no write by design |
+| Architecture & Governance | ChatGPT | Design review, audits, risk; writes recommendation artifacts only (issues, PR reviews) — never code/merges |
 | Source of truth | Git repository | — |
 | Shared memory | /project files | Navigation aids, NEVER authority |
 
