@@ -69,8 +69,10 @@ Completed
 
 - PR #71 review round 1 (reviewer, under AGENTS.md header): 3 findings — profile/environment must be ENFORCED at proposal boundary not displayed; target schema must be closed per kind; storage-enforcement claim overstated. ALL implemented in r2 (ec894e3, rebased onto post-#70 main): runtime-context params required on propose/repropose (fail closed, no row no event), TC_DECISION_URL_HOSTS setting (fail closed unset), closed kind schemas (unknown kinds unproposable; seo_meta_update: wp_post + post_id + both es/en HTTPS URLs), transition-graph trigger vs raw SQL, claims narrowed to precise layer. 258 green (+8). PR body rewritten to r2 with attribution header; replied on-thread
 
+- PR #71 review round 2: 1 blocker — target-environment authority was inferred from env_kind, which would have REFUSED the live acceptance (staging-operating Console, production-targeting decisions); plus hosts optional at store boundary = future bypass. Fixed in r3 (9252821): TC_DECISION_TARGET_ENVIRONMENTS explicit setting (fail-closed, independent of env_kind/allow_writes; staging-console-proposes-production proven both ways), allowed_hosts MANDATORY at store boundary (omitted=TypeError, empty=ValueError), decision_proposal_context() testable. 262 green (+4). Deploy values recorded on thread: targets=production, hosts=www.tossacycling.com,tossacycling.com
+
 Current
-- PR #71 (U4a r2) awaiting reviewer round 2 / verdict; owner word merges. Monday: artifact #1 + capstone
+- PR #71 (U4a r3) awaiting reviewer verdict; owner word merges. Monday: artifact #1 + capstone
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)
