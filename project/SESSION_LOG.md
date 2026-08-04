@@ -129,6 +129,8 @@ Completed
 
 - PR #76 reviewer verdict on r3: "recommended for owner authorization to merge and deploy" + 8 deployment criteria (adopted). Criterion 1 evidenced BEFORE deploy: new v5->v6 migration test on a POPULATED production-shaped store (executed decision + events + verify attempt + runs + artifact all byte-identical after migration) — 5b400af, 318 green. Corrected my own earlier PR line: U4c is NOT console-only, schema v6 means app convergence too. Queued U4C-1
 
+- PR #76 review round 4 — BLOCKING on the RECORD, not the code: reviewer refused to authorize merge while the PR BODY still said "No schema change" and "Deploy = Console release only (no migration)" — both false since r3. I had conceded this in a thread comment and left the body untouched, which is conceding it in the wrong place: the body IS the durable acceptance scope, a comment is not, and the owner executes the deploy from the body hours later at a terminal. Body rewritten: schema v6 + decision_adoptions named, both false claims removed, deployment stated as an ORDERED three-phase sequence (app-checkout convergence -> v5->v6 migration from the converged checkout -> Console release/restart; order is load-bearing or a v5 Console binary meets a v6 store), head 5b400af / 318 green, 8 deployment criteria retained verbatim incl. both deliberate exercises. Documentation-only, no new head, CI unchanged. Second time this WP a durable record drifted while the code was correct (first: the D#12 "rejected" record the store disproved) — record drift is now treated as merge-blocking, same as a failing test
+
 Current
 - PR #76 awaiting OWNER merge word; then deploy (app v6 convergence + console release) + 8-criteria acceptance. Then U2 retirement review. Monday 08-10: artifact #1 + capstone
 
