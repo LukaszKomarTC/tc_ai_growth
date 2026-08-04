@@ -97,8 +97,10 @@ Completed
 
 - U4a FULLY CLOSED: release 9dd11ef deployed (health 200), owner's 5 eyes-on checks ALL PASS (full-width history, single scrollbar, 13 rows, modal contained, no mobile overflow). Closure record in WP-CONSOLE-USABILITY. Three PRs (#71/#72/#73), 8 review rounds total, 266 tests
 
+- U4b BUILT + PR #74 opened (d59f497, subscribed; owner go-U4b): tc_growth/verify.py (pinned URL-equality rules, NFC exact content match, cache-bypass fetch with redirect chain, per-language fail-closed reads); two-step flow store-backed (pending derived from attempts table — survives restarts; 60s from STORED read time; failed confirm consumes the pair); schema v5 additive (decision_verify_attempts, append-only triggers, migration proven); approved->executed atomic with evidence pointer + execute event; Console Verify-live-change section (countdown Confirm, attempts evidence, executed terminal display); control only for VERIFIABLE_KINDS. 297 green (31 new). D#13 = first live target
+
 Current
-- U4b next (verify_decision_execution: two-step live verification -> executed) on owner word. Monday 08-10: artifact #1 + behavioral capstone
+- PR #74 (U4b) under review on-thread; owner word merges; deploy = app convergence (v5 additive) + console redeploy. Monday 08-10: artifact #1 + behavioral capstone
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)

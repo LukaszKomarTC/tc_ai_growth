@@ -31,11 +31,12 @@ decisions marked executed with evidence. D#13 is the natural first verification 
 
 ## Blocked on
 
-U4b build start: owner word (build itself needs no authorization; starting the increment does).
+Nothing — PR #74 (U4b) review proceeds on-thread; owner queue empty.
 
 ## Next action
 
-1. Owner word -> U4b build (branch feature/u4b-verify-execution, PR, on-thread review).
+1. Reviewer round on PR #74 -> lead fixes on-thread -> owner word merges -> deploy (app
+   convergence for schema v5 + console redeploy) -> owner acceptance: Verify D#13 live.
 2. Monday 08-10: artifact #1 (U3a live acceptance) + the Gmail-vs-Console behavioral capstone.
 
 ## Standing constraints
