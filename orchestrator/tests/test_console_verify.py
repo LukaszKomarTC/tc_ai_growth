@@ -119,12 +119,19 @@ def test_full_browser_verify_flow_two_steps_to_executed(env):
     d = s.get_decision(env.decision_id)
     assert (d.status, d.revision) == ("executed", 2)
     assert d.execution_evidence.startswith("verify_attempt:")
-    assert "Verification attempts (2)" in env.opener.open(
-        f"{env.base}/decision/{env.decision_id}").read().decode()
-    # Terminal: no verify control, no approve/unapprove forms remain.
     final = env.opener.open(f"{env.base}/decision/{env.decision_id}").read().decode()
+    assert "Verification attempts (2)" in final
+    # The permanent business record (review #74): a plain paragraph names both reads and what
+    # they checked — readable months later without inspecting the database.
+    assert "Execution record" in final
+    assert "read #1 at" in final and "read #2 at" in final and "both full matches" in final
+    assert "the owner applied the change" in final
+    # Terminal: no verify control, no approve/unapprove forms remain.
     assert "Verify live change</h2>" not in final
     assert "Terminal — corrections are new decisions." in final
+    # History rows carry the executed context too.
+    history = env.opener.open(f"{env.base}/decisions").read().decode()
+    assert "verified live" in history
 
 
 def test_mismatch_is_loud_recorded_and_never_closes(env):
@@ -132,7 +139,13 @@ def test_mismatch_is_loud_recorded_and_never_closes(env):
     detail = env.opener.open(f"{env.base}/decision/{env.decision_id}").read().decode()
     page = _post(env, f"/decision/{env.decision_id}/verify", csrf=_csrf(detail), revision=1)
     assert "do NOT match the approved envelope" in page
-    assert "title mismatch" in page                            # attempt evidence on the page
+    # Plain language FIRST (review #74): which language, what was wrong, what to do — rendered
+    # BEFORE the raw attempts evidence.
+    assert "do not match the approved content yet" in page
+    assert "<b>ES</b>" in page and "title mismatch" in page
+    assert page.index("do not match the approved content yet") < page.index(
+        "Verification attempts")
+    assert "then verify again" in page
     s = SqliteStore(env.db)
     assert s.get_decision(env.decision_id).status == "approved"
     assert [a.outcome for a in s.list_verify_attempts(env.decision_id)] == ["mismatch"]
