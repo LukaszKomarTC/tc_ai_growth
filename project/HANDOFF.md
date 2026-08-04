@@ -31,7 +31,8 @@ Nothing — engineering (U3a) and the owner's business queue proceed independent
 
 ## Next action
 
-1. Owner: Console redeploy from main tip (block in chat), then in-browser U3b checklist.
+1. Review PR #69 (U4 spec, charter #68) on its thread; owner authorizes merge; then U4a build
+   (schema v4 + decision detail + browser approve/reject).
 2. Monday 08-10: artifact #1 (U3a live acceptance) + the Gmail-vs-Console behavioral capstone.
 
 ## Standing constraints

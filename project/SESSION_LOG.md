@@ -49,8 +49,10 @@ Completed
 
 - GitHub bus round-trip complete on #68: reviewer accepted all points on-thread + added U4 requirement (auditable eliminated-actions table: disappears vs intentionally-manual); lead committed to it on-thread. Zero owner clipboard involved
 
+- U4 spec written + PR #69 opened (owner GO — no waiting): eliminated-actions table, schema v4, content-bound approvals, verify-execution loop closing production decisions WITHOUT production writes, U2 basic-auth retirement trigger. Lead subscribed to the PR; review happens on-thread
+
 Current
-- U4 spec PR next (charter: #68, incl. eliminated-actions table); Monday: artifact #1 + behavioral capstone
+- PR #69 (U4 spec) under review on the bus; owner authorizes merge; then U4a build. Monday: artifact #1 + capstone
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)
