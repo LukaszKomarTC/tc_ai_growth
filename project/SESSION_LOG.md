@@ -115,8 +115,12 @@ Completed
 
 - Reviewer posted 4 post-acceptance UX tasks on the MERGED #69 thread at 02:11 (business-first titles, before/after diff, quantified impact, expandable explanation) — unseen for ~17h because the lead only wakes on SUBSCRIBED PRs and a merged thread is not one. Mechanism restated on-thread: cross-increment guidance goes on the open PR of the day or a fresh issue referenced there. All 4 adopted into U4c with cost/priority; item 3 bounded (real GSC numbers or absent — never invented); item 1 conceded as lead's own authoring fault (technical titles came from the seed files)
 
+- Issue #68: two reviewer reviews (governance + process) ADOPTED INTO PROTOCOL (c2c9da7). (a) store-backed state corollary to invariant 2: no closure/handoff/acceptance claim about ledger objects from chat memory; cite status + event sequence; counts must match; queue re-checked after every lifecycle act; discrepancies corrected explicitly. (b) closed PRs are historical records, not coordination channels — merging auto-unsubscribes the lead (the #69 mechanism); guidance goes on the open PR or a referenced open issue; every implementation PR carries its complete acceptance scope. Reviewer's stale "D#13 is the remaining gate" corrected on-thread with the store trail (D#13 rejected on real drift; D#14 executed)
+
+- U4c SCOPE FIXED (reviewer-narrowed, lead-agreed): 1) business-first presentation 2) read-only current-vs-proposed comparison (reuses U4b fetch/compare — diff cannot disagree with the verifier) 3) progressive disclosure of technical evidence 4) adopt-live-content AS A NEW UNAPPROVED PROPOSAL WITH FULL PROVENANCE (never mutates an approved envelope, never shortcuts approval). External metrics (GSC/impact/ranking) explicitly OUT of U4c -> own increment
+
 Current
-- U4c scope proposed on #69: business-first titles + live before/after diff (nearly free — reuses verify.py fetch/compare) + expandable explanation + adopt-live-content; quantified impact split to its own increment (touches GSC data path). Build on owner word. Then U2 retirement review. Monday 08-10: artifact #1 + behavioral capstone
+- U4c build on owner word (PR carries complete acceptance scope per new rule). Then U2 retirement review. Monday 08-10: artifact #1 + behavioral capstone
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)
