@@ -83,7 +83,8 @@ def test_missing_provenance_renders_unknown_never_invented():
     s = SqliteStore(":memory:")
     did = s.propose_decision(title="No numbers", envelope=_envelope(),
                              expected_profile="tossa-cycling",
-                             allowed_environments=("production",))
+                             allowed_environments=("production",),
+                             allowed_hosts=("www.tossacycling.com",))
     out = console_views.decision_body(s.get_decision(did), [], csrf="t")
     assert out.count("unknown") >= 2                           # impact AND confidence
 
@@ -118,7 +119,8 @@ def test_store_strings_are_escaped_on_the_detail_page():
     env["payload"] = {"title_es": evil}
     did = s.propose_decision(title=evil, envelope=env, rationale=evil, evidence=evil,
                              expected_profile="tossa-cycling",
-                             allowed_environments=("production",))
+                             allowed_environments=("production",),
+                             allowed_hosts=("www.tossacycling.com",))
     out = console_views.decision_body(s.get_decision(did), s.list_decision_events(did),
                                       csrf="t")
     assert "<script>" not in out and "&lt;script&gt;" in out

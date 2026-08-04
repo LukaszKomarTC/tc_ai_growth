@@ -411,18 +411,25 @@ def _provenance_json(value: dict | None, field: str) -> str | None:
 
 def _check_envelope_context(envelope: dict, *, expected_profile: str,
                             allowed_environments: tuple[str, ...],
-                            allowed_hosts: tuple[str, ...] | None) -> None:
+                            allowed_hosts: tuple[str, ...]) -> None:
     """The proposal boundary's CONTEXT check (review #71 finding 1): the envelope states a
     profile/environment/target, but it must never be its own authority — the caller supplies
-    what the RUNTIME actually is (active profile, permitted target environments, the profile's
+    what the RUNTIME actually is (active profile, permitted TARGET environments, the profile's
     legitimate URL hosts) and a mismatch fails closed BEFORE anything persists. Hashing a wrong
-    profile makes the error tamper-evident; this check makes it impossible."""
+    profile makes the error tamper-evident; this check makes it impossible.
+
+    Every piece is MANDATORY — there is deliberately no unconstrained mode at this boundary
+    (review #71 round 2): a caller without host context has no business proposing, and a
+    bypass would have to be a separate, loudly-named function that does not exist."""
     from ..envelope import url_host
 
     if not (expected_profile or "").strip():
         raise ValueError("proposal context requires expected_profile (the active profile id)")
     if not allowed_environments:
         raise ValueError("proposal context requires allowed_environments")
+    if not allowed_hosts:
+        raise ValueError("proposal context requires allowed_hosts (the profile's legitimate "
+                         "target-URL hosts) — an unconstrained host set is not a default")
     if envelope.get("profile") != expected_profile:
         raise ValueError(
             f"envelope profile {envelope.get('profile')!r} does not match the active profile "
@@ -432,14 +439,13 @@ def _check_envelope_context(envelope: dict, *, expected_profile: str,
         raise ValueError(
             f"envelope environment {envelope.get('environment')!r} is not permitted in this "
             f"context (allowed: {', '.join(allowed_environments)})")
-    if allowed_hosts is not None:
-        allowed = {h.lower() for h in allowed_hosts}
-        for lang, url in (envelope.get("target", {}).get("expected_urls") or {}).items():
-            host = url_host(str(url))
-            if host is None or host not in allowed:
-                raise ValueError(
-                    f"target URL host {host!r} ({lang}) is not among this profile's allowed "
-                    f"hosts ({', '.join(sorted(allowed))}) — refusing an off-profile target")
+    allowed = {h.lower() for h in allowed_hosts}
+    for lang, url in (envelope.get("target", {}).get("expected_urls") or {}).items():
+        host = url_host(str(url))
+        if host is None or host not in allowed:
+            raise ValueError(
+                f"target URL host {host!r} ({lang}) is not among this profile's allowed "
+                f"hosts ({', '.join(sorted(allowed))}) — refusing an off-profile target")
 
 
 def propose_decision(
@@ -449,7 +455,7 @@ def propose_decision(
     envelope: dict,
     expected_profile: str,
     allowed_environments: tuple[str, ...],
-    allowed_hosts: tuple[str, ...] | None = None,
+    allowed_hosts: tuple[str, ...],
     rationale: str | None = None,
     evidence: str | None = None,
     impact: dict | None = None,
@@ -597,9 +603,9 @@ def repropose_decision(conn: sqlite3.Connection, decision_id: int, *, expected_r
         problems = validate_envelope(envelope)
         if problems:
             raise ValueError("invalid envelope: " + "; ".join(problems))
-        if expected_profile is None or allowed_environments is None:
-            raise ValueError("re-proposing a NEW envelope requires the proposal context "
-                             "(expected_profile, allowed_environments)")
+        if expected_profile is None or allowed_environments is None or allowed_hosts is None:
+            raise ValueError("re-proposing a NEW envelope requires the full proposal context "
+                             "(expected_profile, allowed_environments, allowed_hosts)")
         _check_envelope_context(envelope, expected_profile=expected_profile,
                                 allowed_environments=allowed_environments,
                                 allowed_hosts=allowed_hosts)

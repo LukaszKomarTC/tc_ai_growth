@@ -75,6 +75,15 @@ class Settings(BaseSettings):
                     "tossacycling.com'. Empty = proposing decisions is refused (fail closed); "
                     "deliberately separate from TC_WP_BASE_URL, which points at the staging "
                     "WP connector host by design (see STANDING-CAUTIONS).")
+    decision_target_environments: str = Field(
+        default="",
+        description="Comma-separated environments an approval envelope may TARGET (U4 "
+                    "proposal boundary): 'production', 'staging', or 'staging,production'. "
+                    "Empty = proposing decisions is refused (fail closed). Deliberately "
+                    "independent of TC_ENV_KIND (how this Console profile OPERATES) and "
+                    "TC_ALLOW_WRITES (whether it may execute writes) — a STAGING/read-only "
+                    "Console legitimately reviews decisions targeting the production site "
+                    "(review #71 round 2).")
 
     # --- WordPress connector ---
     wp_base_url: str = Field(default="", description="e.g. https://tossacycling.com")

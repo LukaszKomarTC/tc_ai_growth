@@ -103,7 +103,7 @@ class Store(Protocol):
         envelope: dict,
         expected_profile: str,
         allowed_environments: tuple[str, ...],
-        allowed_hosts: tuple[str, ...] | None = None,
+        allowed_hosts: tuple[str, ...],
         rationale: str | None = None,
         evidence: str | None = None,
         impact: dict | None = None,
