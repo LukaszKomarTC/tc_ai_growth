@@ -42,8 +42,13 @@ def test_empty_store_renders_all_five_sections_with_honest_empty_states():
     assert "No scheduled report run recorded yet." in out
     assert "No stored report artifact yet" in out
     assert "Nothing requires attention." in out
+    assert "🟢 Nothing blocking you" in out                  # the all-clear status card (U3b.1)
     assert "🟢 Nothing waiting" in out                       # the empty-queue invariant, visible
     assert "None detected" in out
+    # Hierarchy: status card is the FIRST element; the truth panel moved to the END (reference,
+    # not action — reviewer, 2026-08-03).
+    assert out.index("statuscard") < out.index("Weekly report")
+    assert out.index("envtruth") > out.index("Recent operations")
 
 
 def test_environment_truth_is_a_panel_of_separate_lines():
@@ -66,7 +71,7 @@ def test_populated_home_links_report_and_lists_queue():
                                  status="monitoring", priority="medium",
                                  created_at=_now(), updated_at=_now())
     dec = types.SimpleNamespace(id=12, title="Approve tours hub", status="proposed",
-                                made_at=_now())
+                                made_at=_now(), rationale=None)
     out = _home(_fake_store(runs=[run], cases_by_status={"monitoring": [case]},
                             decisions=[dec], artifact=art))
     assert "href='/report/1'" in out and "delivery delivered" in out
@@ -74,6 +79,22 @@ def test_populated_home_links_report_and_lists_queue():
     assert "INC-2026-02-01" in out and "Attention (1)" in out
     assert "D#12" in out and "Decisions waiting (1)" in out
     assert "🟢" not in out                                    # queue is not empty -> no green
+    # U3b.1 status card surfaces the top waiting decision with its why.
+    assert "🔴 1 decision waiting" in out and "Approve tours hub" in out
+
+
+def test_status_card_top_is_the_longest_waiting_decision():
+    """Two proposed decisions: the card leads with the OLDEST (waited longest), and shows its
+    rationale as the why-line — existing data only, no invented urgency."""
+    old = types.SimpleNamespace(id=9, title="Apply bilingual SEO", status="proposed",
+                                made_at="2026-08-01T10:00:00+00:00",
+                                rationale="1,502 impressions at position 14.9")
+    new = types.SimpleNamespace(id=12, title="Newer thing", status="proposed",
+                                made_at="2026-08-03T10:00:00+00:00", rationale=None)
+    out = _home(_fake_store(decisions=[new, old]))
+    assert "🔴 2 decisions waiting" in out
+    assert "top: Apply bilingual SEO" in out
+    assert "1,502 impressions at position 14.9" in out
 
 
 def test_store_strings_are_escaped_everywhere():

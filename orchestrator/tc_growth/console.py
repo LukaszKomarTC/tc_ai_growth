@@ -190,6 +190,25 @@ button { font:inherit; cursor:pointer; border:1px solid var(--accent); backgroun
   color:#fff; padding:7px 14px; border-radius:6px; }
 button.ghost { background:transparent; color:var(--accent); }
 button:disabled { opacity:.4; cursor:not-allowed; }
+/* U3b.1 hierarchy: the eye must land on the status card, then section headers, then detail. */
+.statuscard { border-radius:10px; padding:18px 20px; margin-bottom:18px; border:1px solid; }
+.statuscard.calm { background:color-mix(in srgb, var(--ok) 10%, var(--panel));
+  border-color:color-mix(in srgb, var(--ok) 45%, var(--line)); }
+.statuscard.act { background:color-mix(in srgb, var(--err) 9%, var(--panel));
+  border-color:color-mix(in srgb, var(--err) 45%, var(--line)); }
+.statuscard .lead { font-size:18px; font-weight:700; margin:0 0 4px; }
+.statuscard .why { color:var(--muted); font-size:13px; }
+section.card { border:1px solid var(--line); border-radius:8px; padding:14px 16px;
+  margin-bottom:14px; background:var(--panel); }
+section.card h2 { margin:0 0 10px; font-size:16px; font-weight:700; }
+section.card > div { padding:3px 0; }
+.sev-warn { border-left:3px solid var(--warn); padding-left:10px !important; }
+.sev-err  { border-left:3px solid var(--err); padding-left:10px !important; }
+#envtruth { color:var(--muted); font-size:12.5px; }
+#envtruth .tag { min-width:150px; display:inline-block; }
+.muted { color:var(--muted); }
+.ok { color:var(--ok); } .err { color:var(--err); }
+.tag { color:var(--muted); font-size:12px; }
 .muted { color:var(--muted); }
 .modal { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none; align-items:center;
   justify-content:center; padding:20px; }

@@ -63,11 +63,31 @@ def env_truth_panel(*, profile: str, env_kind: str, wp_host: str, allow_writes: 
     return f"<section class='card' id='envtruth'>{cells}</section>"
 
 
+def status_card(waiting: list) -> str:
+    """The first thing the owner sees (U3b.1): either the green all-clear or the top waiting
+    decision — SIMPLE surfacing of existing data (title, rationale, age). The smart card
+    (impact/confidence/evidence) is U4's, once the decision schema can carry it."""
+    if not waiting:
+        return ("<div class='statuscard calm'><p class='lead'>🟢 Nothing blocking you</p>"
+                "<div class='why'>No decisions are waiting for your approval.</div></div>")
+    top = min(waiting, key=lambda d: str(d.made_at or ""))  # waited longest = first in line
+    why = top.rationale or "Proposed by the platform — details in the latest weekly report."
+    return (f"<div class='statuscard act'><p class='lead'>🔴 "
+            f"{len(waiting)} decision{'s' if len(waiting) != 1 else ''} waiting — "
+            f"top: {_e(top.title)}</p>"
+            f"<div class='why'>D#{top.id} · proposed {_e(_age(top.made_at))} · {_e(why)}</div>"
+            "</div>")
+
+
 def home_body(store, *, profile: str, env_kind: str, wp_host: str, allow_writes: bool,
               redact: Callable[[str], str]) -> str:
-    """The five questions, in order. Every block renders an honest empty state."""
-    parts: list[str] = [env_truth_panel(profile=profile, env_kind=env_kind, wp_host=wp_host,
-                                        allow_writes=allow_writes)]
+    """The five questions, in order — after the status card, which answers the reviewer's third
+    question ('what should I do next?') before any scanning. Truth panel moved LAST (reference,
+    not action; it keeps its authority, not the prime screen space). Honest empty states
+    everywhere."""
+    all_decisions = store.list_decisions(limit=50)
+    waiting_now = [d for d in all_decisions if str(d.status) == "proposed"]
+    parts: list[str] = [status_card(waiting_now)]
 
     # 1 — Did the scheduled report run successfully?
     runs = store.list_runs(kind="weekly-report", limit=1)
@@ -94,16 +114,20 @@ def home_body(store, *, profile: str, env_kind: str, wp_host: str, allow_writes:
     attention = [c for status in ("open", "monitoring")
                  for c in store.list_cases(status=status, limit=10)]
     if attention:
+        def _sev(c) -> str:
+            urgent = str(c.status) == "open" and str(c.priority) in ("high", "critical")
+            return "sev-err" if urgent else "sev-warn"
         items = "".join(
-            f"<div><span class='tag'>{_e(c.status)}</span> <b>{_e(c.ref or c.id)}</b> "
-            f"{_e(c.title)} · {_e(c.priority)} · updated {_e(_age(c.updated_at))}</div>"
+            f"<div class='{_sev(c)}'><span class='tag'>{_e(c.status)}</span> "
+            f"<b>{_e(c.ref or c.id)}</b> {_e(c.title)} · {_e(c.priority)} · "
+            f"updated {_e(_age(c.updated_at))}</div>"
             for c in attention)
     else:
         items = "<div class='ok'>Nothing requires attention.</div>"
     parts.append(_section(f"Attention ({len(attention)})", items))
 
     # 3 — What decisions are waiting? (the owner queue; empty == don't disturb)
-    waiting = [d for d in store.list_decisions(limit=50) if str(d.status) == "proposed"]
+    waiting = waiting_now
     if waiting:
         items = "".join(
             f"<div><b>D#{d.id}</b> {_e(d.title)} · proposed {_e(_age(d.made_at))}</div>"
@@ -117,7 +141,7 @@ def home_body(store, *, profile: str, env_kind: str, wp_host: str, allow_writes:
     problems = [r for r in recent if str(r.status) not in ("ok", "completed")]
     if problems:
         items = "".join(
-            f"<div><span class='err'>✗</span> run#{r.id} {_e(r.kind)} · {_e(r.status)} · "
+            f"<div class='sev-err'><span class='err'>✗</span> run#{r.id} {_e(r.kind)} · {_e(r.status)} · "
             f"{_e(_age(r.started_at))}"
             + (f" · {_e(redact(str(r.detail))[:160])}" if r.detail else "") + "</div>"
             for r in problems)
@@ -141,6 +165,8 @@ def home_body(store, *, profile: str, env_kind: str, wp_host: str, allow_writes:
         items = "<div class='muted'>No operations run through the Console yet.</div>"
     parts.append(_section("Recent operations", items))
 
+    parts.append(env_truth_panel(profile=profile, env_kind=env_kind, wp_host=wp_host,
+                                 allow_writes=allow_writes))
     return "".join(parts)
 
 
