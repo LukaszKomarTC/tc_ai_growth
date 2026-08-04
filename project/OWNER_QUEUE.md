@@ -9,8 +9,9 @@ objects (PROTOCOL.md, Phase 2). Pointers, not copies — evidence lives where it
 |---|---|---|---|---|---|---|
 | _(empty)_ | — | — | — | — | — | — |
 
-_Not owner-queue items: issue #77 Decision 2 (U4d trigger architecture) is with the REVIEWER on
-that thread — opened after U4c acceptance, with the detached-runner problem attached._
+_Not owner-queue items: #77 is fully decided (D1 reviewer-confirmed A; D2 owner-binding —
+owner-clicked Console operation + detached runner, no remote identity). U4d is authorized to
+build on current `main` with no further owner decision before its PR._
 
 ## Decided (index — details live at the pointer)
 
@@ -36,5 +37,7 @@ that thread — opened after U4c acceptance, with the detached-runner problem at
 | U4A1-1 | Owner "merge" 2026-08-04 → PR #72 rebase-merged (main 8dafa5c, 265 green); console redeploy + 5-check acceptance next | PR #72 thread |
 | U4A2-1 | Owner "ok-go" 2026-08-04 → PR #73 rebase-merged (main 9dd11ef, 266 green); redeploy + 5-check acceptance next | PR #73 thread |
 | U4B-1 | Owner "go" 2026-08-04 → PR #74 rebase-merged (main 3edb0de, 297 green on merged tip); deploy + D#13 acceptance per 6 criteria next | PR #74 thread |
+| U4D-2 | #77 Decision 2 RESOLVED by owner 2026-08-04 (binding, final): owner-clicked Operation Registry action + DETACHED supervised runner surviving the Console restart; remote SSH identity / inbound trigger / shell REJECTED. U4d authorized to build on current main; PR must reference #77 and carry full scope | issue #77 thread |
+| U4C-ACC | U4c DEPLOYED (684681c, schema v6) and all 8 criteria evidenced — 1-2 on the production store, 3-7 lead-run over real HTTP against the deployed commit (NOT a production browser pass; recorded as such) | WP-CONSOLE-USABILITY.md §U4c acceptance record |
 | U4D-SEQ | #77 Decision 1 RESOLVED by owner 2026-08-04: option A — deploy U4c now via the rehearsed procedure; build U4d after, with a staging dry run, first production exercise = the NEXT increment (not its own bootstrap). #77 stays open, scope and security boundary unreduced | issue #77 thread |
 | U4C-1 | Owner "ok" 2026-08-04 → PR #76 rebase-merged (main 684681c, CI run #349 green, 318 tests on merged tip); TWO-PHASE deploy next (app convergence + v5→v6 migration, then Console release) per the 8 criteria | PR #76 thread; WP-U4-DECISION-WORKFLOW.md |

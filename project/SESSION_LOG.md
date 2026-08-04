@@ -149,6 +149,8 @@ Completed
 
 - RECORD DRIFT FOUND on the pre-v4 rows: docs/decisions/2026-08-D9-D10-D11.md and OWNER_QUEUE both call D#9 "Executed" while the store says approved — same class as the D#12 false record. To be reconciled AGAINST THE STORE as a deliberate pass over all pre-v4 decisions, not patched one-off
 
+- #77 FULLY DECIDED. D1: reviewer independently confirmed A and additionally ruled out the pre-U4c fork (option D) as a divergent subsystem for no gain — my bootstrap analysis accepted. D2 (OWNER, binding, final): owner-clicked Operation Registry action + DETACHED supervised runner that survives the Console restart and writes its own Evidence; remote SSH identity, inbound trigger path, interactive shell and general command execution all REJECTED. U4d authorized to build on current main with NO further owner design decision before its PR. Posted the U4d scope restated so it can be held against me, and stated plainly on-thread that U4c's criteria 3-7 were LEAD-run, not an owner browser pass — offering to hold U4d if either judges that insufficient
+
 Current
 - U4c LIVE and accepted. Next: the 2 findings above (fail-open comparison + UI usability) need an owner call on scope; then #77 Decision 2 -> U4d; then U2 retirement review. Monday 08-10: artifact #1 + capstone (app convergence + v5->v6 migration, then Console release) + 8-criteria browser acceptance incl. the 2 deliberate exercises (mid-comparison page change -> adopt refuses; injected defect -> shows as DEFECT not policy). Then U2 retirement review. Monday 08-10: artifact #1 + capstone
 
