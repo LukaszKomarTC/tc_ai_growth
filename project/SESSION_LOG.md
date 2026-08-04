@@ -145,6 +145,10 @@ Completed
 
 - TWO FINDINGS from the acceptance run, neither fixed: (1) FAIL-OPEN COMPARISON — validate_envelope only requires payload to be a non-empty object, never the keys the kind uses, so a seo_meta_update envelope with unrecognised payload keys validates, compare_fields returns ZERO rows, and the page asserts "Every field matches what is live right now". A positive claim about reality from an empty comparison is the exact fail-open shape U4c exists to prevent. Unreachable from the Console UI, reachable from decision-propose. (2) THE OWNER GOT LOST IN THE UI, reported twice unprompted — U4c's goal was business-first presentation, and an acceptance pass the owner cannot finish is that goal not met
 
+- Owner decision 2026-08-04: the accidental "Gravel" wording on /alquiler_bicicletas STAYS (it is better copy). Lead CORRECTED its own claim about the consequence: I said it would drift from D#9's "executed envelope" and show up in future comparisons — both false. The store has D#9 as (9, 'approved', 0, NULL) — a pre-v4 legacy row with NO envelope and no kind, so there is nothing to hash-drift from and it can be neither compared nor adopted through U4c. Real consequence: the live wording is correct and UNRECORDED; putting it under platform control needs a fresh seo_meta_update proposal for that page
+
+- RECORD DRIFT FOUND on the pre-v4 rows: docs/decisions/2026-08-D9-D10-D11.md and OWNER_QUEUE both call D#9 "Executed" while the store says approved — same class as the D#12 false record. To be reconciled AGAINST THE STORE as a deliberate pass over all pre-v4 decisions, not patched one-off
+
 Current
 - U4c LIVE and accepted. Next: the 2 findings above (fail-open comparison + UI usability) need an owner call on scope; then #77 Decision 2 -> U4d; then U2 retirement review. Monday 08-10: artifact #1 + capstone (app convergence + v5->v6 migration, then Console release) + 8-criteria browser acceptance incl. the 2 deliberate exercises (mid-comparison page change -> adopt refuses; injected defect -> shows as DEFECT not policy). Then U2 retirement review. Monday 08-10: artifact #1 + capstone
 
