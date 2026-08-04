@@ -304,9 +304,9 @@ def verification_section(decision, *, csrf: str, verifiable: bool, pending=None,
     hidden = (f"<input type='hidden' name='csrf' value='{_e(csrf)}'>"
               f"<input type='hidden' name='revision' value='{d.revision}'>")
     intro = ("<div class='muted'>Apply the approved change in WordPress first — verification "
-             "reads the LIVE pages and compares them with the approved envelope. Two reads, "
-             "both matching, mark this decision executed. Nothing is written to the site."
-             "</div>")
+             "reads the LIVE pages and compares them with the approved envelope. It takes "
+             "TWO reads at least a minute apart, both matching: a cached or mid-edit page "
+             "cannot pass by accident. Nothing is written to the site.</div>")
     if pending is None:
         body = (intro +
                 f"<form method='post' action='/decision/{d.id}/verify' style='margin-top:8px'>"
@@ -327,6 +327,73 @@ def verification_section(decision, *, csrf: str, verifiable: bool, pending=None,
                 f"style='margin-top:8px'>{hidden}"
                 "<button type='submit'>Confirm verification</button></form>")
     return _section("Verify live change", body)
+
+
+def last_verify_failure_callout(decision, attempts) -> str:
+    """Plain language FIRST, raw evidence after (review #74): when the latest read failed, the
+    owner sees which language and what was wrong — URL, canonical, title or meta — in one
+    sentence per language, before any JSON-shaped evidence. Store-derived text only."""
+    if decision.status != "approved" or not attempts:
+        return ""
+    last = attempts[-1]
+    if str(last.outcome) == "match":
+        return ""
+    lines = []
+    try:
+        urls = json.loads(last.detail or "{}")
+    except (ValueError, TypeError):
+        urls = {}
+    for lang, u in urls.items():
+        problems = u.get("problems") or []
+        if problems:
+            lines.append(f"<div><b>{_e(lang.upper())}</b>: {_e(problems[0])}</div>")
+    if not lines:
+        lines = ["<div>The read could not be completed — see the attempts below.</div>"]
+    label = ("The pages could not be fetched" if str(last.outcome) == "error"
+             else "The live pages do not match the approved content yet")
+    return (f"<div class='statuscard act'><p class='lead'>{_e(label)}</p>"
+            f"<div class='why'>Latest read (attempt #{last.id}, {_e(last.finished_at)}):"
+            f"</div>{''.join(lines)}"
+            "<div class='why'>Fix the page in WordPress (or wait for the cache), then verify "
+            "again. Every attempt stays recorded below.</div></div>")
+
+
+def execution_record_section(decision, attempts) -> str:
+    """The permanent business record (review #74): months later, Decision History must explain
+    WHY this decision is executed without anyone inspecting the database. One plain paragraph
+    naming both reads and what they checked; the raw attempt rows stay below as evidence."""
+    d = decision
+    if d.status != "executed":
+        return ""
+    terminal = None
+    if (d.execution_evidence or "").startswith("verify_attempt:"):
+        try:
+            tid = int(d.execution_evidence.split(":", 1)[1])
+            terminal = next((a for a in attempts if a.id == tid), None)
+        except ValueError:
+            terminal = None
+    if terminal is None:
+        return _section("Execution record",
+                        f"<div>Executed at {_e(d.executed_at or '—')} · evidence "
+                        f"<code>{_e(d.execution_evidence or '—')}</code>.</div>")
+    first = next((a for a in attempts if a.id == terminal.pair_id), None)
+    langs = []
+    try:
+        langs = sorted(json.loads(terminal.detail or "{}").keys())
+    except (ValueError, TypeError):
+        pass
+    checked = (f"On each page ({', '.join(_e(x) for x in langs)}) the final URL, the canonical "
+               "link, the title and the meta description all matched the approved envelope "
+               "exactly." if langs else "")
+    reads = ((f"read #1 at {_e(first.finished_at)} (attempt #{first.id}) and " if first else "")
+             + f"read #2 at {_e(terminal.finished_at)} (attempt #{terminal.id})")
+    return _section(
+        "Execution record",
+        f"<div>Executed at <b>{_e(d.executed_at or '—')}</b>: the platform verified the LIVE "
+        f"pages against the approved envelope twice — {reads} — both full matches. {checked} "
+        f"Envelope <code>{_e(str(terminal.envelope_sha256)[:12])}</code>, revision "
+        f"{terminal.revision}. Nothing was written to the site; the owner applied the change, "
+        "the platform verified it.</div>")
 
 
 def verify_attempts_section(attempts) -> str:
@@ -380,6 +447,9 @@ def decisions_body(store, *, status: str = "all") -> str:
         extra = ""
         if str(d.status) == "approved" and d.approved_at:
             extra = f" · approved {_e(_age(d.approved_at))} by {_e(d.approved_by or '—')}"
+        elif str(d.status) == "executed" and d.executed_at:
+            extra = (f" · executed {_e(_age(d.executed_at))} · verified live "
+                     f"({_e(d.execution_evidence or '—')})")
         rows.append(
             f"<div><a href='/decision/{d.id}'><b>D#{d.id}</b></a> "
             f"<span class='badge {cls}'>{_e(d.status)}</span> {_e(d.title)} · {kind} · "
@@ -448,10 +518,12 @@ def decision_body(decision, events, *, csrf: str, notice: str = "", error: str =
 
     verify = verification_section(d, csrf=csrf, verifiable=verifiable, pending=pending,
                                   wait_s=wait_s)
+    failure = last_verify_failure_callout(d, attempts)
+    execution = execution_record_section(d, attempts)
     attempts_html = verify_attempts_section(attempts)
 
-    return (banner + head + why + evidence + numbers + change + controls + verify
-            + attempts_html + tech
+    return (banner + head + why + evidence + numbers + change + controls + execution
+            + failure + verify + attempts_html + tech
             + "<p><a href='/'>&larr; Home</a> · <a href='/decisions'>All decisions</a></p>")
 
 
