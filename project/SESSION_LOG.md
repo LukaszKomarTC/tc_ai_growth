@@ -71,8 +71,10 @@ Completed
 
 - PR #71 review round 2: 1 blocker — target-environment authority was inferred from env_kind, which would have REFUSED the live acceptance (staging-operating Console, production-targeting decisions); plus hosts optional at store boundary = future bypass. Fixed in r3 (9252821): TC_DECISION_TARGET_ENVIRONMENTS explicit setting (fail-closed, independent of env_kind/allow_writes; staging-console-proposes-production proven both ways), allowed_hosts MANDATORY at store boundary (omitted=TypeError, empty=ValueError), decision_proposal_context() testable. 262 green (+4). Deploy values recorded on thread: targets=production, hosts=www.tossacycling.com,tossacycling.com
 
+- PR #71 reviewer verdict on r3: "safe for owner authorization to merge" (both round-2 corrections verified in code; reviewer self-corrected an earlier stale-state report). 6 deployment acceptance criteria adopted as the U4a deploy gate. Merge queued for owner (U4A-1)
+
 Current
-- PR #71 (U4a r3) awaiting reviewer verdict; owner word merges. Monday: artifact #1 + capstone
+- PR #71 (U4a r3) awaiting OWNER merge word only; then deploy plan + browser acceptance. Monday: artifact #1 + capstone
 
 Blocked
 - Nothing hard; business queue on owner (see OWNER_QUEUE.md)
