@@ -23,6 +23,7 @@
     python -m tc_growth.cli case-status <ref> <status>   # human-approved lifecycle change
     python -m tc_growth.cli decision-approve <id> ["note"]   # approve a proposed decision
     python -m tc_growth.cli decision-reject <id> ["note"]    # reject a proposed decision
+    python -m tc_growth.cli decision-propose <file.json>     # propose a U4 workflow decision (approve in the Console)
     python -m tc_growth.cli decision-add "<title>" ["rationale"] [case-ref]  # human policy decision (enters agent memory as approved)
     python -m tc_growth.cli decision-outcome <id> <worked|failed> ["evidence"]  # record execution result after verification
     python -m tc_growth.cli draft-test "<task>"          # supervised DRAFTS-phase run (staging)
@@ -374,13 +375,68 @@ def cmd_decision_set(decision_id: str, status: str, note: str = "") -> int:
     if d is None:
         print(f"No decision with id {decision_id}")
         return 1
-    s.update_decision(d.id, status=status)
+    try:
+        s.update_decision(d.id, status=status)
+    except ValueError as exc:
+        # U4a: workflow decisions (bound envelope) left the CLI on purpose — the eliminated-
+        # actions table's first row. Point at the browser path instead of half-working here.
+        print(exc)
+        return 1
     if d.case_id:
         entry = f"Decision D#{d.id} ('{d.title}') {status} by human."
         if note:
             entry += f" Note: {note}"
         s.append_observation(d.case_id, entry, author="human")
     print(f"Decision D#{d.id} ('{d.title}'): {d.status} -> {status}")
+    return 0
+
+
+def cmd_decision_propose(path: str) -> int:
+    """Seed a WORKFLOW decision (U4a) from a JSON file:
+
+        {"title": "...", "rationale": "...", "evidence": "...",
+         "impact": {"value": "...", "label": "estimate", "method": "...", "source": "...",
+                    "as_of": "..."},
+         "confidence": {...same shape...},
+         "envelope": {"schema_version": "u4/1", "profile": ..., "environment": ...,
+                      "kind": ..., "target": {...}, "payload": {...}}}
+
+    The envelope is validated and canonically hashed at birth; approval then happens in the
+    Console browser UI (/decision/<id>) — this command only PROPOSES."""
+    import json as _json
+    from pathlib import Path
+
+    from . import store
+
+    try:
+        doc = _json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        print(f"Cannot read decision file: {exc}")
+        return 1
+    if not isinstance(doc, dict) or "envelope" not in doc or "title" not in doc:
+        print('The file must be a JSON object with at least "title" and "envelope".')
+        return 1
+    s = store.open_store()
+    case_id = None
+    if doc.get("case"):
+        case = s.get_case_by_ref(str(doc["case"]))
+        if case is None:
+            print(f"No case matching {doc['case']!r}")
+            return 1
+        case_id = case.id
+    try:
+        did = s.propose_decision(
+            title=str(doc["title"]), envelope=doc["envelope"],
+            rationale=doc.get("rationale"), evidence=doc.get("evidence"),
+            impact=doc.get("impact"), confidence=doc.get("confidence"),
+            case_id=case_id, made_by="human")
+    except ValueError as exc:
+        print(f"REFUSED: {exc}")
+        return 1
+    d = s.get_decision(did)
+    print(f"Decision D#{did} proposed: {d.title}")
+    print(f"  envelope sha256: {d.envelope_sha256}")
+    print(f"  review + approve in the Console: /decision/{did}")
     return 0
 
 
@@ -559,6 +615,11 @@ def main(argv: list[str] | None = None) -> int:
             print("Usage: decision-outcome <id> <worked|failed> [\"evidence\"]")
             return 1
         return cmd_decision_outcome(rest[0], rest[1], rest[2] if len(rest) > 2 else "")
+    if cmd == "decision-propose":
+        if not rest:
+            print("Usage: decision-propose <decision.json>")
+            return 1
+        return cmd_decision_propose(rest[0])
     if cmd == "decision-add":
         if not rest:
             print('Usage: decision-add "<title>" ["rationale"] [case-ref]')

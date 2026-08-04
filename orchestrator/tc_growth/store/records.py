@@ -60,6 +60,32 @@ class Decision:
     outcome: str | None
     made_by: str | None
     case_id: int | None
+    # v4 (WP-U4) — defaults keep every pre-v4 construction site working; legacy rows carry None.
+    kind: str | None = None
+    envelope: str | None = None
+    envelope_sha256: str | None = None
+    revision: int = 0
+    evidence: str | None = None
+    impact: str | None = None
+    confidence: str | None = None
+    approved_at: str | None = None
+    approved_by: str | None = None
+    executed_at: str | None = None
+    execution_evidence: str | None = None
+
+
+@dataclass
+class DecisionEvent:
+    id: int
+    decision_id: int
+    at: str
+    actor: str
+    action: str
+    from_status: str | None
+    to_status: str
+    revision: int
+    envelope_sha256: str | None
+    detail: str | None
 
 
 # --- cases -----------------------------------------------------------------
@@ -292,12 +318,24 @@ _DECISION_UPDATABLE = {"status", "outcome", "rationale"}
 
 
 def update_decision(conn: sqlite3.Connection, decision_id: int, **fields: object) -> None:
-    """Update a decision's status/outcome/rationale (the approve/reject path)."""
+    """Update a decision's status/outcome/rationale — the LEGACY approve/reject path.
+
+    Envelope-bearing (v4) decisions must change status through the lifecycle API below, which
+    enforces the state machine, revision concurrency and the audit trail; letting this generic
+    setter flip their status would be a silent bypass of all three."""
     bad = set(fields) - _DECISION_UPDATABLE
     if bad:
         raise ValueError(f"Not updatable: {sorted(bad)}")
     if not fields:
         return
+    if "status" in fields:
+        row = conn.execute(
+            "SELECT envelope_sha256 FROM decisions WHERE id = ?;", (decision_id,)).fetchone()
+        if row is not None and row["envelope_sha256"]:
+            raise ValueError(
+                f"decision {decision_id} is a workflow decision (bound envelope) — its status "
+                "changes only via approve/reject/unapprove, in the Console at "
+                f"/decision/{decision_id}")
     assignments = ", ".join(f"{k} = ?" for k in fields)
     conn.execute(
         f"UPDATE decisions SET {assignments} WHERE id = ?;", (*fields.values(), decision_id)
@@ -317,6 +355,217 @@ def list_decisions(
             "SELECT * FROM decisions ORDER BY id DESC LIMIT ?;", (limit,)
         ).fetchall()
     return [Decision(**r) for r in rows]
+
+
+# -- decision approval workflow (WP-U4a) ----------------------------------------------------------
+#
+# The state machine is EXHAUSTIVE (spec table); anything not listed below is refused loudly.
+# Every mutation carries the caller's expected `revision` and lands atomically via
+# `UPDATE ... WHERE id AND revision AND status` — a stale tab can never silently overwrite a
+# fresher state. Every successful mutation appends one immutable decision_events row (actor,
+# timestamp, old/new status, resulting revision, bound envelope hash). Storage-layer triggers
+# (db.py) back the two constitutional rules: approved envelopes are immutable, executed is
+# terminal.
+
+
+class DecisionError(Exception):
+    """Base for decision-lifecycle refusals — the message is owner-readable on purpose."""
+
+
+class StaleRevision(DecisionError):
+    """The decision changed underneath the caller's view (optimistic-concurrency mismatch)."""
+
+
+class InvalidTransition(DecisionError):
+    """The requested act is not in the state machine's allowed-transitions table."""
+
+
+class NotApprovable(DecisionError):
+    """The decision has no bound envelope — nothing for an approval to bind to (legacy row)."""
+
+
+def _record_event(conn: sqlite3.Connection, *, decision_id: int, actor: str, action: str,
+                  from_status: str | None, to_status: str, revision: int,
+                  envelope_sha256: str | None, detail: str | None = None) -> None:
+    conn.execute(
+        "INSERT INTO decision_events (decision_id, at, actor, action, from_status, to_status, "
+        "revision, envelope_sha256, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);",
+        (decision_id, _now(), actor, action, from_status, to_status, revision,
+         envelope_sha256, detail))
+
+
+def _provenance_json(value: dict | None, field: str) -> str | None:
+    """Impact/confidence are provenance objects, never bare numbers (spec pt 6). None is honest
+    (renders 'unknown'); anything else must be a dict so the UI can look for value/label/method."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError(f"{field} must be a provenance object "
+                         '({"value", "label", "method", "source", "as_of"}) or None')
+    import json
+
+    return json.dumps(value, ensure_ascii=False)
+
+
+def propose_decision(
+    conn: sqlite3.Connection,
+    *,
+    title: str,
+    envelope: dict,
+    rationale: str | None = None,
+    evidence: str | None = None,
+    impact: dict | None = None,
+    confidence: dict | None = None,
+    case_id: int | None = None,
+    made_by: str = "agent",
+) -> int:
+    """Create a v4 workflow decision: validated envelope, canonical text + hash stored at birth.
+    The envelope's `kind` is denormalized onto the row for querying; the hashed truth stays the
+    envelope itself."""
+    from ..envelope import canonical_json, envelope_sha256, validate_envelope
+
+    problems = validate_envelope(envelope)
+    if problems:
+        raise ValueError("invalid envelope: " + "; ".join(problems))
+    cur = conn.execute(
+        "INSERT INTO decisions (made_at, title, rationale, status, made_by, case_id, kind, "
+        "envelope, envelope_sha256, revision, evidence, impact, confidence) "
+        "VALUES (?, ?, ?, 'proposed', ?, ?, ?, ?, ?, 0, ?, ?, ?);",
+        (_now(), title, rationale, made_by, case_id, envelope["kind"],
+         canonical_json(envelope), envelope_sha256(envelope), evidence,
+         _provenance_json(impact, "impact"), _provenance_json(confidence, "confidence")))
+    decision_id = int(cur.lastrowid)
+    _record_event(conn, decision_id=decision_id, actor=made_by, action="propose",
+                  from_status=None, to_status="proposed", revision=0,
+                  envelope_sha256=envelope_sha256(envelope))
+    conn.commit()
+    return decision_id
+
+
+def _workflow_decision(conn: sqlite3.Connection, decision_id: int) -> Decision:
+    d = get_decision(conn, decision_id)
+    if d is None:
+        raise DecisionError(f"no decision with id {decision_id}")
+    if not d.envelope_sha256:
+        raise NotApprovable(
+            f"decision D#{d.id} predates the approval workflow — it has no bound envelope, so "
+            "there is nothing for an approval to bind to. Record a new decision to act on it.")
+    return d
+
+
+def _transition(conn: sqlite3.Connection, d: Decision, *, expected_revision: int,
+                from_status: str, set_sql: str, params: tuple) -> None:
+    """The one atomic mutation shape: succeed only against the exact (revision, status) the
+    caller saw. rowcount 0 -> re-read and raise the precise refusal."""
+    cur = conn.execute(
+        f"UPDATE decisions SET {set_sql}, revision = revision + 1 "
+        "WHERE id = ? AND revision = ? AND status = ?;",
+        (*params, d.id, expected_revision, from_status))
+    if cur.rowcount == 0:
+        conn.rollback()
+        now = get_decision(conn, d.id)
+        if now is not None and now.status != from_status:
+            raise InvalidTransition(
+                f"decision D#{d.id} is {now.status!r}, not {from_status!r} — this act no longer "
+                "applies. Reload and review the current state.")
+        raise StaleRevision(
+            f"decision D#{d.id} changed underneath this page (expected revision "
+            f"{expected_revision}, now {getattr(now, 'revision', '?')}) — reload and review "
+            "before acting.")
+
+
+def approve_decision(conn: sqlite3.Connection, decision_id: int, *, expected_revision: int,
+                     actor: str = "owner") -> str:
+    """proposed -> approved. Returns 'approved', or 'already-approved' for the one sanctioned
+    idempotent case: re-approving the identical envelope that is already approved (a duplicate
+    submission must be a no-op success, never a scary error — spec concurrency rule)."""
+    d = _workflow_decision(conn, decision_id)
+    if d.status == "approved":
+        return "already-approved"  # envelope identity is guaranteed: approved envelopes are immutable
+    if d.status != "proposed":
+        raise InvalidTransition(
+            f"cannot approve decision D#{d.id}: it is {d.status!r}, and only proposed decisions "
+            "can be approved.")
+    _transition(conn, d, expected_revision=expected_revision, from_status="proposed",
+                set_sql="status = 'approved', approved_at = ?, approved_by = ?",
+                params=(_now(), actor))
+    _record_event(conn, decision_id=d.id, actor=actor, action="approve",
+                  from_status="proposed", to_status="approved",
+                  revision=expected_revision + 1, envelope_sha256=d.envelope_sha256)
+    conn.commit()
+    return "approved"
+
+
+def reject_decision(conn: sqlite3.Connection, decision_id: int, *, expected_revision: int,
+                    reason: str, actor: str = "owner") -> None:
+    """proposed -> rejected. The reason is REQUIRED (spec): a rejection with no why teaches the
+    platform nothing and leaves the audit trail mute."""
+    if not (reason or "").strip():
+        raise ValueError("a rejection reason is required")
+    d = _workflow_decision(conn, decision_id)
+    if d.status != "proposed":
+        raise InvalidTransition(
+            f"cannot reject decision D#{d.id}: it is {d.status!r}, and only proposed decisions "
+            "can be rejected.")
+    _transition(conn, d, expected_revision=expected_revision, from_status="proposed",
+                set_sql="status = 'rejected'", params=())
+    _record_event(conn, decision_id=d.id, actor=actor, action="reject",
+                  from_status="proposed", to_status="rejected",
+                  revision=expected_revision + 1, envelope_sha256=d.envelope_sha256,
+                  detail=reason.strip())
+    conn.commit()
+
+
+def unapprove_decision(conn: sqlite3.Connection, decision_id: int, *, expected_revision: int,
+                       actor: str = "owner") -> None:
+    """approved -> proposed, the ONLY path away from an approved envelope (explicit human act;
+    the storage trigger refuses every other edit). Approval fields are cleared — the audit trail
+    keeps who had approved what."""
+    d = _workflow_decision(conn, decision_id)
+    if d.status != "approved":
+        raise InvalidTransition(
+            f"cannot unapprove decision D#{d.id}: it is {d.status!r}, not approved.")
+    _transition(conn, d, expected_revision=expected_revision, from_status="approved",
+                set_sql="status = 'proposed', approved_at = NULL, approved_by = NULL",
+                params=())
+    _record_event(conn, decision_id=d.id, actor=actor, action="unapprove",
+                  from_status="approved", to_status="proposed",
+                  revision=expected_revision + 1, envelope_sha256=d.envelope_sha256)
+    conn.commit()
+
+
+def repropose_decision(conn: sqlite3.Connection, decision_id: int, *, expected_revision: int,
+                       envelope: dict | None = None, actor: str = "owner") -> None:
+    """rejected -> proposed (spec: new revision; a new envelope is allowed here — and ONLY
+    here, because the decision is neither approved nor terminal)."""
+    d = _workflow_decision(conn, decision_id)
+    if d.status != "rejected":
+        raise InvalidTransition(
+            f"cannot re-propose decision D#{d.id}: it is {d.status!r}, not rejected.")
+    if envelope is not None:
+        from ..envelope import canonical_json, envelope_sha256, validate_envelope
+
+        problems = validate_envelope(envelope)
+        if problems:
+            raise ValueError("invalid envelope: " + "; ".join(problems))
+        new_canon, new_sha = canonical_json(envelope), envelope_sha256(envelope)
+        new_kind = envelope["kind"]
+    else:
+        new_canon, new_sha, new_kind = d.envelope, d.envelope_sha256, d.kind
+    _transition(conn, d, expected_revision=expected_revision, from_status="rejected",
+                set_sql="status = 'proposed', envelope = ?, envelope_sha256 = ?, kind = ?",
+                params=(new_canon, new_sha, new_kind))
+    _record_event(conn, decision_id=d.id, actor=actor, action="re-propose",
+                  from_status="rejected", to_status="proposed",
+                  revision=expected_revision + 1, envelope_sha256=new_sha)
+    conn.commit()
+
+
+def list_decision_events(conn: sqlite3.Connection, decision_id: int) -> list[DecisionEvent]:
+    rows = conn.execute(
+        "SELECT * FROM decision_events WHERE decision_id = ? ORDER BY id ASC;",
+        (decision_id,)).fetchall()
+    return [DecisionEvent(**r) for r in rows]
 
 
 # -- report artifacts (WP-CONSOLE-USABILITY U3a) --------------------------------------------------
@@ -349,6 +598,7 @@ class ReportArtifact:
     delivery_status: str
     delivery_attempts: int
     delivered_at: str | None
+    recommendations_count: int | None = None  # v4: best-effort parse; None renders "unknown"
 
 
 def persist_report_artifact(
@@ -366,6 +616,7 @@ def persist_report_artifact(
     cost_usd: float | None = None,
     format_version: str = "md/1",
     generated_at: str | None = None,
+    recommendations_count: int | None = None,
 ) -> int:
     """Store the artifact and return its id. Rejected artifacts are stored too (validator_ok=0) —
     a failed report is evidence, and the corpus of real bodies is how the validator improves."""
@@ -377,10 +628,11 @@ def persist_report_artifact(
     cur = conn.execute(
         "INSERT INTO report_artifacts (run_id, kind, profile, window, generated_at, "
         "format_version, validator_version, validator_ok, validator_reason, model, cost_usd, "
-        "content_sha256, body) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);",
+        "content_sha256, body, recommendations_count) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);",
         (run_id, kind, profile, window, generated_at or _now(), format_version,
          validator_version, 1 if validator_ok else 0, validator_reason, model, cost_usd,
-         hashlib.sha256(raw).hexdigest(), body),
+         hashlib.sha256(raw).hexdigest(), body, recommendations_count),
     )
     conn.commit()
     return int(cur.lastrowid)

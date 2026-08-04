@@ -16,7 +16,7 @@ from pathlib import Path
 
 from ..config import BASE_DIR, active_site, get_settings
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # One statement per table; CREATE ... IF NOT EXISTS makes init idempotent.
 _SCHEMA = """
@@ -59,9 +59,36 @@ CREATE TABLE IF NOT EXISTS decisions (
     title      TEXT NOT NULL,
     rationale  TEXT,
     status     TEXT NOT NULL DEFAULT 'active',    -- proposed | active | superseded | reverted
+                                                  -- v4 lifecycle: proposed | approved | rejected | executed
     outcome    TEXT,                              -- worked | failed | unknown (filled in later)
     made_by    TEXT,                              -- agent | human (v2)
-    case_id    INTEGER REFERENCES cases(id)
+    case_id    INTEGER REFERENCES cases(id),
+    -- v4 (WP-U4): the approval workflow. All nullable — legacy decisions render but are NOT
+    -- approvable via U4 controls (no envelope = nothing to bind an approval to).
+    kind               TEXT,                      -- e.g. seo_meta_update
+    envelope           TEXT,                      -- canonical JSON (envelope.canonical_json)
+    envelope_sha256    TEXT,                      -- sha256 of the canonical UTF-8 bytes
+    revision           INTEGER NOT NULL DEFAULT 0, -- optimistic concurrency (stale-tab guard)
+    evidence           TEXT,                      -- pointer(s) to evidence, human-readable
+    impact             TEXT,                      -- provenance JSON {value,label,method,source,as_of}
+    confidence         TEXT,                      -- provenance JSON, same shape
+    approved_at        TEXT,
+    approved_by        TEXT,
+    executed_at        TEXT,
+    execution_evidence TEXT                       -- pointer to the terminal verify attempt (U4b)
+);
+
+CREATE TABLE IF NOT EXISTS decision_events (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    decision_id     INTEGER NOT NULL REFERENCES decisions(id),
+    at              TEXT NOT NULL,
+    actor           TEXT NOT NULL,                -- 'owner' today (single-operator Console)
+    action          TEXT NOT NULL,                -- propose | approve | reject | unapprove | re-propose
+    from_status     TEXT,
+    to_status       TEXT NOT NULL,
+    revision        INTEGER NOT NULL,             -- decision revision AFTER this mutation
+    envelope_sha256 TEXT,                         -- the envelope this act bound to
+    detail          TEXT                          -- e.g. the rejection reason
 );
 
 CREATE TABLE IF NOT EXISTS report_artifacts (
@@ -81,7 +108,12 @@ CREATE TABLE IF NOT EXISTS report_artifacts (
     body              TEXT NOT NULL,                -- the immutable original artifact
     delivery_status   TEXT NOT NULL DEFAULT 'pending',  -- pending | delivered | send_failed
     delivery_attempts INTEGER NOT NULL DEFAULT 0,         -- one artifact, many attempts (review)
-    delivered_at      TEXT
+    delivered_at      TEXT,
+    -- v4: best-effort recommendation count parsed at persist time; NULL (rendered "unknown")
+    -- beats an invented zero, and it can never affect report validity or the validator. Not
+    -- covered by the immutability trigger (adding it there would need a trigger rebuild across
+    -- migrated stores for a nullable metadata field no API path ever updates).
+    recommendations_count INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_cases_status    ON cases(status);
@@ -89,6 +121,18 @@ CREATE INDEX IF NOT EXISTS idx_runs_kind       ON runs(kind);
 CREATE INDEX IF NOT EXISTS idx_decisions_case  ON decisions(case_id);
 CREATE INDEX IF NOT EXISTS idx_artifacts_kind  ON report_artifacts(kind);
 CREATE INDEX IF NOT EXISTS idx_artifacts_sha   ON report_artifacts(content_sha256);
+CREATE INDEX IF NOT EXISTS idx_decision_events ON decision_events(decision_id);
+
+-- Audit rows are append-only evidence (WP-U4): every lifecycle act records actor, timestamp,
+-- revision, old/new state and the bound envelope hash — and no act, including a later success,
+-- may rewrite or remove an earlier one.
+CREATE TRIGGER IF NOT EXISTS trg_decision_events_no_update
+BEFORE UPDATE ON decision_events
+BEGIN SELECT RAISE(ABORT, 'decision events are immutable (append-only audit trail)'); END;
+
+CREATE TRIGGER IF NOT EXISTS trg_decision_events_no_delete
+BEFORE DELETE ON decision_events
+BEGIN SELECT RAISE(ABORT, 'decision events are immutable (append-only audit trail)'); END;
 
 -- The trust chain's storage guarantee (WP-CONSOLE-USABILITY U3a): the artifact core is
 -- IMMUTABLE at the database layer, not merely by API convention. Only the delivery fields
@@ -110,6 +154,34 @@ WHEN OLD.body            IS NOT NEW.body
   OR OLD.run_id          IS NOT NEW.run_id
 BEGIN
     SELECT RAISE(ABORT, 'report artifact is immutable (only delivery status/attempts/timestamp may change)');
+END;
+"""
+
+# WP-U4 lifecycle triggers live OUTSIDE _SCHEMA on purpose: they reference v4 columns, and on a
+# pre-v4 store _SCHEMA executes BEFORE the ALTER TABLE migration adds those columns — creating
+# them there would fail with "no such column". init_db applies them after migration, when the
+# columns exist on every path (fresh create and migrated alike).
+_DECISION_TRIGGERS = """
+-- The spec's one rule for approved envelopes (WP-U4 state machine): an approved envelope is
+-- immutable AT THE STORAGE LAYER; the only path to editing is explicit Unapprove (a status
+-- change, which this trigger permits) followed by the edit in 'proposed'. No silent auto-void.
+CREATE TRIGGER IF NOT EXISTS trg_decisions_approved_envelope_immutable
+BEFORE UPDATE ON decisions
+WHEN OLD.status = 'approved'
+ AND (OLD.envelope        IS NOT NEW.envelope
+   OR OLD.envelope_sha256 IS NOT NEW.envelope_sha256
+   OR OLD.kind            IS NOT NEW.kind)
+BEGIN
+    SELECT RAISE(ABORT, 'approved envelope is immutable — unapprove first, then edit');
+END;
+
+-- Executed is terminal (WP-U4 state machine): corrections are NEW decisions, never edits of an
+-- outcome that evidence already points at.
+CREATE TRIGGER IF NOT EXISTS trg_decisions_executed_terminal
+BEFORE UPDATE ON decisions
+WHEN OLD.status = 'executed'
+BEGIN
+    SELECT RAISE(ABORT, 'executed decision is terminal — record a new decision instead');
 END;
 """
 
@@ -152,6 +224,8 @@ def init_db(conn: sqlite3.Connection) -> None:
     elif row[0] < SCHEMA_VERSION:
         _migrate(conn, from_version=row[0])
         conn.execute("UPDATE schema_version SET version = ?;", (SCHEMA_VERSION,))
+    # After migration on purpose — these triggers reference v4 columns (see _DECISION_TRIGGERS).
+    conn.executescript(_DECISION_TRIGGERS)
     conn.commit()
 
 
@@ -173,3 +247,27 @@ def _migrate(conn: sqlite3.Connection, *, from_version: int) -> None:
         # v2 -> v3: report_artifacts table + immutability trigger — purely additive, created by
         # the CREATE IF NOT EXISTS statements in _SCHEMA (which init_db runs before migrating).
         pass
+    if from_version < 4:
+        # v3 -> v4 (WP-U4): approval-workflow columns on decisions + recommendations_count on
+        # report_artifacts. decision_events and all v4 triggers come from _SCHEMA /
+        # _DECISION_TRIGGERS. Existing rows keep NULL (legacy = visible, not approvable) and
+        # revision 0.
+        for stmt in (
+            "ALTER TABLE decisions ADD COLUMN kind TEXT;",
+            "ALTER TABLE decisions ADD COLUMN envelope TEXT;",
+            "ALTER TABLE decisions ADD COLUMN envelope_sha256 TEXT;",
+            "ALTER TABLE decisions ADD COLUMN revision INTEGER NOT NULL DEFAULT 0;",
+            "ALTER TABLE decisions ADD COLUMN evidence TEXT;",
+            "ALTER TABLE decisions ADD COLUMN impact TEXT;",
+            "ALTER TABLE decisions ADD COLUMN confidence TEXT;",
+            "ALTER TABLE decisions ADD COLUMN approved_at TEXT;",
+            "ALTER TABLE decisions ADD COLUMN approved_by TEXT;",
+            "ALTER TABLE decisions ADD COLUMN executed_at TEXT;",
+            "ALTER TABLE decisions ADD COLUMN execution_evidence TEXT;",
+            "ALTER TABLE report_artifacts ADD COLUMN recommendations_count INTEGER;",
+        ):
+            try:
+                conn.execute(stmt)
+            except sqlite3.OperationalError as exc:
+                if "duplicate column" not in str(exc).lower():
+                    raise

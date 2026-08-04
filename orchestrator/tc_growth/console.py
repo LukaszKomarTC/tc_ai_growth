@@ -51,6 +51,25 @@ _TOKEN_ENV = "TC_CONSOLE_TOKEN"
 _KEEPALIVE_S = 10.0
 _KEEPALIVE_FRAME = b": keepalive\n\n"  # SSE comment — MUST start with ':' so clients ignore it
 
+# U4a decision actions: POST /decision/<id>/<act>. Outcome text is server-fixed and selected by
+# WHITELISTED query keys only — the redirect target can never carry reflected content.
+_DECISION_ACT = re.compile(r"^/decision/(\d+)/(approve|reject|unapprove)$")
+_DECISION_NOTICES = {
+    "approved": "Approved. The envelope is now bound and immutable.",
+    "already-approved": "Already approved — nothing changed (duplicate submission is safe).",
+    "rejected": "Rejected. The reason is recorded in the history below.",
+    "unapproved": "Unapproved — back to proposed; the envelope can be revised again.",
+}
+_DECISION_ERRORS = {
+    "stale": "This page was stale — the decision changed underneath it. Review the current "
+             "state below before acting again.",
+    "not-approvable": "This decision has no bound envelope (it predates the workflow) — "
+                      "nothing to approve.",
+    "invalid-transition": "That action does not apply to the decision's current state.",
+    "reason-required": "A rejection reason is required — nothing was changed.",
+    "unknown": "The action could not be completed — nothing was changed. Check the state below.",
+}
+
 # Self-only CSP: no external scripts, styles, fonts, images, or connections — the console must
 # not be able to fetch anything off-box (defence for a surface that runs privileged operations).
 _CSP = ("default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
@@ -492,6 +511,35 @@ class _Handler(BaseHTTPRequestHandler):
             csrf = csrf_for(session, secret)
             body = f"<script>window.__CSRF__={json.dumps(csrf)};</script>" + _operations_body()
             self._html(200, _shell("Operations", "operations", body, **chrome))
+        elif path.startswith("/decision/"):
+            # U4a: the decision detail page. Success/error state arrives as WHITELISTED keys in
+            # the query string (PRG pattern — a refresh must never repeat a mutation), rendered
+            # through fixed server-side text: nothing user-supplied is ever reflected.
+            from . import console_views
+
+            try:
+                decision_id = int(path.rsplit("/", 1)[1])
+            except ValueError:
+                self._send(404, b"not found", "text/plain; charset=utf-8")
+                return
+            try:
+                from .store import open_store
+
+                store = open_store()
+                decision = store.get_decision(decision_id)
+                events = store.list_decision_events(decision_id) if decision else []
+            except Exception:  # noqa: BLE001 - store trouble -> not found, never 500
+                decision = None
+                events = []
+            if decision is None:
+                self._send(404, b"no such decision", "text/plain; charset=utf-8")
+                return
+            q = parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+            notice = _DECISION_NOTICES.get(q.get("msg", [""])[0], "")
+            error = _DECISION_ERRORS.get(q.get("err", [""])[0], "")
+            body = console_views.decision_body(
+                decision, events, csrf=csrf_for(session, secret), notice=notice, error=error)
+            self._html(200, _shell(f"Decision D#{decision.id}", "home", body, **chrome))
         elif path.startswith("/report/"):
             from . import console_views
 
@@ -566,7 +614,83 @@ class _Handler(BaseHTTPRequestHandler):
             self._stream_execute(form.get("op", ""))
             return
 
+        m = _DECISION_ACT.match(path)
+        if m:
+            if not valid_csrf(form.get("csrf"), session, secret):
+                self._json(403, {"error": "bad csrf token"})
+                return
+            self._decision_act(int(m.group(1)), m.group(2), form)
+            return
+
         self._send(404, b"not found", "text/plain; charset=utf-8")
+
+    def _decision_act(self, decision_id: int, action: str, form: dict) -> None:
+        """U4a approve/reject/unapprove. Approve is genuinely two-step: the first POST (no
+        `confirmed`) mutates NOTHING and renders the confirmation page; only the confirmed POST
+        calls the lifecycle API. All outcomes redirect (303) so a refresh never re-submits."""
+        from . import console_views
+        from .config import active_site, get_settings
+        from .store import open_store
+        from .store.records import DecisionError, InvalidTransition, NotApprovable, StaleRevision
+
+        def _redirect(param: str) -> None:
+            self._headers(303, "text/html; charset=utf-8",
+                          extra=[("Location", f"/decision/{decision_id}?{param}")], body_len=0)
+
+        try:
+            revision = int(form.get("revision", ""))
+        except ValueError:
+            _redirect("err=stale")
+            return
+        try:
+            store = open_store()
+            if action == "approve" and form.get("confirmed") != "1":
+                decision = store.get_decision(decision_id)
+                if decision is None:
+                    self._send(404, b"no such decision", "text/plain; charset=utf-8")
+                    return
+                if not decision.envelope_sha256:
+                    _redirect("err=not-approvable")
+                    return
+                if decision.status != "proposed":
+                    _redirect("err=invalid-transition")
+                    return
+                s = get_settings()
+                secret = _secret()
+                session = self._authed(secret) if secret else None
+                body = console_views.decision_confirm_body(
+                    decision, csrf=csrf_for(session, secret))
+                self._html(200, _shell(f"Confirm D#{decision.id}", "home", body,
+                                       site_name=s.site_name or (active_site() or "Tossa Cycling"),
+                                       env_kind=s.env_kind))
+                return
+            if action == "approve":
+                outcome = store.approve_decision(decision_id, expected_revision=revision,
+                                                 actor="owner")
+                _redirect("msg=already-approved" if outcome == "already-approved"
+                          else "msg=approved")
+            elif action == "reject":
+                if not (form.get("reason") or "").strip():
+                    _redirect("err=reason-required")
+                    return
+                store.reject_decision(decision_id, expected_revision=revision,
+                                      reason=form["reason"], actor="owner")
+                _redirect("msg=rejected")
+            elif action == "unapprove":
+                store.unapprove_decision(decision_id, expected_revision=revision, actor="owner")
+                _redirect("msg=unapproved")
+            else:
+                self._send(404, b"not found", "text/plain; charset=utf-8")
+        except StaleRevision:
+            _redirect("err=stale")
+        except NotApprovable:
+            _redirect("err=not-approvable")
+        except InvalidTransition:
+            _redirect("err=invalid-transition")
+        except DecisionError:
+            _redirect("err=unknown")
+        except Exception:  # noqa: BLE001 - a mutation endpoint must answer, never hang the socket
+            _redirect("err=unknown")
 
     # ---- streaming execution ----
     def _stream_execute(self, op_id: str) -> None:
