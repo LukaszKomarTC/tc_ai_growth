@@ -173,21 +173,30 @@ def env(monkeypatch, tmp_path):
         urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
     opener.open(urllib.request.Request(f"{base}/login", data=b"token=u4c-token", method="POST"))
     try:
-        yield type("E", (), {"base": base, "opener": opener, "db": db, "decision_id": did})
+        yield type("E", (), {"base": base, "opener": opener, "db": db, "decision_id": did,
+                             "monkeypatch": monkeypatch})
     finally:
         httpd.shutdown()
+
+
+def _adopt_form(page: str) -> dict:
+    """csrf + the signed snapshot token the page bound to its own comparison."""
+    return {"csrf": re.search(r"name='csrf' value='([^']+)'", page).group(1),
+            "snapshot": re.search(r"name='snapshot' value='([^']+)'", page).group(1),
+            "revision": 1}
+
+
+def _post_adopt(env, **fields) -> str:
+    return env.opener.open(urllib.request.Request(
+        f"{env.base}/decision/{env.decision_id}/adopt-live",
+        data=urllib.parse.urlencode(fields).encode(), method="POST")).read().decode()
 
 
 def test_browser_adopt_live_creates_new_proposal_and_leaves_source_untouched(env):
     page = env.opener.open(f"{env.base}/decision/{env.decision_id}?live=1").read().decode()
     assert "field(s) differ from the live pages" in page
     assert "Adopt live content as a new proposal" in page
-    csrf = re.search(r"name='csrf' value='([^']+)'", page).group(1)
-
-    out = env.opener.open(urllib.request.Request(
-        f"{env.base}/decision/{env.decision_id}/adopt-live",
-        data=urllib.parse.urlencode({"csrf": csrf, "revision": 1}).encode(),
-        method="POST")).read().decode()
+    out = _post_adopt(env, **_adopt_form(page))
     assert "New proposal created" in out and "Nothing on this decision changed" in out
 
     s = SqliteStore(env.db)
@@ -201,20 +210,91 @@ def test_browser_adopt_live_creates_new_proposal_and_leaves_source_untouched(env
     assert len(n.title) <= MAX_TITLE_CHARS                      # the action obeys its own rule
     # Provenance: source decision, URLs, fetch time, fetched values.
     assert f"D#{source.id}" in n.evidence and ES_URL in n.evidence
-    assert "Título vivo" in n.evidence and "fetched 20" in n.evidence
+    assert "Título vivo" in n.evidence                          # the fetched values verbatim
+    assert "displayed 20" in n.evidence and "confirmed 20" in n.evidence
     # The new proposal binds what is LIVE.
     assert "Título vivo" in n.envelope and "Live title" in n.envelope
 
 
 def test_adopt_live_refuses_on_stale_revision(env):
     page = env.opener.open(f"{env.base}/decision/{env.decision_id}?live=1").read().decode()
-    csrf = re.search(r"name='csrf' value='([^']+)'", page).group(1)
-    out = env.opener.open(urllib.request.Request(
-        f"{env.base}/decision/{env.decision_id}/adopt-live",
-        data=urllib.parse.urlencode({"csrf": csrf, "revision": 99}).encode(),
-        method="POST")).read().decode()
+    form = _adopt_form(page) | {"revision": 99}
+    out = _post_adopt(env, **form)
     assert "stale" in out
     assert len(SqliteStore(env.db).list_decisions()) == 1       # nothing created
+
+
+# --- criterion (review #76): consent is bound to the snapshot the owner SAW --------------------
+
+
+def test_live_content_changing_between_comparison_and_click_creates_nothing(env):
+    """TOCTOU: the owner reviews snapshot A; the page changes; the click must NOT adopt B."""
+    page = env.opener.open(f"{env.base}/decision/{env.decision_id}?live=1").read().decode()
+    form = _adopt_form(page)
+
+    def _changed(url):                                          # the site moved underneath
+        r = _live(url)
+        r.title = "Something the owner never reviewed"
+        return r
+    env.monkeypatch.setattr(verify, "fetch_page", _changed)
+
+    out = _post_adopt(env, **form)
+    assert "live content CHANGED" in out and "Compare again" in out
+    s = SqliteStore(env.db)
+    assert len(s.list_decisions()) == 1                          # no decision row...
+    assert len(s.list_decision_events(env.decision_id)) == 2     # ...and no lifecycle event
+    assert s.get_decision(env.decision_id).revision == 1         # source untouched
+
+
+def test_tampered_or_missing_snapshot_token_is_refused(env):
+    page = env.opener.open(f"{env.base}/decision/{env.decision_id}?live=1").read().decode()
+    form = _adopt_form(page)
+    good = form["snapshot"]
+
+    # Missing entirely.
+    out = _post_adopt(env, csrf=form["csrf"], revision=1)
+    assert "did not carry a valid reference" in out
+    # Digest edited (owner-visible values swapped for others).
+    stamp, digest, sig = good.split("|")
+    out = _post_adopt(env, **(form | {"snapshot": f"{stamp}|{'0' * len(digest)}|{sig}"}))
+    assert "did not carry a valid reference" in out
+    # Signature edited.
+    out = _post_adopt(env, **(form | {"snapshot": f"{stamp}|{digest}|{'0' * len(sig)}"}))
+    assert "did not carry a valid reference" in out
+    assert len(SqliteStore(env.db).list_decisions()) == 1        # nothing created by any of them
+
+
+def test_duplicate_submit_is_idempotent_not_a_twin_proposal(env):
+    page = env.opener.open(f"{env.base}/decision/{env.decision_id}?live=1").read().decode()
+    form = _adopt_form(page)
+    first = _post_adopt(env, **form)
+    assert "New proposal created" in first
+    again = _post_adopt(env, **form)                             # same displayed snapshot
+    assert "already adopted" in again
+    created = [d for d in SqliteStore(env.db).list_decisions() if d.id != env.decision_id]
+    assert len(created) == 1                                     # one proposal, not two
+
+
+def test_adopt_refuses_when_a_page_cannot_be_read_at_confirm_time(env):
+    page = env.opener.open(f"{env.base}/decision/{env.decision_id}?live=1").read().decode()
+    form = _adopt_form(page)
+    env.monkeypatch.setattr(verify, "fetch_page",
+                            lambda u: _live(u, error="URLError: timed out"))
+    out = _post_adopt(env, **form)
+    assert "CHANGED" in out or "could not be read" in out
+    assert len(SqliteStore(env.db).list_decisions()) == 1
+
+
+def test_successful_adopt_records_both_reads_in_provenance(env):
+    page = env.opener.open(f"{env.base}/decision/{env.decision_id}?live=1").read().decode()
+    form = _adopt_form(page)
+    shown_at, digest, _ = form["snapshot"].split("|")
+    _post_adopt(env, **form)
+    new = [d for d in SqliteStore(env.db).list_decisions() if d.id != env.decision_id][0]
+    assert f"displayed {shown_at}" in new.evidence               # what the owner saw...
+    assert "confirmed 20" in new.evidence                        # ...and the confirming read
+    assert digest in new.evidence                                # bound by one digest
+    assert f"revision {1}" in new.evidence and "envelope " in new.evidence
 
 
 def test_u4c_adds_no_production_write_capability(env):

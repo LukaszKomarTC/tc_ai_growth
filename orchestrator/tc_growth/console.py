@@ -64,8 +64,10 @@ _DECISION_NOTICES = {
                       "interval — reload this page in about a minute.",
     "executed": "Verified twice against the live pages — this decision is now EXECUTED and "
                 "has left the queue. The evidence trail is below.",
-    "adopted": "New proposal created from the live page content — it is waiting for your "
-               "approval. Nothing on this decision changed.",
+    "adopted": "New proposal created from the live page content you reviewed — it is waiting "
+               "for your approval. Nothing on this decision changed.",
+    "already-adopted": "This exact live content was already adopted — showing that proposal "
+                       "instead of creating a duplicate.",
 }
 _DECISION_ERRORS = {
     "stale": "This page was stale — the decision changed underneath it. Review the current "
@@ -86,6 +88,11 @@ _DECISION_ERRORS = {
     "verify-unavailable": "Verification is not available for this decision.",
     "adopt-failed": "Could not adopt the live content — the pages could not be read in full. "
                     "Nothing was created; try the comparison again.",
+    "adopt-changed": "The live content CHANGED since the comparison you were shown — nothing "
+                     "was created. Compare again and review the current wording before "
+                     "adopting it.",
+    "adopt-token": "That adopt request did not carry a valid reference to the comparison you "
+                   "were shown — nothing was created. Run the comparison again.",
     "unknown": "The action could not be completed — nothing was changed. Check the state below.",
 }
 
@@ -167,6 +174,23 @@ def valid_session(value: str | None, secret: bytes, *, now: float | None = None)
         return False
     age = (now if now is not None else time.time()) - int(ts_str)
     return 0 <= age <= _SESSION_MAX_AGE
+
+
+def adopt_token(secret: bytes, *, fetched_at: str, digest: str) -> str:
+    """Bind the snapshot the owner is LOOKING AT to the adopt form (review #76 TOCTOU fix).
+    Carries the fetch time and the content digest, signed with the console secret + deploy
+    epoch — the browser cannot forge or edit either half."""
+    return f"{fetched_at}|{digest}|{_sign(secret, f'adopt.{_deploy_epoch()}.{fetched_at}.{digest}')}"
+
+
+def read_adopt_token(token: str | None, secret: bytes) -> tuple[str, str] | None:
+    """(fetched_at, digest) for a valid token; None when absent, malformed or tampered."""
+    parts = (token or "").split("|")
+    if len(parts) != 3:
+        return None
+    fetched_at, digest, sig = parts
+    expected = _sign(secret, f"adopt.{_deploy_epoch()}.{fetched_at}.{digest}")
+    return (fetched_at, digest) if hmac.compare_digest(sig, expected) else None
 
 
 def csrf_for(session_value: str, secret: bytes) -> str:
@@ -585,12 +609,17 @@ class _Handler(BaseHTTPRequestHandler):
             error = _DECISION_ERRORS.get(q.get("err", [""])[0], "")
             # U4c: the live comparison is fetched ON REQUEST (?live=1) — a detail page must not
             # hit the site on every open. Failure renders as failure; no stale value is shown.
-            comparison = snapshot = None
+            comparison = snapshot = snap_token = None
             if q.get("live", [""])[0] == "1" and decision.envelope_sha256:
                 try:
                     envelope = json.loads(decision.envelope or "")
                     snapshot = verify_mod.live_snapshot(envelope)
                     comparison = verify_mod.compare_fields(envelope, snapshot)
+                    snap_token = adopt_token(
+                        secret, fetched_at=snapshot["fetched_at"],
+                        digest=verify_mod.snapshot_digest(
+                            snapshot, source_id=decision.id, revision=decision.revision,
+                            envelope_sha256=decision.envelope_sha256))
                 except Exception as exc:  # noqa: BLE001 - a failed read is content, not a 500
                     snapshot = {"fetched_at": "—"}
                     comparison = [{"lang": "?", "label": "live read", "url": None,
@@ -602,7 +631,8 @@ class _Handler(BaseHTTPRequestHandler):
                 verifiable=decision.kind in verify_mod.VERIFIABLE_KINDS,
                 pending=pending,
                 wait_s=verify_mod.confirm_wait_s(pending) if pending else 0,
-                attempts=attempts, comparison=comparison, snapshot=snapshot)
+                attempts=attempts, comparison=comparison, snapshot=snapshot,
+                snapshot_token=snap_token)
             self._html(200, _shell(f"Decision D#{decision.id}", "decisions", body, **chrome))
         elif path.startswith("/report/"):
             from . import console_views
@@ -697,6 +727,11 @@ class _Handler(BaseHTTPRequestHandler):
         from .store import open_store
         from .store.records import DecisionError, InvalidTransition, NotApprovable, StaleRevision
 
+        # One secret for the whole handler: the adopt-token check needs it too, and a branch
+        # that quietly lacked it once turned a NameError into a generic refusal (caught by the
+        # U4c tests — the broad handler below must never be the reason a bug looks like policy).
+        secret = _secret() or b""
+
         def _redirect(param: str) -> None:
             self._headers(303, "text/html; charset=utf-8",
                           extra=[("Location", f"/decision/{decision_id}?{param}")], body_len=0)
@@ -720,8 +755,7 @@ class _Handler(BaseHTTPRequestHandler):
                     _redirect("err=invalid-transition")
                     return
                 s = get_settings()
-                secret = _secret()
-                session = self._authed(secret) if secret else None
+                session = self._authed(secret)
                 body = console_views.decision_confirm_body(
                     decision, csrf=csrf_for(session, secret))
                 self._html(200, _shell(f"Confirm D#{decision.id}", "decisions", body,
@@ -742,9 +776,36 @@ class _Handler(BaseHTTPRequestHandler):
                 if source.revision != revision:
                     _redirect("err=stale")
                     return
+                # Consent is bound to the snapshot the owner SAW. Re-fetching and adopting
+                # whatever is live at click time would create wording they never reviewed
+                # (review #76: TOCTOU consent failure).
+                bound = read_adopt_token(form.get("snapshot"), secret)
+                if bound is None:
+                    _redirect("err=adopt-token")
+                    return
+                shown_at, shown_digest = bound
+                # Idempotence: the same displayed snapshot must never yield twin proposals.
+                existing = next((d for d in store.list_decisions(limit=200)
+                                 if d.evidence and shown_digest in d.evidence), None)
+                if existing is not None:
+                    self._headers(303, "text/html; charset=utf-8",
+                                  extra=[("Location",
+                                          f"/decision/{existing.id}?msg=already-adopted")],
+                                  body_len=0)
+                    return
                 try:
                     envelope = json.loads(source.envelope or "")
                     snapshot = verify_mod.live_snapshot(envelope)
+                    confirm_digest = verify_mod.snapshot_digest(
+                        snapshot, source_id=source.id, revision=source.revision,
+                        envelope_sha256=source.envelope_sha256)
+                except Exception:  # noqa: BLE001 - an unreadable page creates nothing
+                    _redirect("err=adopt-failed")
+                    return
+                if not hmac.compare_digest(confirm_digest, shown_digest):
+                    _redirect("err=adopt-changed")
+                    return
+                try:
                     new_envelope = verify_mod.adopt_live_envelope(envelope, snapshot)
                     profile, envs, hosts = decision_proposal_context()
                     urls = ", ".join(f"{k}={v['url']}" for k, v in snapshot["urls"].items())
@@ -760,8 +821,13 @@ class _Handler(BaseHTTPRequestHandler):
                                    "content. This proposal binds exactly what is serving now, "
                                    "so verification can close the loop against reality. "
                                    f"Approving it does not change the site."),
-                        evidence=(f"Adopted from D#{source.id} · fetched "
-                                  f"{snapshot['fetched_at']} · {urls} · {values}"),
+                        # Provenance covers BOTH reads: what was displayed and what the
+                        # click confirmed. Their digests are identical by construction — that
+                        # identity IS the evidence that the owner adopted what they reviewed.
+                        evidence=(f"Adopted from D#{source.id} (revision {source.revision}, "
+                                  f"envelope {source.envelope_sha256[:12]}) · displayed "
+                                  f"{shown_at} · confirmed {snapshot['fetched_at']} · snapshot "
+                                  f"{shown_digest} · {urls} · {values}"),
                         case_id=source.case_id, made_by="human")
                 except Exception:  # noqa: BLE001 - partial/unreadable snapshot must not create
                     _redirect("err=adopt-failed")

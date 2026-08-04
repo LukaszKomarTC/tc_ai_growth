@@ -368,3 +368,25 @@ def adopt_live_envelope(envelope: dict, snapshot: dict) -> dict:
     new = {k: v for k, v in envelope.items() if k != "payload"}
     new["payload"] = payload
     return new
+
+
+def snapshot_digest(snapshot: dict, *, source_id: int, revision: int,
+                    envelope_sha256: str) -> str:
+    """A digest over exactly what the owner was SHOWN — source identity plus every displayed
+    live value. Deliberately EXCLUDES the fetch timestamp: the confirming re-fetch happens at a
+    different moment, and what must be identical is the CONTENT, not the clock. The timestamp
+    travels beside the digest in the signed token, so both are still tamper-evident.
+
+    Consent is bound to values (review #76): if any URL, title, meta or canonical moved between
+    the comparison and the click, this digest changes and the adopt refuses."""
+    material = {
+        "source": {"id": source_id, "revision": revision, "envelope": envelope_sha256},
+        "urls": {
+            lang: {"url": v.get("url"), "title": v.get("title"),
+                   "meta_description": v.get("meta_description"),
+                   "canonical": v.get("canonical"), "error": v.get("error")}
+            for lang, v in sorted((snapshot.get("urls") or {}).items())
+        },
+    }
+    canonical = json.dumps(material, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
