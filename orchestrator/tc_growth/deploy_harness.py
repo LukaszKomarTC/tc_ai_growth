@@ -322,6 +322,13 @@ def install_privileged(target: deploy_target.Target, app: Path, *,
             "--snapshot-dir", target.snapshot_dir,
             "--unit-prefix", target.unit_prefix,
             "--runtime-dir", target.runtime_dir,
+            # The full identity, so the transient runner can reconstruct THIS target instead of
+            # resolving production by default.
+            "--target-name", target.name,
+            "--backup-dir", target.backup_dir,
+            "--evidence-namespace", target.evidence_namespace,
+            "--remote-ref", target.remote_ref,
+            *(["--disposable"] if target.disposable else []),
             "--store-db", target.db_path,
             "--venv", target.venv,
             "--console-env-file", target.console_env_file,

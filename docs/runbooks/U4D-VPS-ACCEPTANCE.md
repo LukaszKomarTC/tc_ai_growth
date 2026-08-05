@@ -1,5 +1,37 @@
 # WP-U4d.1 — the VPS acceptance run (owner-executed)
 
+> # ⛔ DO NOT RUN THIS YET
+>
+> Review of `1faa1eb` found five blockers in this document. Two were defects in the **product**
+> and are fixed; three are defects in **these commands** and are not yet rewritten. Running it as
+> written would either fail immediately or execute under production defaults.
+>
+> **Fixed in the code since this was written:**
+> - the transient runner resolved **production** by default, so a probe-named runbook would have
+>   run production constants inside Python. The target identity now travels with the launch, from
+>   a root-owned config (`deploy-run --target-config`).
+> - rollback restarted the service unconditionally, so a first-deployment rollback removed an
+>   absent unit and then restarted a service whose unit was gone. It now takes the action from the
+>   recorded prior state — restart when the unit existed, stop when it did not.
+>
+> **Still wrong in the commands below, and why:**
+> - **§3** builds a *production* plan (`build_plan(sha)` with no target) and then suggests
+>   recording the mismatch. That must never be accepted as evidence; `_assert_plan_target_matches`
+>   correctly refuses it.
+> - **§3** passes `PROBE_SHA` through `sudo`, which strips it — the heredoc would `KeyError` — and
+>   imports `tc_growth` from the production checkout, contradicting the boundary being tested.
+> - **§1** creates the probe with `sudo` throughout, so the unprivileged trees end up root-owned.
+>   The production executors run as `tcgrowth`; the ownership model has to mirror production.
+> - **§6** edits the generated unit's port, but `apply` regenerates that unit from root-owned
+>   config — the operation under test removes the injected failure.
+> - **§1** says to improvise dependencies if no pinned file exists. That is not a reproducible
+>   instruction for a security gate.
+>
+> The replacement is **one bounded command** that constructs the disposable target, plan and run
+> row, refuses any production value, and drives the transient path — so the owner runs one thing
+> rather than assembling store rows by hand. Until that exists, treat everything below as a
+> specification of what the run must cover, not as commands to paste.
+
 *Everything in PR #80 that a machine without a booted systemd can prove has been proven and is on
 the PR. This document is the rest: the phases that need a real service manager, executed by the
 owner on the host, against a **disposable** target.*

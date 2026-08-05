@@ -148,12 +148,14 @@ mode_has_write_bits "$(_mode_of "$PREFIX")" && die "prefix is writable by others
 TC_APP_DIR=""; TC_RELEASES_DIR=""; TC_SERVICE=""; TC_SERVICE_USER=""; TC_CONSOLE_PORT=""
 TC_UNIT_PATH=""; TC_INSPECTOR_DEST=""; TC_SUDOERS_FILE=""; TC_SNAPSHOT_DIR=""; TC_UNIT_PREFIX=""
 TC_STORE_DB=""; TC_VENV=""; TC_CONSOLE_ENV_FILE=""; TC_RUNTIME_DIR=""
+TC_TARGET_NAME=""; TC_BACKUP_DIR=""; TC_EVIDENCE_NAMESPACE=""; TC_REMOTE_REF=""; TC_DISPOSABLE=""
 while IFS='=' read -r key value; do
     case "$key" in
         ''|'#'*) continue ;;
         TC_APP_DIR|TC_RELEASES_DIR|TC_SERVICE|TC_SERVICE_USER|TC_CONSOLE_PORT|TC_UNIT_PATH|\
         TC_INSPECTOR_DEST|TC_SUDOERS_FILE|TC_SNAPSHOT_DIR|TC_UNIT_PREFIX|TC_STORE_DB|TC_VENV|\
-        TC_CONSOLE_ENV_FILE|TC_RUNTIME_DIR)
+        TC_CONSOLE_ENV_FILE|TC_RUNTIME_DIR|TC_TARGET_NAME|TC_BACKUP_DIR|\
+        TC_EVIDENCE_NAMESPACE|TC_REMOTE_REF|TC_DISPOSABLE)
             printf -v "$key" '%s' "$value" ;;
         *) die "target.conf contains an unknown key: $key" ;;
     esac
@@ -161,7 +163,7 @@ done < "$TARGET_CONF"
 
 for required_key in TC_APP_DIR TC_RELEASES_DIR TC_SERVICE TC_SERVICE_USER TC_CONSOLE_PORT \
                     TC_UNIT_PATH TC_INSPECTOR_DEST TC_SUDOERS_FILE TC_SNAPSHOT_DIR \
-                    TC_UNIT_PREFIX TC_RUNTIME_DIR; do
+                    TC_UNIT_PREFIX TC_RUNTIME_DIR TC_TARGET_NAME; do
     [ -n "${!required_key}" ] || die "target.conf is missing $required_key"
 done
 
@@ -685,16 +687,47 @@ verb_rollback() {
     phase "rollback" complete
     note "restored=$ROLLBACK_RESTORED removed=$ROLLBACK_REMOVED failed=0"
 
+    # Decide the service action from the RECORDED prior state, and say so, before checking whether
+    # systemd is available. Off-host the action cannot be performed — but which action is correct
+    # is observable, so this branch is not a piece of logic that only a VPS can ever see.
+    local prior_unit intended
+    prior_unit="$(_prior_state unit "$snapshot")"
+    if [ "$prior_unit" = "present" ]; then intended="restart"; else intended="stop"; fi
+    phase "service-action" "$intended"
+    if [ "$intended" = "stop" ]; then
+        note "the unit did not exist before this deployment and has been removed, so the correct"
+        note "end state is NOT-DEPLOYED. Restarting here would fail against a unit that is gone."
+    fi
+
     if [ ! -d /run/systemd/system ]; then
         phase "daemon-reload" unavailable
-        phase "restart-service" unavailable
+        phase "${intended}-service" unavailable
         note "systemd is not booted here; the restored files are in place but the service was NOT"
-        note "restarted and nothing above proves the previous release is serving."
+        note "asked to $intended, and nothing above proves the end state."
         return "$EXIT_SYSTEMD_ABSENT"
     fi
     run_clean systemctl daemon-reload || die "daemon-reload failed"
-    run_clean systemctl restart "$TC_SERVICE" || die "could not restart $TC_SERVICE"
-    phase "restart-service" ok
+    phase "daemon-reload" ok
+
+    # The service action depends on the PRIOR STATE, not on rollback having run.
+    #
+    # Restarting unconditionally is wrong on a first-deployment rollback: the unit did not exist
+    # before apply, rollback correctly removed it, and `systemctl restart` then fails because
+    # there is nothing to restart. Reporting that as a rollback failure would be false — the
+    # rollback succeeded; the correct end state is simply "not deployed".
+    #
+    # So: prior unit present  -> restore and restart, and the service should be healthy.
+    #     prior unit absent   -> the unit is gone; stop the service and expect not-found.
+    if [ "$intended" = "restart" ]; then
+        run_clean systemctl restart "$TC_SERVICE" || die "could not restart $TC_SERVICE"
+        phase "restart-service" ok
+        note "the previous unit is restored and $TC_SERVICE was restarted"
+    else
+        run_clean systemctl stop "$TC_SERVICE" >/dev/null 2>&1
+        phase "stop-service" ok
+        note "$TC_SERVICE had no unit before this deployment; it is stopped and its unit removed."
+        note "the correct end state here is NOT-DEPLOYED, not a healthy service."
+    fi
     return 0
 }
 
@@ -775,14 +808,14 @@ verb_start_run() {
     [ -d /run/systemd/system ] || {
         phase "transient-unit" unavailable
         note "systemd is not booted here; no transient unit was created."
-        note "the command it WOULD have run: $interpreter -m tc_growth.cli deploy-run $run_id"
+        note "the command it WOULD have run: $interpreter -m tc_growth.cli deploy-run $run_id --target-config $TARGET_CONF"
         note "  working directory: $runtime/orchestrator"
         return "$EXIT_SYSTEMD_ABSENT"
     }
     run_clean systemd-run --collect --unit="$TC_UNIT_PREFIX-run-$run_id" \
         --uid="$TC_SERVICE_USER" --working-directory="$runtime/orchestrator" \
         --setenv=TC_DB_PATH="$TC_STORE_DB" \
-        "$interpreter" -m tc_growth.cli deploy-run "$run_id" \
+        "$interpreter" -m tc_growth.cli deploy-run "$run_id" --target-config "$TARGET_CONF" \
         || die "could not create the transient deployment unit"
     phase "transient-unit" ok
     note "$TC_UNIT_PREFIX-run-$run_id created, running from the root-owned runtime"

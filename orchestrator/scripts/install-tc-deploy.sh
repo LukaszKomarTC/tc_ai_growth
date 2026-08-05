@@ -31,6 +31,7 @@ PREFIX=""; APP_DIR=""; RELEASES_DIR=""; SERVICE=""; SERVICE_USER=""; PORT=""
 UNIT_PATH=""; INSPECTOR_DEST=""; SUDOERS_FILE=""; SNAPSHOT_DIR=""; UNIT_PREFIX=""
 STORE_DB=""; VENV=""; CONSOLE_ENV_FILE=""; SOURCE_DIR=""; RUNTIME_DIR=""
 PROVISION_VENV=0; PYTHON_FOR_VENV=""; VENV_SYSTEM_SITE=0
+TARGET_NAME=""; BACKUP_DIR=""; EVIDENCE_NAMESPACE=""; REMOTE_REF="origin/main"; DISPOSABLE=0
 
 usage() {
     cat <<'USAGE'
@@ -63,6 +64,11 @@ while [ $# -gt 0 ]; do
         --snapshot-dir) SNAPSHOT_DIR="${2-}"; shift 2 ;;
         --unit-prefix) UNIT_PREFIX="${2-}"; shift 2 ;;
         --runtime-dir) RUNTIME_DIR="${2-}"; shift 2 ;;
+        --target-name) TARGET_NAME="${2-}"; shift 2 ;;
+        --backup-dir) BACKUP_DIR="${2-}"; shift 2 ;;
+        --evidence-namespace) EVIDENCE_NAMESPACE="${2-}"; shift 2 ;;
+        --remote-ref) REMOTE_REF="${2-}"; shift 2 ;;
+        --disposable) DISPOSABLE=1; shift ;;
         --store-db) STORE_DB="${2-}"; shift 2 ;;
         --venv) VENV="${2-}"; shift 2 ;;
         --console-env-file) CONSOLE_ENV_FILE="${2-}"; shift 2 ;;
@@ -78,7 +84,8 @@ done
 [ "$(id -u)" -eq 0 ] || die "run as root: this installs root-owned machinery"
 
 for required in PREFIX APP_DIR RELEASES_DIR SERVICE SERVICE_USER PORT UNIT_PATH \
-                INSPECTOR_DEST SUDOERS_FILE SNAPSHOT_DIR UNIT_PREFIX RUNTIME_DIR; do
+                INSPECTOR_DEST SUDOERS_FILE SNAPSHOT_DIR UNIT_PREFIX RUNTIME_DIR \
+                TARGET_NAME BACKUP_DIR EVIDENCE_NAMESPACE; do
     [ -n "${!required}" ] || { usage >&2; die "missing --${required,,}" ; }
 done
 
@@ -243,6 +250,15 @@ TC_STORE_DB=$STORE_DB
 TC_VENV=$VENV
 TC_CONSOLE_ENV_FILE=$CONSOLE_ENV_FILE
 TC_RUNTIME_DIR=$RUNTIME_DIR
+# The remaining fields exist so the DEPLOYMENT RUNNER can reconstruct this exact target. Without
+# them `deploy-run` resolves production by default, so a disposable transient unit would execute
+# production constants — shell commands full of "probe" and Python quietly addressing the real
+# host. Root-owned and digest-covered like everything else here.
+TC_TARGET_NAME=$TARGET_NAME
+TC_BACKUP_DIR=$BACKUP_DIR
+TC_EVIDENCE_NAMESPACE=$EVIDENCE_NAMESPACE
+TC_REMOTE_REF=$REMOTE_REF
+TC_DISPOSABLE=$DISPOSABLE
 CONF
 chown root:root "$PREFIX/target.conf" && chmod 0644 "$PREFIX/target.conf" \
     || die "cannot secure target.conf"

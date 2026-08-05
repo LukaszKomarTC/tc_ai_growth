@@ -49,6 +49,7 @@ from dataclasses import dataclass
 __all__ = [
     "DeployRefused", "Target", "PRODUCTION", "make_disposable_target",
     "open_cli_target_gate", "note_http_boundary", "cli_gate_is_open", "http_boundary_latched",
+    "from_root_owned_config",
 ]
 
 _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
@@ -270,6 +271,52 @@ def make_disposable_target(**fields) -> Target:
     if not fields.get("disposable"):
         raise DeployRefused("make_disposable_target builds disposable targets only")
     return Target(**fields)
+
+
+def from_root_owned_config(path: str) -> Target:
+    """Reconstruct a target from the root-owned `target.conf` the privileged program installed.
+
+    Review blocker: `start-run` launched `deploy-run <id>`, and the ordinary CLI path resolves
+    PRODUCTION by default. So a transient unit created by a *disposable* target's helper would have
+    executed production constants — shell commands full of probe names and Python quietly
+    addressing the real host. The plan/target check caught it, but only by failing; the disposable
+    transient path could not run at all.
+
+    The identity therefore travels with the launch, from a file only root can write. This is not a
+    caller-supplied override: the CLI gate is still required, the file is the privileged program's
+    own root-owned config, and a config describing a NON-disposable target is refused here —
+    production is reached by being the default, never by being named.
+    """
+    values: dict[str, str] = {}
+    with open(path, encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            values[key.strip()] = value.strip()
+
+    if values.get("TC_DISPOSABLE") != "1":
+        raise DeployRefused(
+            f"{path} does not describe a disposable target; production is the default and is "
+            "never selected by naming it")
+    try:
+        return make_disposable_target(
+            name=values["TC_TARGET_NAME"], app_dir=values["TC_APP_DIR"],
+            releases_dir=values["TC_RELEASES_DIR"], backup_dir=values["TC_BACKUP_DIR"],
+            db_path=values["TC_STORE_DB"], venv=values["TC_VENV"],
+            service=values["TC_SERVICE"], unit_prefix=values["TC_UNIT_PREFIX"],
+            evidence_namespace=values["TC_EVIDENCE_NAMESPACE"],
+            port=values["TC_CONSOLE_PORT"],
+            remote_ref=values.get("TC_REMOTE_REF") or "origin/main",
+            privileged_prefix=os.path.dirname(os.path.abspath(path)),
+            runtime_dir=values["TC_RUNTIME_DIR"], unit_path=values["TC_UNIT_PATH"],
+            inspector_dest=values["TC_INSPECTOR_DEST"], sudoers_file=values["TC_SUDOERS_FILE"],
+            snapshot_dir=values["TC_SNAPSHOT_DIR"],
+            console_env_file=values.get("TC_CONSOLE_ENV_FILE") or "/dev/null",
+            service_user=values["TC_SERVICE_USER"])
+    except KeyError as exc:
+        raise DeployRefused(f"{path} is missing {exc.args[0]}") from exc
 
 
 def _reset_for_tests() -> None:

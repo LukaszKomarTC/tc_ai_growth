@@ -30,6 +30,7 @@
     python -m tc_growth.cli validation                   # Release 0.3 validation report (from docs/VALIDATION.md)
     python -m tc_growth.cli dashboard [port]             # read-only web view (127.0.0.1 only)
     python -m tc_growth.cli console [port]               # Operations Console (execute ops; 127.0.0.1 + token)
+    python -m tc_growth.cli deploy-run <id> [--target-config FILE]  # what the transient unit runs
     python -m tc_growth.cli deploy-harness <dir> [--tamper] [--keep] [--stand-in]  # build a DISPOSABLE deploy target and run the real chain against it
 
 `smoke` exercises a single host-side tool WITHOUT the AI runtime — the fastest way to surface
@@ -531,7 +532,7 @@ def cmd_validation() -> int:
 
 
 
-def cmd_deploy_run(run_id_raw: str) -> int:
+def cmd_deploy_run(run_id_raw: str, target_config: str | None = None) -> int:
     """WP-U4d: execute an ALREADY-AUTHORIZED deployment (issue #77 Decision 2).
 
     This is what the detached runner runs. It takes a run id — never a commit — because the
@@ -547,9 +548,23 @@ def cmd_deploy_run(run_id_raw: str) -> int:
     except ValueError:
         print("deploy-run takes the numeric id of a planned deploy run")
         return 2
-    store = open_store()
+    context = None
+    if target_config:
+        # The transient unit was created by a specific target's privileged helper, and says so by
+        # passing that helper's ROOT-OWNED config. Without this the runner resolves production by
+        # default, which is right for production and silently wrong for everything else.
+        from . import deploy_target
+
+        deploy_target.open_cli_target_gate()
+        try:
+            target = deploy_target.from_root_owned_config(target_config)
+        finally:
+            deploy_target.close_cli_target_gate()
+        context = deploy.context_for(target)
+        print(f"deploying target {target.name} ({target.evidence_namespace})")
+    store = open_store(context["db_path"]) if context else open_store()
     try:
-        outcome = deploy.execute(store, run_id)
+        outcome = deploy.execute(store, run_id, context=context)
     except deploy.DeployRefused as exc:
         print(f"refused: {exc}")
         return 2
@@ -695,7 +710,14 @@ def main(argv: list[str] | None = None) -> int:
         if not rest:
             print("Usage: deploy-run <planned-run-id>")
             return 1
-        return cmd_deploy_run(rest[0])
+        config = None
+        if "--target-config" in rest:
+            index = rest.index("--target-config")
+            if index + 1 >= len(rest):
+                print("--target-config needs the path to a root-owned target.conf")
+                return 1
+            config = rest[index + 1]
+        return cmd_deploy_run(rest[0], config)
     if cmd == "deploy-harness":
         positional = [a for a in rest if not a.startswith("--")]
         if not positional:

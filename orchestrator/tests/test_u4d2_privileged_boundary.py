@@ -624,7 +624,9 @@ def test_the_installer_refuses_an_interpreter_the_service_user_could_write(tmp_p
          "--inspector-dest", str(root / "host" / "insp.sh"),
          "--sudoers-file", str(root / "host" / "sudoers-x"),
          "--snapshot-dir", str(root / "host" / "snap"), "--unit-prefix", "tc-deploy-x",
-         "--runtime-dir", str(root / "priv" / "runtime"), "--venv", str(venv)],
+         "--runtime-dir", str(root / "priv" / "runtime"), "--venv", str(venv),
+         "--target-name", "probe", "--backup-dir", str(root / "backups"),
+         "--evidence-namespace", "disposable/probe", "--disposable"],
         capture_output=True, text=True, timeout=300)
     assert proc.returncode == 2
     assert "does not satisfy the boundary" in proc.stderr
@@ -821,3 +823,90 @@ def test_deploy_release_is_still_disabled(target):
     from tc_growth.core.actions import get_operation
 
     assert get_operation("deploy_release").enabled is False
+
+
+# --- the transient runner is bound to the target that launched it -------------------------------
+
+def test_the_transient_command_carries_the_targets_own_config(target):
+    """Review blocker, a product defect rather than a runbook one.
+
+    `start-run` launched `deploy-run <id>`, and the ordinary CLI path resolves PRODUCTION by
+    default. A transient unit created by a disposable target's helper would have executed
+    production constants — a runbook full of probe names with Python quietly addressing the real
+    host. The identity now travels with the launch, from a file only root can write.
+    """
+    staged_release(target)
+    assert run_verb(target, "apply", target.target_sha).returncode in (0, 3)
+    proc = run_verb(target, "start-run", "7")
+    assert proc.returncode in (0, 3), proc.stdout + proc.stderr
+    assert "--target-config" in proc.stdout
+    assert f"{target.target.privileged_prefix}/target.conf" in proc.stdout
+
+
+def test_the_runner_resolves_the_disposable_target_from_the_root_owned_config(target):
+    """Executed: the CLI is given the same config the transient unit would pass, and must address
+    the probe rather than production."""
+    staged_release(target)
+    assert run_verb(target, "apply", target.target_sha).returncode in (0, 3)
+    config = f"{target.target.privileged_prefix}/target.conf"
+
+    resolved = subprocess.run(
+        [str(Path(target.target.venv) / "bin" / "python"), "-c",
+         "import sys; from tc_growth import deploy, deploy_target;"
+         "deploy_target.open_cli_target_gate();"
+         "t = deploy_target.from_root_owned_config(sys.argv[1]);"
+         "print(t.name, t.app_dir, t.service, t.db_path, t.evidence_namespace)", config],
+        cwd=str(Path(target.target.runtime_dir) / target.target_sha / "orchestrator"),
+        capture_output=True, text=True, timeout=120,
+        env={"PATH": os.environ["PATH"], "HOME": "/root",
+             "PYTHONPATH": os.path.dirname(os.path.dirname(deploy.__file__))})
+    assert resolved.returncode == 0, resolved.stderr
+    name, app_dir, service, db_path, namespace = resolved.stdout.split()
+    assert name == "probe"
+    assert app_dir == target.target.app_dir
+    assert service == target.target.service
+    assert db_path == target.target.db_path
+    assert namespace == target.target.evidence_namespace
+    assert not app_dir.startswith("/opt/tc_ai_growth")
+    assert service != deploy_target.PRODUCTION.service
+
+
+def test_a_config_that_is_not_disposable_is_refused(target, tmp_path):
+    """Production is reached by being the default, never by being named. A config claiming to
+    describe production must not be a way to select it."""
+    config = tmp_path / "not-disposable.conf"
+    source = Path(f"{target.target.privileged_prefix}/target.conf").read_text()
+    config.write_text(source.replace("TC_DISPOSABLE=1", "TC_DISPOSABLE=0"))
+    deploy_target._reset_for_tests()
+    deploy_target.open_cli_target_gate()
+    try:
+        with pytest.raises(deploy.DeployRefused) as exc:
+            deploy_target.from_root_owned_config(str(config))
+        assert "does not describe a disposable target" in str(exc.value)
+    finally:
+        deploy_target._reset_for_tests()
+
+
+def test_rollback_names_the_correct_service_action_for_the_prior_state(target):
+    """Review blocker: rollback restored/removed files and then restarted unconditionally. On a
+    first deployment it removes a unit that did not exist and then restarts a service whose unit
+    is gone — which fails, and would have been reported as a rollback failure though the rollback
+    itself succeeded.
+
+    The decision is now taken from the recorded prior state and PRINTED before systemd is
+    consulted, so the branch is observable here rather than only on a host with a booted manager.
+    """
+    staged_release(target)
+
+    # First deployment: the unit did not exist before, so the correct action is STOP.
+    assert run_verb(target, "apply", target.target_sha).returncode in (0, 3)
+    proc = run_verb(target, "rollback")
+    assert "phase=service-action" in proc.stdout and "status=stop" in proc.stdout, proc.stdout
+    assert "NOT-DEPLOYED" in proc.stdout
+    assert "restart-service" not in proc.stdout
+
+    # Second deployment on top of an existing unit: the correct action is RESTART.
+    Path(target.target.unit_path).write_text("[Unit]\nDescription=pre-existing\n")
+    assert run_verb(target, "apply", target.target_sha).returncode in (0, 3)
+    proc = run_verb(target, "rollback")
+    assert "status=restart" in proc.stdout, proc.stdout
