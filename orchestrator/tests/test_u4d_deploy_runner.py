@@ -604,3 +604,74 @@ def test_the_plan_states_exactly_what_the_backup_proof_guarantees():
     assert "Equal row counts are NOT accepted as proof" in backup_step["detail"]
     assert "row-content digest match" in plan["rollback"]
     assert "not\n" not in plan["rollback"]
+
+
+# --- enablement gate criterion 2: the privilege surface is ONE fixed escalation ---------------
+
+def test_the_runner_escalates_exactly_once_and_only_through_the_wrapper():
+    """The runner already IS the service user (the Console unit sets User=tcgrowth), so every
+    `sudo -u tcgrowth ...` was a no-op that nonetheless required a sudoers rule wide enough to
+    run arbitrary git and python. All of them are gone. What remains is one fixed root-owned
+    wrapper taking a validated SHA and nothing else."""
+    import ast
+
+    tree = ast.parse(open(deploy.__file__).read())
+    sudo_calls = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.List) and node.elts:
+            first = node.elts[0]
+            if isinstance(first, ast.Constant) and first.value == "sudo":
+                sudo_calls.append([ast.unparse(e) for e in node.elts])
+    assert len(sudo_calls) == 1, f"expected exactly one escalation, found {sudo_calls}"
+    argv = sudo_calls[0]
+    assert argv == ["'sudo'", "'-n'", "DEPLOY_WRAPPER", "sha"], argv
+    assert deploy.DEPLOY_WRAPPER == "/usr/local/bin/tc-deploy-release.sh"
+
+
+def test_the_privileged_step_refuses_to_run_as_root(monkeypatch):
+    """Guarding the escalation, not the whole run: a deployment whose steps never escalate has
+    nothing to defend, and the property is a statement about THIS step."""
+    monkeypatch.setattr(deploy.os, "geteuid", lambda: 0)
+    with pytest.raises(deploy.DeployRefused) as exc:
+        deploy.ex_release(SHA, {"db_path": "x", "venv": "y"})
+    assert "must not run as root" in str(exc.value)
+
+
+def test_a_root_refusal_inside_a_step_ends_the_run_as_refused_not_as_a_defect(store, monkeypatch):
+    monkeypatch.setattr(deploy.os, "geteuid", lambda: 0)
+    run_id, _ = _plan(store)
+    ctx = {"db_path": os.environ["TC_DB_PATH"], "venv": "v"}
+    assert deploy.execute(store, run_id, context=ctx,
+                          executors=_executors(release=deploy.ex_release)) == "refused"
+    assert "must not run as root" in store.get_deploy_run(run_id)["outcome"]
+
+
+WRAPPER = os.path.join(os.path.dirname(os.path.dirname(deploy.__file__)),
+                       "scripts", "tc-deploy-release.sh")
+
+
+@pytest.mark.parametrize("bad", [
+    "", "main", "HEAD", "684681c", SHA.upper(), SHA + "a", "; rm -rf /", "../../etc/passwd",
+    "0123456789abcdef0123456789abcdef0123456g",
+])
+def test_the_root_wrapper_validates_the_sha_itself(bad):
+    """Root-owned code must not trust its caller. Anything that reaches sudo can pass any string;
+    the wrapper is what decides that only a 40-hex SHA is meaningful."""
+    proc = subprocess.run(["bash", WRAPPER, bad], capture_output=True, text=True, timeout=30)
+    assert proc.returncode != 0, f"the wrapper accepted {bad!r}"
+    assert "tc-deploy-release" in proc.stderr
+
+
+@pytest.mark.parametrize("argv", [[], [SHA, "--force"], [SHA, SHA]])
+def test_the_root_wrapper_refuses_anything_but_one_argument(argv):
+    proc = subprocess.run(["bash", WRAPPER, *argv], capture_output=True, text=True, timeout=30)
+    assert proc.returncode != 0, f"the wrapper accepted {argv}"
+    assert "exactly one argument" in proc.stderr
+
+
+def test_the_root_wrapper_refuses_a_sha_with_no_release_worktree():
+    """A well-formed SHA is still refused when the checkout it names does not exist: the wrapper
+    never creates one, so it cannot be talked into materialising an arbitrary tree."""
+    proc = subprocess.run(["bash", WRAPPER, OTHER_SHA], capture_output=True, text=True, timeout=30)
+    assert proc.returncode != 0
+    assert "no release worktree" in proc.stderr
