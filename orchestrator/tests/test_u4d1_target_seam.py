@@ -424,3 +424,74 @@ def test_a_disposable_context_reads_no_environment_at_all(tmp_path, monkeypatch)
     assert "/tmp/inherited" not in json.dumps(ctx, default=str)
     assert ctx["child_env"]["TC_DB_PATH"] == target.db_path
     assert "PYTHONPATH" not in ctx["child_env"]
+
+
+# --- the acceptance run refuses production before it mutates anything ---------------------------
+
+def _acceptance_fields(tmp_path, **overrides):
+    fields = {
+        "name": "vpsprobe", "app_dir": str(tmp_path / "app"),
+        "releases_dir": str(tmp_path / "releases"), "backup_dir": str(tmp_path / "backups"),
+        "db_path": str(tmp_path / "state" / "store.db"), "venv": str(tmp_path / "venv"),
+        "service": "tc-console-vpsprobe", "unit_prefix": "tc-deploy-vpsprobe",
+        "evidence_namespace": "disposable/vpsprobe", "port": "8399",
+        "privileged_prefix": str(tmp_path / "priv" / "lib"),
+        "runtime_dir": str(tmp_path / "priv" / "runtime"),
+        "unit_path": str(tmp_path / "host" / "probe.service"),
+        "inspector_dest": str(tmp_path / "host" / "insp.sh"),
+        "sudoers_file": str(tmp_path / "host" / "sudoers-probe"),
+        "snapshot_dir": str(tmp_path / "host" / "snapshots"),
+        "console_env_file": str(tmp_path / "host" / "probe.env"),
+    }
+    fields.update(overrides)
+    return fields
+
+
+def test_the_acceptance_preflight_accepts_a_genuinely_disposable_target(tmp_path):
+    """The control. Without it, a guard that refuses everything would look like a working guard."""
+    from tc_growth import deploy_acceptance
+
+    deploy_target.open_cli_target_gate()
+    target = deploy_target.make_disposable_target(**_acceptance_fields(tmp_path))
+    assert deploy_acceptance.assert_nothing_production(target)
+
+
+@pytest.mark.parametrize("bad", [
+    {"app_dir": "/opt/tc_ai_growth/app"},
+    {"releases_dir": "/opt/tc_ai_growth/releases/x"},
+    {"unit_path": "/etc/systemd/system/tc-console.service"},
+    {"sudoers_file": "/etc/sudoers.d/tc-console-scan"},
+    {"privileged_prefix": "/usr/local/lib/tc-deploy"},
+    {"inspector_dest": "/usr/local/bin/wp-integrity-scan.sh"},
+    {"snapshot_dir": "/var/backups/tc-console"},
+    {"service": "tc-console"},
+    {"unit_prefix": "tc-deploy"},
+    {"port": "8385"},
+    {"evidence_namespace": "production"},
+])
+def test_the_acceptance_preflight_refuses_any_production_value(tmp_path, bad):
+    """Criterion 2 of the VPS gate, and the reason it exists: the last runbook had every SHELL
+    value saying "probe" while Python still resolved production. This checks the RESOLVED target,
+    and it runs before a single directory is created — a guard that fires after provisioning has
+    already done the thing it was meant to prevent."""
+    from tc_growth import deploy_acceptance
+
+    deploy_target.open_cli_target_gate()
+    try:
+        target = deploy_target.make_disposable_target(**_acceptance_fields(tmp_path, **bad))
+    except deploy.DeployRefused:
+        return                       # the Target itself refused it, which is also fail-closed
+    with pytest.raises(deploy_acceptance.AcceptanceRefused) as exc:
+        deploy_acceptance.assert_nothing_production(target)
+    assert "would touch production" in str(exc.value)
+
+
+def test_the_acceptance_run_requires_root(monkeypatch, tmp_path):
+    """It installs root-owned machinery. Refusing is better than a half-provisioned probe."""
+    from tc_growth import deploy_acceptance
+
+    if os.geteuid() == 0:
+        monkeypatch.setattr(os, "geteuid", lambda: 1000)
+    with pytest.raises(deploy_acceptance.AcceptanceRefused) as exc:
+        deploy_acceptance.run(tmp_path / "nope")
+    assert "run it as root" in str(exc.value)

@@ -313,12 +313,19 @@ materialize_runtime() {
 # Grafts are deliberately not addressed here: they rewrite a commit's PARENTS, not its tree, and
 # this reads trees. Alternates cannot help an attacker either — objects are looked up by exact
 # oid, and an extra object source does not change which oid a tree entry names.
+#
+# `safe.directory` is set to the CONFIGURED app dir, and only that. Root is deliberately reading a
+# repository the service account owns — that is the whole arrangement — and git's dubious-ownership
+# guard exists to stop the accidental case. Scoping it to one root-owned constant keeps the
+# intentional read working without disabling the guard globally. The read is not trusted on its
+# own: what comes out is compared against the runtime tree digest by digest.
 git_ro() {
     env -i PATH="$PATH" HOME=/root LANG=C.UTF-8 \
         GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_TERMINAL_PROMPT=0 \
         GIT_NO_REPLACE_OBJECTS=1 \
         git --no-replace-objects \
-            -c core.fsmonitor= -c core.hooksPath=/dev/null -c core.pager=cat "$@"
+            -c core.fsmonitor= -c core.hooksPath=/dev/null -c core.pager=cat \
+            -c safe.directory="$TC_APP_DIR" "$@"
 }
 
 verify_against_commit() {

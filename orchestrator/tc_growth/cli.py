@@ -31,6 +31,7 @@
     python -m tc_growth.cli dashboard [port]             # read-only web view (127.0.0.1 only)
     python -m tc_growth.cli console [port]               # Operations Console (execute ops; 127.0.0.1 + token)
     python -m tc_growth.cli deploy-run <id> [--target-config FILE]  # what the transient unit runs
+    python -m tc_growth.cli deploy-vps-acceptance <dir> [--keep]  # bounded acceptance run for a DISPOSABLE target
     python -m tc_growth.cli deploy-harness <dir> [--tamper] [--keep] [--stand-in]  # build a DISPOSABLE deploy target and run the real chain against it
 
 `smoke` exercises a single host-side tool WITHOUT the AI runtime — the fastest way to surface
@@ -624,6 +625,35 @@ def cmd_deploy_harness(root_raw: str, *, tamper: bool, keep: bool,
             deploy_harness.teardown(disposable)
 
 
+def cmd_deploy_vps_acceptance(root_raw: str, *, keep: bool) -> int:
+    """WP-U4d.1: the bounded acceptance run for a DISPOSABLE target.
+
+    One command, so nobody assembles plan rows, permissions, services or failure injection by hand
+    — the previous runbook asked for exactly that and review found five defects in it. It refuses,
+    before mutating anything, if any resolved value is production's.
+
+    Exit 0 means every criterion this machine can execute passed. Where systemd is not booted the
+    manager-level phases are reported as NOT EXECUTED and the exit code is 3, because a run that
+    could not restart a service has not accepted a deployment.
+    """
+    from . import deploy_acceptance
+
+    root = Path(root_raw).expanduser()
+    if root.exists() and any(root.iterdir()):
+        print(f"refusing to use a non-empty directory: {root}")
+        return 2
+    try:
+        report = deploy_acceptance.run(root, keep=keep)
+    except deploy_acceptance.AcceptanceRefused as exc:
+        print(f"REFUSED: {exc}")
+        return 2
+    print(deploy_acceptance.report_text(report))
+    if keep:
+        (root / "acceptance-report.json").write_text(json.dumps(report, indent=2, default=str))
+        print(f"\nreport JSON: {root}/acceptance-report.json")
+    return 0 if not report["deferred"] else 3
+
+
 def cmd_decisions() -> int:
     from . import store
 
@@ -718,6 +748,12 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
             config = rest[index + 1]
         return cmd_deploy_run(rest[0], config)
+    if cmd == "deploy-vps-acceptance":
+        positional = [a for a in rest if not a.startswith("--")]
+        if not positional:
+            print("Usage: deploy-vps-acceptance <empty-directory> [--keep]")
+            return 1
+        return cmd_deploy_vps_acceptance(positional[0], keep="--keep" in rest)
     if cmd == "deploy-harness":
         positional = [a for a in rest if not a.startswith("--")]
         if not positional:
