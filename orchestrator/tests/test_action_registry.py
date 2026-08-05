@@ -41,10 +41,21 @@ def test_tool_bound_entries_agree_with_the_phase_gate():
 
 
 def test_write_operations_target_staging_only_and_document_rollback():
+    """The staging-only cap is about the CUSTOMER'S SITE. A platform-surface operation (WP-U4d
+    deployment) writes this platform's own host and provably never the site, so it is held to
+    its own boundary instead — and, being write-capable, it must still document rollback and
+    must not be offered until it has been proven (enabled=False)."""
     for op in OPERATIONS:
         if op.min_phase > Phase.READ_ONLY:
-            assert op.environments == ("staging",), op.id
             assert op.rollback_description, op.id
+            if op.target_surface == "site":
+                assert op.environments == ("staging",), op.id
+            else:
+                assert op.target_surface == "platform", op.id
+                assert op.category is Category.PLATFORM, op.id
+                assert not op.enabled, (
+                    f"{op.id}: a platform-write operation must not be enabled before its "
+                    "acceptance — see #77 (staging proof required before first production use)")
 
 
 def test_foundation_lists_only_accepted_operations():
@@ -54,10 +65,13 @@ def test_foundation_lists_only_accepted_operations():
     their own capability + acceptance). Set extended DELIBERATELY per increment:
     U3b adds redeliver_latest_report (read-only re-send of a stored immutable artifact; accepted
     as part of the U3b in-browser acceptance, like SMTP/scan rode the MVP acceptance)."""
-    assert {op.id for op in OPERATIONS} == {"smtp_test", "run_integrity_scan",
-                                            "redeliver_latest_report"}
+    assert {op.id for op in OPERATIONS if op.enabled} == {"smtp_test", "run_integrity_scan",
+                                                         "redeliver_latest_report"}
     assert [op.id for op in OPERATIONS if op.category is Category.EXECUTION] == []
-    assert all(op.min_phase is Phase.READ_ONLY for op in OPERATIONS)
+    assert all(op.min_phase is Phase.READ_ONLY for op in OPERATIONS if op.enabled)
+    # Anything present but NOT enabled is a reviewable definition, not authority. U4d's
+    # deploy_release is the only such entry and stays disabled until its staging proof.
+    assert {op.id for op in OPERATIONS if not op.enabled} == {"deploy_release"}
 
 
 def test_duplicate_ids_rejected():

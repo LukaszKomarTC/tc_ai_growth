@@ -8,6 +8,7 @@ the agent updates a known issue instead of rediscovering it every week.
 from __future__ import annotations
 
 import datetime as dt
+import json
 import sqlite3
 from dataclasses import dataclass
 
@@ -899,3 +900,63 @@ def set_artifact_delivery_by_hash(conn: sqlite3.Connection, content_sha256: str,
         (status, _now(), content_sha256))
     conn.commit()
     return cur.rowcount > 0
+
+
+# --------------------------------------------------------------------- WP-U4d deploy runs
+
+def plan_deploy(conn: sqlite3.Connection, *, sha: str, plan: dict, plan_digest: str,
+                requested_by: str) -> int:
+    """Record an authorized deployment target. The ROW is the authorization: `execute` refuses
+    any run that is not `planned`, and the triggers refuse to let `sha`, `plan` or `plan_digest`
+    be edited afterwards, so a reviewed plan can never come to execute a different commit."""
+    cur = conn.execute(
+        "INSERT INTO deploy_runs (sha, requested_at, requested_by, plan, plan_digest, status) "
+        "VALUES (?, ?, ?, ?, ?, 'planned')",
+        (sha, _now(), requested_by, json.dumps(plan, sort_keys=True, ensure_ascii=False),
+         plan_digest))
+    conn.commit()
+    return int(cur.lastrowid)
+
+
+def get_deploy_run(conn: sqlite3.Connection, run_id: int) -> dict | None:
+    row = conn.execute("SELECT * FROM deploy_runs WHERE id = ?", (run_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def list_deploy_runs(conn: sqlite3.Connection, *, limit: int = 20) -> list[dict]:
+    return [dict(r) for r in conn.execute(
+        "SELECT * FROM deploy_runs ORDER BY id DESC LIMIT ?", (limit,))]
+
+
+def start_deploy_run(conn: sqlite3.Connection, run_id: int, *, pid: int) -> bool:
+    """planned -> running, exactly once. The WHERE clause is the concurrency control: two
+    runners racing on the same row means only one wins and the loser refuses to proceed."""
+    cur = conn.execute(
+        "UPDATE deploy_runs SET status='running', started_at=?, runner_pid=? "
+        "WHERE id=? AND status='planned'", (_now(), int(pid), run_id))
+    conn.commit()
+    return cur.rowcount == 1
+
+
+def finish_deploy_run(conn: sqlite3.Connection, run_id: int, *, status: str,
+                      outcome: str) -> None:
+    if status not in ("succeeded", "failed", "refused"):
+        raise ValueError(f"not a terminal deploy status: {status}")
+    conn.execute("UPDATE deploy_runs SET status=?, finished_at=?, outcome=? WHERE id=?",
+                 (status, _now(), outcome, run_id))
+    conn.commit()
+
+
+def record_deploy_step(conn: sqlite3.Connection, run_id: int, *, seq: int, name: str,
+                       status: str, summary: str, detail: str | None = None) -> int:
+    cur = conn.execute(
+        "INSERT INTO deploy_steps (run_id, seq, at, name, status, summary, detail) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (run_id, int(seq), _now(), name, status, summary, detail))
+    conn.commit()
+    return int(cur.lastrowid)
+
+
+def list_deploy_steps(conn: sqlite3.Connection, run_id: int) -> list[dict]:
+    return [dict(r) for r in conn.execute(
+        "SELECT * FROM deploy_steps WHERE run_id = ? ORDER BY seq", (run_id,))]

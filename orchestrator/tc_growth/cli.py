@@ -528,6 +528,33 @@ def cmd_validation() -> int:
     return 0
 
 
+
+def cmd_deploy_run(run_id_raw: str) -> int:
+    """WP-U4d: execute an ALREADY-AUTHORIZED deployment (issue #77 Decision 2).
+
+    This is what the detached runner runs. It takes a run id — never a commit — because the
+    authorized target lives on the planned row where the store's triggers keep it immutable.
+    There is deliberately no `--sha` here: if there were, a mistyped or malicious invocation
+    could deploy something nobody reviewed.
+    """
+    from . import deploy
+    from .store import open_store
+
+    try:
+        run_id = int(run_id_raw)
+    except ValueError:
+        print("deploy-run takes the numeric id of a planned deploy run")
+        return 2
+    store = open_store()
+    try:
+        outcome = deploy.execute(store, run_id)
+    except deploy.DeployRefused as exc:
+        print(f"refused: {exc}")
+        return 2
+    print(outcome)
+    return 0 if outcome == "succeeded" else 1
+
+
 def cmd_decisions() -> int:
     from . import store
 
@@ -610,6 +637,11 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_report_redeliver_latest()
     if cmd == "decisions":
         return cmd_decisions()
+    if cmd == "deploy-run":
+        if not rest:
+            print("Usage: deploy-run <planned-run-id>")
+            return 1
+        return cmd_deploy_run(rest[0])
     if cmd == "case-note":
         if len(rest) < 2:
             print('Usage: case-note <ref> "<text>"')
