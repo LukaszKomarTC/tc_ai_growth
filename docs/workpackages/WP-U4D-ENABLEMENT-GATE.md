@@ -55,21 +55,22 @@ sudo -n /usr/local/bin/tc-deploy-release.sh apply <40-hex-sha>
 `test_the_runner_escalates_exactly_once_and_only_through_the_wrapper` parses the module's AST and
 fails if a second `sudo` argv list ever appears, or if this one gains an argument.
 
-### The wrapper (`orchestrator/scripts/tc-deploy-release.sh`, installed root-owned 0755)
+### The privileged program (`orchestrator/scripts/tc-deploy-release.sh`, installed root-owned 0755)
 
-- Takes **exactly one argument**, refusing zero or two.
-- Validates it as 40 lowercase hex **itself**. Root-owned code does not trust its caller: anything
-  that can reach `sudo` can pass any string, so the wrapper — not the runner — is what decides
-  that only a SHA is meaningful.
+- **Two fixed verbs and nothing else**: `apply <40-hex-sha>` and `rollback`. An unknown verb, a
+  missing SHA, an extra argument, or a SHA passed to `rollback` are all refused.
+- Validates the SHA **itself**. Root-owned code does not trust its caller: anything that can reach
+  `sudo` can pass any string, so this program — not the runner — decides what is meaningful.
 - Refuses a SHA with **no existing release worktree**. It never creates one, so it cannot be
   talked into materialising an arbitrary tree.
-- Checks that the worktree's `HEAD` equals the requested SHA — as a cheap sanity check that the
-  caller staged what it claims, **explicitly not** as a content-integrity or clean-worktree
+- Checks that the worktree's `HEAD` equals the requested SHA — a cheap sanity check that the
+  caller staged what it claims, **explicitly not** a content-integrity or clean-worktree
   guarantee (see the blocker below).
-- Takes no path, service, branch or flag; never sources, evals or interpolates the argument.
-- `--rollback` is a separate entry point taking **no SHA at all** — nothing to choose, so nothing
-  to get wrong — and executes the same root-owned machinery, never a script discovered through
-  systemd state.
+- **Ignores the caller's environment.** Every path, user and service name is an internal
+  constant; the child starts via `env -i` with a constructed minimal environment, so exported
+  `TC_*` values are noise rather than authority.
+- `rollback` takes **no argument at all** — nothing to choose, so nothing to get wrong — restores
+  from the root-owned snapshot directory, and never discovers a script through systemd state.
 
 ### The blocker found in review, and what actually fixes it
 
