@@ -48,6 +48,28 @@ four PR descriptions calling it working. The recurring shape: *the explanation o
 property shipped before the property existed, and the tests were written to check the
 explanation.*
 
+### What is left BROKEN on `main` by this reduction — stated, not buried
+
+Withdrawing the privileged surface meant reverting `tc_growth/deploy.py` to its merged state, so
+that nothing in PR #79 references a program the PR does not ship. The direct consequence:
+
+> **Defect 1 (over-escalation) is UN-FIXED on `main`.** The merged runner still wraps git,
+> `python -m tc_growth.cli` and the deploy script in `sudo -u tcgrowth` — no-ops that would
+> nonetheless require a sudoers rule wide enough to run `python -m <anything>`.
+
+**Why that is acceptable right now, precisely:** `deploy_release` is `enabled=False`, the Console
+refuses the POST server-side, and the runner has never executed on any target — so no code path
+reaches those calls, and no sudoers rule granting them has ever been installed. The defect is
+latent in source, not live on the host.
+
+**Why it is not fixed here:** the privilege reduction and the helper redesign touch the same
+code. Landing half of it would leave `main` in a state whose safety argument depends on which
+half — exactly the "explanation outruns implementation" failure this reduction exists to end.
+
+**It returns with the successor PR**, as part of the single reviewed chain. Anyone reading this
+document before then should assume the runner's privilege surface is the merged one, not the one
+described in PR #79's withdrawn rounds.
+
 ### What survives, and where it lives
 
 `orchestrator/scripts/lib/permission-guard.sh` — the numeric write-bit predicate, alone, with
