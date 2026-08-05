@@ -135,6 +135,43 @@ of it was written.
 - Rollback restores from `/var/backups/tc-console`, root-owned and ownership-checked, and takes
   no argument at all.
 
+### Round 3: the permission guard accepted writable paths
+
+The ownership check was written as a glob:
+
+```sh
+"root:root "[0-7][0-57][0-57]
+```
+
+`[0-57]` is not "0 through 5, or 7". It is the character set `{0,1,2,3,4,5,7}` — which includes
+**2, 3 and 7, every one of them carrying a write bit**. So `0777`, `0775`, `0757`, `0733` and
+`0702` all passed a check whose own error message said *"not group/other writable"*. A writable
+`$ROOT_LIB` lets the service user replace the helper or the manifest wholesale, which defeats the
+entire trust anchor.
+
+**A shell character range cannot express "no write bit".** The fix is a numeric mask:
+
+```sh
+mode_has_write_bits() {
+    local mode="$1"
+    [ -n "$mode" ] || return 0                  # unreadable mode => unsafe
+    case "$mode" in *[!0-7]*) return 0 ;; esac  # not octal => unsafe
+    (( 8#$mode & 8#22 ))                        # g+w | o+w
+}
+```
+
+One predicate, **byte-identical in the privileged program and the installer**, with a test that
+fails if the two copies drift. Every guarded path — `$ROOT_LIB`, the helper, the manifest, the
+backup directory, and each install parent — goes through it.
+
+**Why source-string assertions were not enough**, and this is the lesson worth keeping: my earlier
+tests asserted that the guard *existed* and that it *mentioned* ownership. The broken glob passed
+all of them, because it looked correct. The new tests build real directories at `0777`, `0775`,
+`0757`, `0733`, `0722`, `0702`, `0707`, `0770`, `0666`, `0622`, `0606`, `0660` and run **the actual
+extracted shell function** against them, plus `0755`, `0750`, `0700`, `0644`, `0640`, `0600`,
+`0555`, `0500` on the accept side, plus malformed and empty modes on the fail-closed side. *A
+security check must be executed against the thing it is meant to reject, not read.*
+
 ### The sudoers rule
 
 ```

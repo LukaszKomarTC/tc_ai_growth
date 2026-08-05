@@ -707,7 +707,7 @@ def test_the_rollback_branch_does_not_discover_code_through_systemd():
 def test_the_privileged_machinery_lives_outside_the_repository():
     src = _wrapper_source()
     assert "/usr/local/lib/tc-deploy" in src
-    assert "assert_root_owned" in src, "ownership must be checked at invocation, not assumed"
+    assert "require_root_owned" in src, "ownership must be checked at invocation, not assumed"
 
 
 def test_the_wrapper_refuses_when_its_machinery_is_missing_or_not_root_owned(tmp_path):
@@ -792,7 +792,7 @@ def test_the_privileged_program_verifies_its_helper_against_a_root_owned_digest(
     src = _wrapper_source()
     assert "MANIFEST" in src
     assert "sha256sum --check" in src, "a swapped helper must be detected at every invocation"
-    assert 'assert_root_owned "$ROOT_LIB" "directory"' in src, \
+    assert 'require_root_owned "$ROOT_LIB" "directory"' in src, \
         "a root-owned file in a writable directory can be replaced wholesale"
 
 
@@ -842,3 +842,79 @@ def test_the_installer_is_not_reachable_from_the_runner_or_the_console():
     for module in (deploy.__file__,
                    os.path.join(os.path.dirname(deploy.__file__), "console.py")):
         assert "install-tc-deploy" not in open(module).read()
+
+# --- PR #79 round 3: the permission predicate, exercised for real ----------------------------
+
+def _predicate_block(path: str) -> str:
+    src = open(path).read()
+    start = src.index("# --- BEGIN shared permission predicate")
+    end = src.index("# --- END shared permission predicate ---") + len(
+        "# --- END shared permission predicate ---")
+    return src[start:end]
+
+
+def test_the_permission_predicate_is_byte_identical_in_both_scripts():
+    """Criterion 4: one proven predicate, used everywhere, so the two copies cannot drift."""
+    assert _predicate_block(WRAPPER) == _predicate_block(INSTALLER)
+
+
+def _run_predicate(mode: str, tmp_path) -> bool:
+    """Execute the ACTUAL shell function against a real path with a real mode.
+
+    Source-string assertions could not have caught the original defect — the broken glob *looked*
+    correct. Only running it against 0777 does.
+    """
+    target = tmp_path / f"probe-{mode}"
+    target.mkdir()
+    os.chmod(target, int(mode, 8))
+    script = (_predicate_block(WRAPPER) + "\n"
+              'm="$(stat -c %a "$1")"\n'
+              'if mode_has_write_bits "$m"; then echo UNSAFE; else echo SAFE; fi\n')
+    proc = subprocess.run(["bash", "-c", script, "bash", str(target)],
+                          capture_output=True, text=True, timeout=30)
+    assert proc.returncode == 0, proc.stderr
+    return proc.stdout.strip() == "SAFE"
+
+
+@pytest.mark.parametrize("mode", ["777", "775", "757", "733", "722", "702", "707", "770",
+                                  "666", "622", "606", "660"])
+def test_every_group_or_other_writable_mode_is_REJECTED(mode, tmp_path):
+    """The exact list from the review, plus the o+w-only and g+w-only cases. The old glob
+    `[0-7][0-57][0-57]` accepted 2, 3 and 7 in either position — 0777 passed a check whose error
+    message claimed it was rejecting exactly that."""
+    assert not _run_predicate(mode, tmp_path), f"mode {mode} was accepted but is writable"
+
+
+@pytest.mark.parametrize("mode", ["755", "750", "700", "644", "640", "600", "555", "500"])
+def test_safe_modes_are_ACCEPTED(mode, tmp_path):
+    assert _run_predicate(mode, tmp_path), f"mode {mode} was rejected but is safe"
+
+
+def test_the_old_broken_glob_is_gone_from_both_scripts():
+    """Checked on CODE only — the comment explaining the defect legitimately quotes the broken
+    range, and a test that forbade the explanation would push the reasoning out of the file."""
+    for path in (WRAPPER, INSTALLER):
+        code = [ln for ln in open(path).read().splitlines() if not ln.strip().startswith("#")]
+        assert not any("[0-57]" in ln for ln in code), \
+            f"{path} still encodes write bits with a character range"
+
+
+def test_a_malformed_or_empty_mode_is_treated_as_unsafe(tmp_path):
+    """Fail closed: if the mode cannot be read or is not octal, refuse rather than assume."""
+    script = (_predicate_block(WRAPPER) + "\n"
+              'if mode_has_write_bits "$1"; then echo UNSAFE; else echo SAFE; fi\n')
+    for bogus in ("", "abc", "9", "75x", "0o755"):
+        proc = subprocess.run(["bash", "-c", script, "bash", bogus],
+                              capture_output=True, text=True, timeout=30)
+        assert proc.stdout.strip() == "UNSAFE", f"{bogus!r} was treated as safe"
+
+
+def test_every_checked_path_uses_the_same_predicate():
+    """Criterion 4: directory, helper, manifest and backup dir all go through one function."""
+    src = _wrapper_source()
+    for target in ('"$ROOT_LIB" "directory"', '"$DEPLOY_SCRIPT" "helper"',
+                   '"$MANIFEST" "manifest"', '"$BACKUP_DIR" "snapshot directory"'):
+        assert f"require_root_owned {target}" in src, f"not guarded: {target}"
+    assert "mode_has_write_bits" in src
+    inst = open(INSTALLER).read()
+    assert "mode_has_write_bits" in inst, "the installer must use the same predicate"
