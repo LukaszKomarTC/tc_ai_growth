@@ -52,18 +52,39 @@ verb surface, and the privileged program runs acceptance code only from root-own
 verified, exactly as `start-run` already does for the deploy runner. Extending the sudoers
 surface is part of this work package's review, not a side effect.
 
+## The trust boundary on the verdict (review of head `f40a20a`)
+
+The durable phase rows live in the ordinary store, which the service account can write. The rows
+alone cannot establish **who** produced the evidence, so a positive verdict must be attested by
+**root** and be unforgeable by the application layer. The attestation is a **root-owned receipt
+file** whose authenticity rests on filesystem ownership — the same anchor the whole chain uses,
+not a shared secret (a secret `tcgrowth` could read to verify, it could also use to forge). Root
+seals `<RECEIPTS_DIR>/<id>.receipt` (root-owned, not group/other-writable, outside any disposable
+tree); the Console shows `PASS`/`FAILED SAFELY` only when a root-owned receipt for the run exists,
+its phase digest equals a digest recomputed over the durable rows, and its verdict agrees with
+what those rows imply. Anything else is `BLOCKED`. `tcgrowth` cannot create a root-owned file, so
+it cannot manufacture a trusted positive verdict however freely it writes the store.
+
 ## Increments
 
-1. **The durable run and the owner surface** — acceptance runs and phases as store tables (the
-   channel that makes streaming and restart-reconnection durable); the registered operation with
-   preview, CSRF/session protection and explicit approval; the run page that streams phases and
-   reconnects by id; the verdict function with `BLOCKED`-over-deferred pinned by tests; launch
-   through the privileged seam, honestly `BLOCKED` where machinery is absent.
-2. **The privileged verb** — `start-acceptance <id>` on the one privileged program, running the
-   bounded acceptance from root-owned verified code as a transient unit; the sudoers surface
-   extended by exactly that verb; boundary tests through the real root program.
-3. **The on-host proof** — the owner's browser session on the VPS executing Acceptance A and B
-   criteria in one run.
+1. **The durable run and the owner surface (done, PR #81 `f40a20a`).** Acceptance runs and phases
+   as store tables; the registered operation with preview, CSRF/session protection and explicit
+   two-step approval; the run page that streams phases and reconnects by id; the verdict function
+   with `BLOCKED`-over-deferred pinned; launch through the privileged seam, honestly `BLOCKED`
+   where machinery is absent.
+2. **The privileged verb and the trust boundary (done, this increment).** `start-acceptance <id>`
+   on the one privileged program, running the acceptance **as root from the root-owned runtime**
+   (the harness is `tc_growth` code, so root must run it from code the service user cannot edit) —
+   the sudoers surface extended by exactly that verb, `systemd-run` still never granted. The
+   root-owned verdict receipt and the Console's attested-verdict display, with executed forgery,
+   digest-substitution, cross-run, non-root-ownership and unattested-positive cases. The
+   unprivileged launcher can only ever record a launch refusal and `BLOCKED`; it never finalises
+   a positive verdict.
+3. **The on-host proof (outstanding).** The owner's browser session on the VPS executing
+   Acceptance A and B criteria in one run: the full engine acceptance driven end-to-end through
+   `start-acceptance` from a real root-owned runtime, with a booted service manager so the six
+   systemd phases execute and the sealed receipt reads `PASS`. Off-host, `start-acceptance`
+   refuses for want of a `current` runtime and every launch is honestly `BLOCKED`.
 
 ## Held throughout
 

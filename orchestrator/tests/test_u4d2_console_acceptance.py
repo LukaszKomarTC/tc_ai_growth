@@ -402,3 +402,219 @@ def test_the_phase_vocabulary_is_single_sourced():
     assert set(deploy_acceptance.SYSTEMD_PHASES) <= set(deploy_acceptance.PHASE_ORDER)
     assert set(acceptance_run.SAFETY_PHASES) <= set(deploy_acceptance.PHASE_ORDER)
     assert len(deploy_acceptance.PHASE_ORDER) == len(set(deploy_acceptance.PHASE_ORDER))
+
+
+# --- increment 2: the trust boundary — a positive verdict is unforgeable by tcgrowth --------
+
+import os  # noqa: E402 - kept beside the trust tests that use it
+
+
+def _all_ok_phases(offset: int = 2):
+    """Engine phases, all ok, seq starting after the reserved launch slot."""
+    return [{"seq": i + offset, "name": n, "status": "ok"}
+            for i, n in enumerate(deploy_acceptance.PHASE_ORDER)]
+
+
+def _write_receipt(tmp_path, run_id, phases, *, verdict="PASS", run_id_field=None,
+                   target="disposable/vpsprobe", head="a" * 40):
+    d = tmp_path / "receipts"
+    d.mkdir(exist_ok=True)
+    text = acceptance_run.render_receipt(
+        run_id=run_id_field if run_id_field is not None else run_id, target=target,
+        engine_head=head, phases=phases, verdict_value=verdict, completed_at="t")
+    (d / f"{run_id}.receipt").write_text(text)
+    return str(d)
+
+
+def test_forged_rows_and_a_pass_column_without_a_receipt_report_blocked(env):
+    """CRITERION 4, executed. Forge every engine phase ok AND stamp the store's verdict column
+    PASS — without any privileged run — and the owner surface still reports BLOCKED, because no
+    root-owned receipt attests it. This is the whole point of increment 2."""
+    _enable(env)
+    store = _store(env)
+    try:
+        run_id = store.begin_acceptance_run(requested_by="attacker", root="/x")
+        store.claim_acceptance_run(run_id)
+        for i, name in enumerate(deploy_acceptance.PHASE_ORDER):
+            store.record_acceptance_phase(run_id, seq=i + 2, name=name, status="ok")
+        store.finish_acceptance_run(run_id, verdict="PASS", summary="forged")
+    finally:
+        store.close()
+    page = _get(env, f"/acceptance/{run_id}")
+    assert "BLOCKED" in page
+    assert ">PASS<" not in page and "<b>PASS</b>" not in page
+
+
+def test_the_pure_verdict_says_pass_but_the_trusted_verdict_needs_the_receipt():
+    """The rows imply PASS, but with no receipt the trusted verdict is BLOCKED — the store's
+    own opinion is not trusted."""
+    phases = _all_ok_phases()
+    run = {"id": 5, "status": "done"}
+    assert acceptance_run.verdict(phases) == "PASS"
+    assert acceptance_run.trusted_verdict(
+        run, phases, receipts_dir="/nonexistent-receipts") == "BLOCKED"
+
+
+def test_a_matching_root_receipt_yields_the_attested_verdict(tmp_path):
+    phases = _all_ok_phases()
+    run = {"id": 5, "status": "done"}
+    d = _write_receipt(tmp_path, 5, phases, verdict="PASS")
+    assert acceptance_run.trusted_verdict(
+        run, phases, receipts_dir=d, require_root_owned=False) == "PASS"
+
+
+def test_a_receipt_whose_verdict_the_rows_do_not_support_is_blocked(tmp_path):
+    """A receipt claiming PASS while the rows show a failed phase is a contradiction; the
+    Console trusts neither side over the other and reports BLOCKED."""
+    phases = _all_ok_phases()
+    phases[3]["status"] = "failed"          # rows now imply not-PASS
+    run = {"id": 5, "status": "done"}
+    d = _write_receipt(tmp_path, 5, phases, verdict="PASS")   # digest still matches these rows
+    assert acceptance_run.trusted_verdict(
+        run, phases, receipts_dir=d, require_root_owned=False) == "BLOCKED"
+
+
+def test_a_receipt_bound_to_another_run_id_is_blocked(tmp_path):
+    """CRITERION 5. A receipt whose content names a different run does not validate for this one,
+    even placed at this run's path."""
+    phases = _all_ok_phases()
+    run = {"id": 5, "status": "done"}
+    d = _write_receipt(tmp_path, 5, phases, verdict="PASS", run_id_field=7)
+    assert acceptance_run.trusted_verdict(
+        run, phases, receipts_dir=d, require_root_owned=False) == "BLOCKED"
+
+
+def test_a_receipt_whose_digest_does_not_match_the_rows_is_blocked(tmp_path):
+    """A receipt sealed over one set of phases cannot validate a substituted set — the digest is
+    the binding."""
+    sealed = _all_ok_phases()
+    run = {"id": 5, "status": "done"}
+    d = _write_receipt(tmp_path, 5, sealed, verdict="PASS")
+    substituted = _all_ok_phases()
+    substituted[2]["status"] = "deferred"    # different rows -> different digest
+    assert acceptance_run.trusted_verdict(
+        run, substituted, receipts_dir=d, require_root_owned=False) == "BLOCKED"
+
+
+def test_a_failed_safely_receipt_is_shown_only_when_attested(tmp_path):
+    phases = _all_ok_phases()
+    phases[deploy_acceptance.PHASE_ORDER.index("apply-file-phases")]["status"] = "failed"
+    run = {"id": 5, "status": "done"}
+    assert acceptance_run.verdict(phases) == "FAILED SAFELY"
+    assert acceptance_run.trusted_verdict(
+        run, phases, receipts_dir="/nonexistent") == "BLOCKED"       # unattested
+    d = _write_receipt(tmp_path, 5, phases, verdict="FAILED SAFELY")
+    assert acceptance_run.trusted_verdict(
+        run, phases, receipts_dir=d, require_root_owned=False) == "FAILED SAFELY"
+
+
+def test_a_blocked_receipt_never_becomes_positive(tmp_path):
+    """A receipt that itself records BLOCKED cannot yield a positive display, whatever the
+    rows say."""
+    phases = _all_ok_phases()
+    run = {"id": 5, "status": "done"}
+    d = _write_receipt(tmp_path, 5, phases, verdict="BLOCKED")
+    assert acceptance_run.trusted_verdict(
+        run, phases, receipts_dir=d, require_root_owned=False) == "BLOCKED"
+
+
+def test_a_running_run_shows_no_verdict_yet(tmp_path):
+    phases = _all_ok_phases()
+    run = {"id": 5, "status": "running"}
+    _write_receipt(tmp_path, 5, phases, verdict="PASS")     # even if a receipt somehow existed
+    assert acceptance_run.trusted_verdict(run, phases) is None
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="root-ownership anchor can only be built as root")
+def test_the_ownership_anchor_rejects_a_non_root_receipt(tmp_path):
+    """On a real host the receipt must be OWNED BY ROOT — a file the service account could have
+    written is no attestation. Build a root-owned receipt (accepted), then chown it away from
+    root (rejected)."""
+    import pwd
+    phases = _all_ok_phases()
+    run = {"id": 5, "status": "done"}
+    d = acceptance_run.write_receipt_as_root(
+        5, target="t", engine_head="a" * 40, phases=phases, verdict_value="PASS",
+        completed_at="t", receipts_dir=str(tmp_path / "r")).parent
+    assert acceptance_run.trusted_verdict(run, phases, receipts_dir=str(d)) == "PASS"
+    non_root = next((pwd.getpwnam(n).pw_uid for n in ("nobody", "daemon", "bin")
+                     if _uid_exists(n)), None)
+    assert non_root is not None
+    os.chown(acceptance_run.receipt_path(5, receipts_dir=str(d)), non_root, non_root)
+    assert acceptance_run.trusted_verdict(run, phases, receipts_dir=str(d)) == "BLOCKED"
+
+
+def _uid_exists(name):
+    import pwd
+    try:
+        pwd.getpwnam(name)
+        return True
+    except KeyError:
+        return False
+
+
+def test_write_receipt_as_root_refuses_when_not_root(tmp_path, monkeypatch):
+    if os.geteuid() == 0:
+        monkeypatch.setattr(acceptance_run.os, "geteuid", lambda: 1000)
+    with pytest.raises(deploy_acceptance.AcceptanceRefused):
+        acceptance_run.write_receipt_as_root(
+            5, target="t", engine_head="a" * 40, phases=_all_ok_phases(),
+            verdict_value="PASS", completed_at="t", receipts_dir=str(tmp_path / "r"))
+
+
+def test_a_successful_launch_leaves_no_positive_verdict_for_the_launcher_to_forge(env, monkeypatch):
+    """CRITERION 6. If the escalation returns 0 but (as here) the root side did not actually
+    finish the run, the unprivileged launcher records only the launch phase and finalises
+    nothing — the run stays unfinished and the surface shows RUNNING, never a forged PASS."""
+    _enable(env)
+    monkeypatch.setattr(acceptance_run.subprocess, "run",
+                        lambda *a, **k: type("P", (), {"returncode": 0, "stdout": "ok",
+                                                       "stderr": ""})())
+    monkeypatch.setattr(acceptance_run, "spawn_detached", lambda run_id, **kw: None)
+    _post(env, "/acceptance/run", csrf=_csrf(env), confirmed="1")
+    store = _store(env)
+    try:
+        run_id = store.list_acceptance_runs()[0]["id"]
+        outcome = acceptance_run.execute(store, run_id)
+        assert outcome == "launched"
+        run = store.get_acceptance_run(run_id)
+        assert run["status"] == "running" and run["verdict"] is None
+        # Only the launch phase; no engine phases, so the trusted verdict is not positive.
+        phases = store.list_acceptance_phases(run_id)
+        assert [p["name"] for p in phases] == ["launch"]
+        assert acceptance_run.trusted_verdict(run, phases) is None
+    finally:
+        store.close()
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="execute_as_root seals a root-owned receipt")
+def test_execute_as_root_streams_phases_and_seals_a_matching_receipt(env, tmp_path, monkeypatch):
+    """The root wiring, without the multi-minute full engine: stub deploy_acceptance.run to
+    emit a couple of phases through the progress hook and return a report, then prove
+    execute_as_root recorded those phases, sealed a root-owned receipt, and that the Console
+    then shows the attested verdict computed from the durable rows."""
+    _enable(env)
+    monkeypatch.setattr(acceptance_run, "RECEIPTS_DIR", str(tmp_path / "receipts"))
+
+    def fake_run(root, *, keep=False, progress=None):
+        for name in deploy_acceptance.PHASE_ORDER:
+            progress(name, "ok", "")
+        return {"target_name": "disposable/vpsprobe", "target_sha": "b" * 40,
+                "executed": list(deploy_acceptance.PHASE_ORDER), "deferred": [], "steps": {}}
+
+    monkeypatch.setattr(deploy_acceptance, "run", fake_run)
+    store = _store(env)
+    try:
+        run_id = store.begin_acceptance_run(requested_by="owner", root=str(tmp_path / "run"))
+        store.claim_acceptance_run(run_id)
+        outcome = acceptance_run.execute_as_root(store, run_id, receipts_dir=str(tmp_path / "receipts"))
+        assert outcome == "PASS"
+        run = store.get_acceptance_run(run_id)
+        assert run["status"] == "done"
+        phases = store.list_acceptance_phases(run_id)
+        names = [p["name"] for p in phases]
+        assert names == list(deploy_acceptance.PHASE_ORDER)
+        assert acceptance_run.trusted_verdict(
+            run, phases, receipts_dir=str(tmp_path / "receipts")) == "PASS"
+    finally:
+        store.close()

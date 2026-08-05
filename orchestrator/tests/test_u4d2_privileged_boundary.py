@@ -537,9 +537,25 @@ def test_the_sudoers_drop_in_grants_the_transient_unit_verb(target):
     sudoers = Path(target.target.sudoers_file).read_text()
     entry = target.target.privileged_entry
     assert f"{entry} start-run [0-9]*" in sudoers
+    # WP-U4d.2: the Console-driven acceptance is launched through this same one entry point,
+    # by a numeric run id and nothing else — no second privileged path.
+    assert f"{entry} start-acceptance [0-9]*" in sudoers
     for verb in ("apply", "rollback", "self-check"):
         assert f"{entry} {verb}" in sudoers
     assert "systemd-run" not in sudoers, "systemd-run must never be granted as a capability"
+
+
+def test_start_acceptance_refuses_before_any_deployment_has_been_applied(target):
+    """The acceptance harness must run from root-owned code, so with no root-owned runtime yet
+    the verb refuses rather than running the service-user-writable checkout as root."""
+    proc = run_verb(target, "start-acceptance", "7")
+    assert proc.returncode == 2
+    assert "no deployment has been applied" in proc.stderr
+
+
+def test_start_acceptance_rejects_a_non_numeric_run_id(target):
+    proc = run_verb(target, "start-acceptance", "1;id")
+    assert proc.returncode == 2
 
 
 def test_start_run_refuses_before_any_deployment_has_been_applied(target):
@@ -775,7 +791,8 @@ def test_bootstrap_is_never_reachable_from_the_service_user(fresh):
     assert f"{fresh.target.privileged_entry} bootstrap" not in sudoers
     granted = [ln.split(fresh.target.privileged_entry + " ")[1].split()[0]
                for ln in sudoers.splitlines() if fresh.target.privileged_entry + " " in ln]
-    assert set(granted) == {"apply", "rollback", "self-check", "start-run"}, granted
+    assert set(granted) == {"apply", "rollback", "self-check", "start-run",
+                            "start-acceptance"}, granted
 
 
 # --- what is NOT proven here, pinned so it cannot be quietly claimed -----------------------------

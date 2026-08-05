@@ -334,7 +334,8 @@ def run(root: Path, *, keep: bool = False, progress=None) -> dict:
     account = resolve_service_account()              # reads; creates no account
 
     report: dict = {"service_account": account, "systemd_booted": booted,
-                    "executed": [], "deferred": [], "steps": {}}
+                    "executed": [], "deferred": [], "steps": {},
+                    "target_name": target.evidence_namespace, "target_sha": ""}
 
     def mark(name: str, *, needs_systemd: bool = False, detail: str = "") -> None:
         deferred = needs_systemd and not booted
@@ -354,6 +355,7 @@ def run(root: Path, *, keep: bool = False, progress=None) -> dict:
         disposable = deploy_harness.build(root, name="vpsprobe", privileged=False)
     finally:
         deploy_target.close_cli_target_gate()
+    report["target_sha"] = disposable.target_sha
     # The thing built must be the thing approved. `build` uses the same resolver, so this is a
     # regression guard rather than a real possibility — which is exactly when they are cheap.
     if disposable.target != target:

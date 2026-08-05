@@ -757,12 +757,21 @@ class _Handler(BaseHTTPRequestHandler):
                     if run is None:
                         self._send(404, b"no such acceptance run", "text/plain; charset=utf-8")
                         return
-                    body = console_views.acceptance_run_body(
-                        run, store.list_acceptance_phases(run["id"]))
+                    from . import acceptance_run as acceptance_mod
+                    phases = store.list_acceptance_phases(run["id"])
+                    # The DISPLAYED verdict is computed against the root-owned receipt, never
+                    # read from the store's verdict column — application data cannot finalise a
+                    # positive result. No valid receipt ⇒ BLOCKED.
+                    trusted = acceptance_mod.trusted_verdict(run, phases)
+                    body = console_views.acceptance_run_body(run, phases, trusted=trusted)
                     title = f"Acceptance #{run['id']}"
                 else:
+                    from . import acceptance_run as acceptance_mod
+                    runs = store.list_acceptance_runs(limit=20)
+                    trusted = {r["id"]: acceptance_mod.trusted_verdict(
+                        r, store.list_acceptance_phases(r["id"])) for r in runs}
                     body = console_views.acceptance_body(
-                        store.list_acceptance_runs(limit=20), csrf=csrf, offered=offered,
+                        runs, csrf=csrf, offered=offered, trusted=trusted,
                         disabled_reason=_ACCEPTANCE_ERRORS["not-offered"],
                         notice=notice, error=error)
                     title = "Acceptance"

@@ -36,6 +36,8 @@
 #   apply <40-hex-sha>  deploy that release; file phases always, systemd phases when booted
 #   rollback            restore the previous unit, inspector and sudoers from root-owned state
 #   start-run <id>      create the transient per-deployment unit (systemd only)
+#   start-acceptance <id>  run the Console-driven acceptance (WP-U4d.2) as root from the
+#                       root-owned runtime, and seal the root-owned verdict receipt
 #   bootstrap <sha>     ONE-TIME setup: establish the trusted runner runtime so start-run has
 #                       immutable code to launch from on a fresh host. Never in sudoers.
 #
@@ -540,6 +542,7 @@ $TC_SERVICE_USER ALL=(root) NOPASSWD: $SELF apply [0-9a-f][0-9a-f][0-9a-f][0-9a-
 $TC_SERVICE_USER ALL=(root) NOPASSWD: $SELF rollback
 $TC_SERVICE_USER ALL=(root) NOPASSWD: $SELF self-check
 $TC_SERVICE_USER ALL=(root) NOPASSWD: $SELF start-run [0-9]*
+$TC_SERVICE_USER ALL=(root) NOPASSWD: $SELF start-acceptance [0-9]*
 $TC_SERVICE_USER ALL=(root) NOPASSWD: $TC_INSPECTOR_DEST ""
 SUDOERS
     chmod 0440 "$staged"
@@ -829,6 +832,46 @@ verb_start_run() {
     return 0
 }
 
+verb_start_acceptance() {
+    # WP-U4d.2: the root side of the Console-driven acceptance (Acceptance B). The Console
+    # launches an acceptance run through THIS single entry point — there is no second privileged
+    # path and `systemd-run`/interpreters are never granted to the service user for it.
+    #
+    # The acceptance HARNESS is tc_growth code, so root running it must run it from root-owned
+    # code — otherwise the service user could edit what root executes, which is a worse failure
+    # than the forged verdict this whole increment exists to prevent. It therefore runs from the
+    # same root-owned `current` runtime `start-run` uses, and the receipt it seals is attested
+    # by root about a run root actually performed.
+    #
+    # Unlike `start-run`, this runs the harness AS ROOT (not `systemd-run --uid`): the acceptance
+    # installs a disposable target's machinery and seals a root-owned receipt, both of which
+    # require root. systemd is NOT required — the harness itself defers the systemd-bound phases
+    # and the resulting verdict is BLOCKED, which is the honest outcome on a host without one.
+    local run_id="$1" current runtime interpreter
+    case "$run_id" in ''|*[!0-9]*) die "start-acceptance takes a numeric run id and nothing else" ;; esac
+
+    [ -f "$TC_SNAPSHOT_DIR/current" ] || die \
+        "no deployment has been applied on this target yet, so there is no root-owned runtime to "\
+"run the acceptance harness from. Perform the first deployment (the governed host setup) before "\
+"launching an acceptance from the Console."
+    _assert_root_owned_and_locked "$TC_SNAPSHOT_DIR/current"
+    current="$(cat "$TC_SNAPSHOT_DIR/current")"
+    valid_sha "$current" || die "the current-runtime pointer is not a SHA: refusing to act on it"
+    runtime="$TC_RUNTIME_DIR/$current"
+    _assert_root_owned_and_locked "$runtime"
+    verify_runtime "$current"
+    phase "verify-runtime" ok
+
+    interpreter="$(resolve_interpreter "$current")" || return "$EXIT_REFUSED"
+    phase "verify-interpreter" ok
+    note "the acceptance harness will execute as root from $runtime, which the service user cannot write"
+
+    ( cd "$runtime/orchestrator" && run_clean "$interpreter" -m tc_growth.cli acceptance-root "$run_id" ) \
+        || die "the acceptance harness reported a failure"
+    phase "start-acceptance" ok
+    return 0
+}
+
 # --------------------------------------------------------------------------- dispatch
 #
 # A closed table. There is no default branch that runs "whatever was asked for", no option
@@ -840,5 +883,6 @@ case "${1-}" in
     rollback)   [ $# -eq 1 ] || die "rollback takes no arguments"; verb_rollback ;;
     bootstrap)  [ $# -eq 2 ] || die "bootstrap takes exactly one argument, the target SHA"; verb_bootstrap "$2" ;;
     start-run)  [ $# -eq 2 ] || die "start-run takes exactly one argument, the run id"; verb_start_run "$2" ;;
-    *)          die "not a verb: '${1-}' (the interface is: self-check, apply <sha>, rollback, start-run <id>, bootstrap <sha>)" ;;
+    start-acceptance) [ $# -eq 2 ] || die "start-acceptance takes exactly one argument, the run id"; verb_start_acceptance "$2" ;;
+    *)          die "not a verb: '${1-}' (the interface is: self-check, apply <sha>, rollback, start-run <id>, start-acceptance <id>, bootstrap <sha>)" ;;
 esac

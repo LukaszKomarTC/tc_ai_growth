@@ -33,6 +33,7 @@
     python -m tc_growth.cli deploy-run <id> [--target-config FILE]  # what the transient unit runs
     python -m tc_growth.cli deploy-vps-acceptance <dir> [--keep]  # bounded acceptance run for a DISPOSABLE target
     python -m tc_growth.cli acceptance-run <id>       # what the Console's detached acceptance runner runs
+    python -m tc_growth.cli acceptance-root <id>      # the ROOT side start-acceptance runs; seals the receipt
     python -m tc_growth.cli deploy-harness <dir> [--tamper] [--keep] [--stand-in]  # build a DISPOSABLE deploy target and run the real chain against it
 
 `smoke` exercises a single host-side tool WITHOUT the AI runtime — the fastest way to surface
@@ -602,6 +603,34 @@ def cmd_acceptance_run(run_id_raw: str) -> int:
     return 0 if outcome == "launched" else 1
 
 
+def cmd_acceptance_root(run_id_raw: str) -> int:
+    """WP-U4d.2: the ROOT side of a Console acceptance — what `start-acceptance` runs.
+
+    Runs the bounded engine acceptance, streams phases into the durable record, computes the
+    verdict from those rows and seals a ROOT-OWNED receipt binding it. This is the only thing
+    that can finalise a positive verdict; it is gated on euid 0 and reached only through the
+    privileged verb, from root-owned code.
+    """
+    from . import acceptance_run, deploy_acceptance
+    from .store import open_store
+
+    try:
+        run_id = int(run_id_raw)
+    except ValueError:
+        print("acceptance-root takes the numeric id of an acceptance run")
+        return 2
+    store = open_store()
+    try:
+        outcome = acceptance_run.execute_as_root(store, run_id)
+    except deploy_acceptance.AcceptanceRefused as exc:
+        print(f"refused: {exc}")
+        return 2
+    finally:
+        store.close()
+    print(outcome)
+    return 0 if outcome in ("PASS", "FAILED SAFELY") else 1
+
+
 def cmd_deploy_harness(root_raw: str, *, tamper: bool, keep: bool,
                        stand_in: bool = False) -> int:
     """WP-U4d.1: build a disposable deployment target and run the real chain against it.
@@ -782,6 +811,11 @@ def main(argv: list[str] | None = None) -> int:
             print("Usage: acceptance-run <requested-run-id>")
             return 1
         return cmd_acceptance_run(rest[0])
+    if cmd == "acceptance-root":
+        if not rest:
+            print("Usage: acceptance-root <acceptance-run-id>")
+            return 1
+        return cmd_acceptance_root(rest[0])
     if cmd == "deploy-vps-acceptance":
         positional = [a for a in rest if not a.startswith("--")]
         if not positional:

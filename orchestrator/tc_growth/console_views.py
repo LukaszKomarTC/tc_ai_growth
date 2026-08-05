@@ -741,7 +741,7 @@ def deploy_run_body(run: dict, steps: list[dict]) -> str:
 # --- WP-U4d.2: the Console-driven acceptance (Acceptance B) -------------------------------
 
 def acceptance_body(runs: list[dict], *, csrf: str, offered: bool, disabled_reason: str,
-                    notice: str = "", error: str = "") -> str:
+                    trusted: dict | None = None, notice: str = "", error: str = "") -> str:
     """The acceptance list. History always renders; the control that LAUNCHES a run appears
     only when the operation is enabled — and the form carries no input the run could use:
     the browser selects the closed operation, nothing else."""
@@ -770,11 +770,17 @@ def acceptance_body(runs: list[dict], *, csrf: str, offered: bool, disabled_reas
     else:
         form = f"<div class='muted' style='margin-top:10px'>{_e(disabled_reason)}</div>"
 
+    trusted = trusted or {}
     rows = []
     for r in runs:
-        verdict = r.get("verdict") or ""
-        badge = {"PASS": "ok"}.get(verdict, "sev-warn" if verdict else "muted")
-        state = verdict or r["status"]
+        # The badge shows the TRUSTED verdict (attested against the root-owned receipt), never
+        # the store's verdict column. A done run with no valid receipt reads BLOCKED here too.
+        if r["status"] == "done":
+            state = trusted.get(r["id"]) or "BLOCKED"
+            badge = "ok" if state == "PASS" else "sev-warn"
+        else:
+            state = r["status"]
+            badge = "muted"
         rows.append(
             f"<div class='card'><div><b>Acceptance #{r['id']}</b> — "
             f"<span class='{badge}'>{_e(state)}</span></div>"
@@ -808,17 +814,23 @@ def acceptance_confirm_body(*, csrf: str) -> str:
         "<a href='/acceptance'>Cancel</a></form>")
 
 
-def acceptance_run_body(run: dict, phases: list[dict]) -> str:
+def acceptance_run_body(run: dict, phases: list[dict], *, trusted: str | None = None) -> str:
     """The observation view. Everything on this page is a read of the durable record, which is
-    why a restarted Console reconnects to the same run instead of orphaning it. The verdict
-    banner renders ONLY a terminal verdict — a live run shows RUNNING, never a provisional
-    success."""
+    why a restarted Console reconnects to the same run instead of orphaning it.
+
+    The verdict banner shows the TRUSTED verdict — computed by the server against the root-owned
+    receipt, passed in as `trusted` — not the store's `verdict` column, which application code
+    could set. A live run shows RUNNING (`trusted is None`); a finished run with no valid
+    attestation shows BLOCKED, never a provisional success."""
     terminal = run["status"] == "done"
     if terminal:
-        verdict = run.get("verdict") or "BLOCKED"
+        verdict = trusted or "BLOCKED"
         cls = "ok" if verdict == "PASS" else "sev-warn"
+        note = ("" if verdict in ("PASS", "FAILED SAFELY")
+                else " <span class='muted'>(no root-owned receipt attests a positive verdict "
+                     "for this run)</span>")
         head = (f"<div class='{cls}'><b>{_e(verdict)}</b> — "
-                f"{_e(run.get('summary') or '')}</div>")
+                f"{_e(run.get('summary') or '')}{note}</div>")
     else:
         head = ("<div class='muted'>RUNNING. This page refreshes itself from the durable "
                 "record; the run continues even while the Console restarts.</div>")
