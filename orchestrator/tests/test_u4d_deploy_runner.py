@@ -476,11 +476,68 @@ def test_two_genuinely_concurrent_executes_produce_exactly_one_deployment(tmp_pa
     losers = [o for o in outcomes if isinstance(o, deploy.DeployRefused)]
     assert len(winners) == 1, f"expected exactly one winner, got {outcomes}"
     assert len(losers) == 1, f"the loser must be refused, got {outcomes}"
-    assert "already claimed" in str(losers[0])
+    # WHICH refusal fires is the scheduler's choice, not the code's: if the loser is descheduled
+    # after the barrier for long enough, the winner's claim has already committed by the time the
+    # loser reads the row, so it trips the `not planned` read instead of the claim. Both are
+    # correct and both mean one deployment. Asserting the claim specifically made this test fail
+    # under CPU load — it was asserting an OS scheduling outcome. The claim path itself is proven
+    # deterministically by the test below, which reproduces the interleave rather than hoping for
+    # it. What must hold HERE, whichever path fires, is one winner and a loser that ran nothing.
+    assert ("already claimed" in str(losers[0])
+            or "not planned" in str(losers[0])), f"unexpected refusal: {losers[0]}"
 
     # The loser ran NO executor: every recorded step belongs to the same runner.
     assert len(set(ran)) == 1, f"both runners executed steps: {ran}"
     assert len(ran) == len(deploy.STEPS)
+
+
+def test_when_both_runners_pass_the_planned_read_the_claim_is_what_excludes_one(store):
+    """The interleave the racing test above can only hope for, reproduced deterministically.
+
+    Both runners read `planned` — the loser's read is served from a snapshot taken before the
+    winner claimed, which is exactly what a second detached runner sees when its SELECT lands in
+    the window between the winner's SELECT and the winner's UPDATE. The earlier read therefore
+    cannot exclude anybody here, and if the atomic claim were removed this test would run the
+    executors twice.
+    """
+    run_id, _ = _plan(store)
+    stale = store.get_deploy_run(run_id)              # the pre-claim snapshot: status == planned
+    assert stale["status"] == "planned"
+
+    assert store.start_deploy_run(run_id, pid=4242) is True   # the winner claims it
+    assert store.get_deploy_run(run_id)["status"] == "running"
+
+    class ReadsTheStaleRow:
+        """The loser's connection: every write is real, only its row read is from the window."""
+
+        def __init__(self, inner):
+            self._inner = inner
+
+        def get_deploy_run(self, rid):
+            return stale if rid == run_id else self._inner.get_deploy_run(rid)
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+    ran: list[str] = []
+
+    def records(name):
+        def _run(sha, ctx):
+            ran.append(name)
+            return deploy.StepResult(True, "ok")
+        return _run
+
+    executors = {st.name: records(st.name) for st in deploy.STEPS}
+
+    with pytest.raises(deploy.DeployRefused) as exc:
+        deploy.execute(ReadsTheStaleRow(store), run_id, context={}, executors=executors)
+
+    assert "already claimed" in str(exc.value)
+    assert ran == [], f"the loser ran executors: {ran}"
+    # And it neither recorded a step nor overwrote the winner's claim.
+    assert store.list_deploy_steps(run_id) == []
+    run = store.get_deploy_run(run_id)
+    assert run["status"] == "running" and run["runner_pid"] == 4242
 
 
 def test_the_loser_records_no_step_and_cannot_touch_the_winners_evidence(store):
