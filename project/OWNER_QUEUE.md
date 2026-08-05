@@ -7,7 +7,7 @@ objects (PROTOCOL.md, Phase 2). Pointers, not copies — evidence lives where it
 
 | ID | Priority | Decision / action | Evidence | Recommendation | Waiting since | Status |
 |---|---|---|---|---|---|---|
-| _(empty)_ | — | — | — | — | — | — |
+| U4D-1 | normal | Authorize merge of PR #78 (U4d: governed deployment runner) — merges as a DISABLED capability; enabling is a separate later decision after the host review + disposable proof | PR #78 thread (head `c436da2`, CI green, 398 tests, 1 review round: 2 blockers found and cleared) | Reviewer: "suitable for owner merge authorization as a disabled capability" | 2026-08-05 | waiting |
 
 _Not owner-queue items: #77 is fully decided (D1 reviewer-confirmed A; D2 owner-binding —
 owner-clicked Console operation + detached runner, no remote identity). U4d is authorized to
