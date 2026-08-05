@@ -63,11 +63,13 @@ fails if a second `sudo` argv list ever appears, or if this one gains an argumen
   that only a SHA is meaningful.
 - Refuses a SHA with **no existing release worktree**. It never creates one, so it cannot be
   talked into materialising an arbitrary tree.
-- Re-checks that the worktree's `HEAD` **equals the requested SHA**, so it does not depend on the
-  caller having done the ancestry check.
+- Checks that the worktree's `HEAD` equals the requested SHA — as a cheap sanity check that the
+  caller staged what it claims, **explicitly not** as a content-integrity or clean-worktree
+  guarantee (see the blocker below).
 - Takes no path, service, branch or flag; never sources, evals or interpolates the argument.
 - `--rollback` is a separate entry point taking **no SHA at all** — nothing to choose, so nothing
-  to get wrong — and refuses unless the running service points at a release worktree.
+  to get wrong — and executes the same root-owned machinery, never a script discovered through
+  systemd state.
 
 ### The blocker found in review, and what actually fixes it
 
