@@ -252,16 +252,19 @@ deployment", and the finish line does not move to wherever the engine happens to
 
 #### Acceptance A — the engine (closes PR #80)
 
-The owner runs, on the VPS, inside `script(1)`:
+**Correction (head-`386f332` review):** an earlier revision of this section instructed the owner
+to run the acceptance by hand over SSH, and the PR thread described that as owner-endorsed. It
+was not. The owner rejected SSH as the owner workflow from the start and authorized no manual
+run; the reviewer's decision is that the acceptance executes **through the Console operation**
+(WP-U4d.2 below), which launches the same bounded chain through the same privileged entry point.
+The manual `deploy-vps-acceptance` CLI remains the engine's bounded entry — what the Console
+invokes across the privileged boundary, and a development tool on disposable hosts — never the
+owner workflow.
 
-```bash
-cd /opt/tc_ai_growth/app/orchestrator
-sudo python -m tc_growth.cli deploy-vps-acceptance /srv/tc-u4d-acceptance/run1
-```
+Frozen criteria — all of them, and only them (unchanged by the correction; only the launch
+vehicle changed):
 
-Frozen criteria — all of them, and only them:
-
-1. The command exits `0` and its report lists **zero deferred phases**: `transient-unit`,
+1. The acceptance run completes and its report lists **zero deferred phases**: `transient-unit`,
    `daemon-reload`, `restart-service`, `health-check`, `failure-injection` and
    `rollback-service-action` all **executed**.
 2. The injected failure (committed content, not an editable file) fails the deployment, and
@@ -274,17 +277,25 @@ Frozen criteria — all of them, and only them:
 5. The run identifiers, the exact head SHA, and the full report are posted on PR #80.
 
 On green, **PR #80 merges as the engine increment** — explicitly *not* as "U4d complete".
-A finding made after Acceptance A passes goes to Acceptance B or to the parked-residuals list
-below; the one exception, deliberately narrow, is a defect showing the privileged boundary itself
-unsafe, which reopens A.
+A finding made after Acceptance A passes goes to Acceptance B's criteria or to the
+parked-residuals list below; the one exception, deliberately narrow, is a defect showing the
+privileged boundary itself unsafe, which reopens A.
 
-#### Acceptance B — the owner experience (WP-U4d.2, successor PR)
+**Sequencing (decided at the head-`386f332` review):** WP-U4d.2 is built first, as a **stacked
+successor PR** based on this branch, because its Console operation is the vehicle that executes
+Acceptance A. One owner session on the VPS then proves both sets of criteria — A's about the
+engine, B's about the owner surface — with the owner touching only the browser. The one-time
+host setup (installing the root-owned machinery, updating the Console code to the successor
+head) remains a separate, explicitly governed owner setup event; naming it is honesty about
+bootstrapping, and it never becomes the recurring workflow.
 
-Only after A: the Operations Console launches the **same** bounded disposable acceptance chain
-through the **same** reviewed privileged entry point. The Console is another *caller* of the
-engine — never a second implementation path, never a place where paths, units, ports, users or
-command fragments originate. The reviewer's ten criteria (PR #80 thread, head `272e05b` review)
-are the acceptance bar, headline items:
+#### Acceptance B — the owner experience (WP-U4d.2, stacked successor PR)
+
+The Operations Console launches the **same** bounded disposable acceptance chain through the
+**same** reviewed privileged entry point. The Console is another *caller* of the engine — never
+a second implementation path, never a place where paths, units, ports, users or command
+fragments originate. The reviewer's criteria (PR #80 thread, head `272e05b` and `386f332`
+reviews) are the acceptance bar, headline items:
 
 - a registered **Run deployment acceptance** operation with preview, CSRF/session protection and
   explicit owner approval; the browser selects only the closed operation, supplying no values;
@@ -293,9 +304,6 @@ are the acceptance bar, headline items:
 - the final verdict distinguishes `PASS`, `FAILED SAFELY` and `BLOCKED`, and never reports
   success while a required phase is deferred;
 - the complete owner acceptance runs with **no SSH, no terminal, no pasted instructions**.
-
-A one-time host installation of the root-owned machinery remains a separate, explicitly governed
-setup event; it never becomes the recurring workflow.
 
 #### Held throughout both acceptances
 
