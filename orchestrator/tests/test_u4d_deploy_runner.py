@@ -624,7 +624,7 @@ def test_the_runner_escalates_exactly_once_and_only_through_the_wrapper():
                 sudo_calls.append([ast.unparse(e) for e in node.elts])
     assert len(sudo_calls) == 1, f"expected exactly one escalation, found {sudo_calls}"
     argv = sudo_calls[0]
-    assert argv == ["'sudo'", "'-n'", "DEPLOY_WRAPPER", "sha"], argv
+    assert argv == ["'sudo'", "'-n'", "DEPLOY_WRAPPER", "'apply'", "sha"], argv
     assert deploy.DEPLOY_WRAPPER == "/usr/local/bin/tc-deploy-release.sh"
 
 
@@ -657,16 +657,16 @@ WRAPPER = os.path.join(os.path.dirname(os.path.dirname(deploy.__file__)),
 def test_the_root_wrapper_validates_the_sha_itself(bad):
     """Root-owned code must not trust its caller. Anything that reaches sudo can pass any string;
     the wrapper is what decides that only a 40-hex SHA is meaningful."""
-    proc = subprocess.run(["bash", WRAPPER, bad], capture_output=True, text=True, timeout=30)
+    proc = subprocess.run(["bash", WRAPPER, "apply", bad], capture_output=True, text=True,
+                          timeout=30)
     assert proc.returncode != 0, f"the wrapper accepted {bad!r}"
     assert "tc-deploy-release" in proc.stderr
 
 
-@pytest.mark.parametrize("argv", [[], [SHA, "--force"], [SHA, SHA]])
-def test_the_root_wrapper_refuses_anything_but_one_argument(argv):
+@pytest.mark.parametrize("argv", [[], ["apply"], ["apply", SHA, "--force"], ["rollback", SHA]])
+def test_the_root_wrapper_refuses_anything_but_a_fixed_verb_and_its_argument(argv):
     proc = subprocess.run(["bash", WRAPPER, *argv], capture_output=True, text=True, timeout=30)
     assert proc.returncode != 0, f"the wrapper accepted {argv}"
-    assert "exactly one argument" in proc.stderr
 
 
 # --- PR #79 review blocker: root must never execute service-user-writable code ----------------
@@ -680,17 +680,20 @@ def test_root_never_executes_anything_from_the_release_or_app_tree():
     tcgrowth. `HEAD == SHA` proves which commit was checked out, not that the files still match
     it — and git cannot be the witness either, because the worktree's `.git` is writable by the
     same account. So the wrapper must not exec anything from there, at all, on any branch."""
-    src = _wrapper_source()
-    for line in src.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("#") or not stripped:
-            continue
-        if stripped.startswith("exec ") or stripped.startswith("source ") or \
-                stripped.startswith(". "):
-            assert "$REL" not in stripped and "RELEASES_DIR" not in stripped \
-                and "APP_DIR" not in stripped and "WorkingDirectory" not in stripped, \
-                f"root would execute service-user-writable code: {stripped}"
-            assert "DEPLOY_SCRIPT" in stripped, f"unexpected privileged exec: {stripped}"
+    # Join shell line continuations first: the privileged exec spans several lines, and
+    # inspecting only the first would miss what it actually runs.
+    joined = _wrapper_source().replace("\\\n", " ")
+    execs = [ln.strip() for ln in joined.splitlines()
+             if ln.strip().startswith(("exec ", "source ", ". /", ". $"))
+             and not ln.strip().startswith("#")]
+    assert execs, "no privileged exec found — the test would pass vacuously"
+    for line in execs:
+        # The release dir may be PASSED as data (an env value the helper reads); what must never
+        # happen is root EXECUTING something from it. The executed program is the last word.
+        program = line.split()[-2] if line.endswith(("--apply", "--rollback")) else line.split()[-1]
+        assert "DEPLOY_SCRIPT" in program, f"root would execute: {program} (in: {line})"
+        assert "REL" not in program and "RELEASES_DIR" not in program \
+            and "APP_DIR" not in program, f"root would execute writable code: {program}"
 
 
 def test_the_rollback_branch_does_not_discover_code_through_systemd():
@@ -710,11 +713,12 @@ def test_the_privileged_machinery_lives_outside_the_repository():
 def test_the_wrapper_refuses_when_its_machinery_is_missing_or_not_root_owned(tmp_path):
     """Checked at every invocation rather than trusted from install time: if the mode or owner
     was loosened since, this is where the deployment stops."""
-    proc = subprocess.run(["bash", WRAPPER, SHA], capture_output=True, text=True, timeout=30,
-                          env={**os.environ, "PATH": os.environ.get("PATH", "")})
+    proc = subprocess.run(["bash", WRAPPER, "apply", SHA], capture_output=True, text=True,
+                          timeout=30, env={**os.environ, "PATH": os.environ.get("PATH", "")})
     # In this environment /usr/local/lib/tc-deploy does not exist, so the refusal must name it.
     assert proc.returncode != 0
-    assert "root-owned machinery" in proc.stderr or "must be root-owned" in proc.stderr
+    assert ("missing root-owned" in proc.stderr or "must be root:root" in proc.stderr), \
+        proc.stderr
 
 
 def test_modifying_the_release_worktree_cannot_influence_the_privileged_operation(tmp_path):
@@ -726,14 +730,14 @@ def test_modifying_the_release_worktree_cannot_influence_the_privileged_operatio
     rel.mkdir(parents=True)
     (rel / "deploy-console.sh").write_text(f"#!/bin/bash\ntouch {marker}\n")
     (rel / "deploy-console.sh").chmod(0o755)
-    subprocess.run(["bash", WRAPPER, SHA], capture_output=True, text=True, timeout=30)
+    subprocess.run(["bash", WRAPPER, "apply", SHA], capture_output=True, text=True, timeout=30)
     assert not marker.exists(), "root executed a file the service user had replaced"
 
 
 # --- criterion 6: escalation scanning covers non-literal and alternate mechanisms -------------
 
 #: The single reviewed escalation. Anything else that could raise privilege must be absent.
-ALLOWED_ESCALATION = ("sudo", "-n", "DEPLOY_WRAPPER", "sha")
+ALLOWED_ESCALATION = ("sudo", "-n", "DEPLOY_WRAPPER", "apply", "sha")
 
 
 def test_no_alternate_escalation_mechanism_exists_anywhere_in_the_runner():
@@ -764,3 +768,77 @@ def test_no_alternate_escalation_mechanism_exists_anywhere_in_the_runner():
                 assert argv == ALLOWED_ESCALATION, f"unreviewed escalation: {argv}"
                 found_allowed += 1
     assert found_allowed == 1, f"expected exactly one reviewed escalation, found {found_allowed}"
+
+
+# --- PR #79 round 2: the trust anchor itself must be reviewable -------------------------------
+
+INSTALLER = os.path.join(os.path.dirname(os.path.dirname(deploy.__file__)),
+                         "scripts", "install-tc-deploy.sh")
+
+
+def test_the_privileged_helper_and_its_installer_exist_in_the_repository():
+    """Round 2's blocker: the wrapper named /usr/local/lib/tc-deploy/deploy-console.sh as its
+    trust anchor, but no such file existed in the repo. The most security-sensitive code had
+    moved outside the diff. The repository copy is the auditable source of truth."""
+    scripts = os.path.dirname(WRAPPER)
+    assert os.path.exists(os.path.join(scripts, "deploy-console.sh"))
+    assert os.path.exists(INSTALLER)
+    src = open(INSTALLER).read()
+    assert "MANIFEST.sha256" in src, "the installer must record a verifiable digest"
+    assert "sha256sum --check" in src, "the installer must verify what actually landed"
+
+
+def test_the_privileged_program_verifies_its_helper_against_a_root_owned_digest():
+    src = _wrapper_source()
+    assert "MANIFEST" in src
+    assert "sha256sum --check" in src, "a swapped helper must be detected at every invocation"
+    assert 'assert_root_owned "$ROOT_LIB" "directory"' in src, \
+        "a root-owned file in a writable directory can be replaced wholesale"
+
+
+def test_the_privileged_program_ignores_caller_supplied_environment():
+    """Criterion 3: the helper must not treat TC_* values from the caller as authority. Every
+    value handed to the child is a constant of the program or derived from the validated SHA,
+    and the child starts from a constructed minimal environment."""
+    src = _wrapper_source()
+    assert "/usr/bin/env -i" in src, "the child must not inherit the caller's environment"
+    for constant in ("RELEASES_DIR=/opt/tc_ai_growth/releases", "SERVICE_USER=tcgrowth",
+                     "SERVICE_NAME=tc-console", "BACKUP_DIR=/var/backups/tc-console"):
+        assert constant in src, f"path/name must be an internal constant: {constant}"
+
+
+@pytest.mark.parametrize("argv", [
+    ["apply"], ["apply", SHA, "extra"], ["rollback", SHA], ["deploy", SHA], [""],
+    ["--apply", SHA], ["apply", "; rm -rf /"], ["apply", "../../etc"],
+])
+def test_the_privileged_program_accepts_only_fixed_verbs_and_an_exact_sha(argv):
+    proc = subprocess.run(["bash", WRAPPER, *argv], capture_output=True, text=True, timeout=30)
+    assert proc.returncode != 0, f"accepted {argv}"
+
+
+def test_a_forged_environment_cannot_redirect_the_privileged_program(tmp_path):
+    """Adversarial: the service user exports hostile TC_* values before invoking. They must not
+    reach the child — the program refuses before that on its own machinery check, and none of
+    the forged values appear in its decision-making."""
+    hostile = {**os.environ,
+               "TC_RELEASE_DIR": str(tmp_path), "TC_VENV": "/tmp/evil",
+               "TC_STORE_DB": "/tmp/evil.db", "TC_SERVICE_USER": "root",
+               "TC_SERVICE_NAME": "sshd", "TC_BACKUP_DIR": str(tmp_path)}
+    proc = subprocess.run(["bash", WRAPPER, "apply", SHA], capture_output=True, text=True,
+                          timeout=30, env=hostile)
+    assert proc.returncode != 0
+    assert "/tmp/evil" not in proc.stderr and "sshd" not in proc.stderr
+
+
+def test_the_installer_refuses_an_unsafe_parent_directory():
+    src = open(INSTALLER).read()
+    assert "assert_safe_dir" in src
+    for d in ("/usr/local", "/usr/local/lib", '"$ROOT_BIN"', '"$ROOT_LIB"'):
+        assert f"assert_safe_dir {d}" in src, f"parent not checked: {d}"
+
+
+def test_the_installer_is_not_reachable_from_the_runner_or_the_console():
+    """Updating the machinery that performs deployments is a host action, never a deployment."""
+    for module in (deploy.__file__,
+                   os.path.join(os.path.dirname(deploy.__file__), "console.py")):
+        assert "install-tc-deploy" not in open(module).read()

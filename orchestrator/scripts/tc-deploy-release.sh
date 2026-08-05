@@ -1,95 +1,119 @@
 #!/bin/bash
-# WP-U4d — the ONLY root-privileged entry point of the governed deployment runner.
+# WP-U4d — the ONE root-privileged program of the governed deployment runner.
 #
-# Installed root-owned at /usr/local/bin/tc-deploy-release.sh, mode 0755, permitted to the
-# service user by exactly one sudoers rule.
+# Auditable source: this file, in-repository. Installed by scripts/install-tc-deploy.sh to
+# /usr/local/bin/tc-deploy-release.sh as root:root 0755, and permitted to the service user by
+# exactly one sudoers rule. The repository copy is the source of truth; the installer records a
+# digest so the installed copy can be checked against what was reviewed.
 #
 # ---------------------------------------------------------------------------------------------
-# THE RULE THIS FILE EXISTS TO ENFORCE (PR #79 review):
+# THE RULE (PR #79, review rounds 1 and 2):
 #
-#   Root executes ONLY root-owned code that the service user cannot write.
+#   Root executes ONLY root-owned code, and trusts NOTHING the caller can influence.
 #
-# An earlier version of this wrapper exec'd `deploy-console.sh` from the release worktree under
-# /opt/tc_ai_growth/releases/<sha>/. That worktree is created by, and writable by, `tcgrowth`.
-# Checking `git rev-parse HEAD == <sha>` does NOT close that hole: it proves which commit was
-# checked out, not that the files still match it. `tcgrowth` can edit the script after checkout
-# and leave HEAD untouched. Nor can git itself be the witness — the worktree's `.git` is equally
-# writable, so any verification computed from it can be forged by the same account.
+# Round 1 removed the no-op `sudo -u tcgrowth` calls. Round 2 found that this wrapper still
+# exec'd deploy-console.sh from the release worktree, which `tcgrowth` owns and can rewrite after
+# checkout — `git rev-parse HEAD` proves which commit was checked out, not that the files still
+# match it, and git cannot be the witness because the worktree's .git is writable by the same
+# account. Round 3 (this version) closes the remaining gap: the privileged machinery is a
+# root-owned copy verified by digest, and every input is re-derived here rather than accepted.
 #
-# Therefore the privileged machinery lives OUTSIDE the repository, root-owned:
-#
-#   /usr/local/lib/tc-deploy/deploy-console.sh   root:root 0755
-#
-# Consequence, stated rather than hidden: a change to the deployment machinery itself is NOT
-# picked up by running a deployment. Updating /usr/local/lib/tc-deploy/ is a deliberate host
-# action with its own review. That is the correct asymmetry — the thing that performs deployments
-# must not be silently replaceable by a deployment.
-#
-# What this script never does: take a path, a service name, a branch, a flag beyond --rollback,
-# or any second argument; source or execute anything under /opt/tc_ai_growth; interpolate its
-# argument into a shell string; or discover executable code from systemd state.
+# The caller sets environment variables. THEY ARE IGNORED. Everything below is a constant or is
+# derived from the single validated SHA. The child is started with a constructed minimal
+# environment, so nothing the service user exported can reach it.
 # ---------------------------------------------------------------------------------------------
 
 set -euo pipefail
 
-# Root-owned machinery. Nothing below /opt/tc_ai_growth is ever executed by this script.
+# ------------------------------------------------------------------ root-owned constants only
 ROOT_LIB=/usr/local/lib/tc-deploy
 DEPLOY_SCRIPT="$ROOT_LIB/deploy-console.sh"
+MANIFEST="$ROOT_LIB/MANIFEST.sha256"
 
 RELEASES_DIR=/opt/tc_ai_growth/releases
 APP_DIR=/opt/tc_ai_growth/app
 VENV="$APP_DIR/orchestrator/.venv"
 STORE_DB="$APP_DIR/orchestrator/data/tc_growth.db"
 SERVICE_USER=tcgrowth
+SERVICE_NAME=tc-console
+BACKUP_DIR=/var/backups/tc-console
 
 die() { printf 'tc-deploy-release: %s\n' "$1" >&2; exit 2; }
 
-# The privileged machinery must be root-owned and not group/other writable. Checked at every
-# invocation, not assumed from install time: if someone loosened it since, this is where we stop.
+# A root-owned path must be owned by root and writable by nobody else. Checked at EVERY
+# invocation, not trusted from install time: if the mode or owner was loosened since, this is
+# where the deployment stops.
 assert_root_owned() {
-    local path="$1"
-    [ -f "$path" ] || die "missing root-owned machinery: $path (see WP-U4D-ENABLEMENT-GATE.md)"
-    local meta
-    meta="$(stat -c '%U %a' "$path")"
+    local path="$1" kind="$2" meta
+    [ -e "$path" ] || die "missing root-owned $kind: $path (run scripts/install-tc-deploy.sh)"
+    meta="$(stat -c '%U:%G %a' "$path")"
     case "$meta" in
-        "root 755" | "root 750" | "root 700" | "root 555") ;;
-        *) die "$path must be root-owned and not writable by others (found: $meta)" ;;
+        "root:root "[0-7][0-57][0-57]) ;;
+        *) die "$path must be root:root and not group/other writable (found: $meta)" ;;
     esac
 }
 
-[ "$#" -eq 1 ] || die "expected exactly one argument (a 40-character commit SHA), got $#"
-assert_root_owned "$DEPLOY_SCRIPT"
+# The parent directory matters as much as the file: a writable directory means the file can be
+# replaced wholesale, whatever its own mode says.
+assert_root_owned "$ROOT_LIB" "directory"
+assert_root_owned "$DEPLOY_SCRIPT" "helper"
+assert_root_owned "$MANIFEST" "manifest"
 
-if [ "$1" = "--rollback" ]; then
-    # Rollback takes no target: there is nothing to choose, so nothing to get wrong. It does NOT
-    # discover a script through systemd's WorkingDirectory — that path points into a
-    # service-user-writable worktree, so using it to select executable code would reintroduce the
-    # very defect this file exists to prevent. Root-owned code, root-controlled snapshot state.
-    exec "$DEPLOY_SCRIPT" --rollback
-fi
+# The installed helper must still be the reviewed one. The manifest is root-owned, so an
+# unprivileged account can neither swap the helper nor update the digest that would betray it.
+( cd "$ROOT_LIB" && sha256sum --check --status "$MANIFEST" ) \
+    || die "installed helper does not match its recorded digest — refusing to run it"
 
-SHA="$1"
-case "$SHA" in
-    *[!0-9a-f]* | "") die "not a lowercase 40-hex commit SHA" ;;
+# ------------------------------------------------------------------ fixed verbs only
+[ "$#" -ge 1 ] || die "usage: tc-deploy-release.sh apply <40-hex-sha> | rollback"
+VERB="$1"
+shift
+
+case "$VERB" in
+    apply)
+        [ "$#" -eq 1 ] || die "apply takes exactly one argument (a 40-hex commit SHA), got $#"
+        SHA="$1"
+        case "$SHA" in *[!0-9a-f]* | "") die "not a lowercase 40-hex commit SHA" ;; esac
+        [ "${#SHA}" -eq 40 ] || die "not a lowercase 40-hex commit SHA (length ${#SHA})"
+
+        REL="$RELEASES_DIR/$SHA"
+        [ -d "$REL" ] || die "no release worktree at $REL — this program never creates one"
+
+        # Sanity only. Explicitly NOT a content-integrity or clean-worktree guarantee: the tree
+        # and its .git belong to the service user. The integrity control is that root runs the
+        # digest-verified helper, never anything from $REL.
+        HEAD="$(git -C "$REL" rev-parse HEAD 2>/dev/null || true)"
+        [ "$HEAD" = "$SHA" ] || die "release worktree HEAD ($HEAD) is not the requested SHA"
+
+        # Constructed minimal environment. Whatever the caller exported is discarded; every value
+        # below is a constant of this file or derived from the validated SHA.
+        exec /usr/bin/env -i \
+            PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            HOME=/root \
+            TC_RELEASE_DIR="$REL" \
+            TC_RELEASE_SHA="$SHA" \
+            TC_VENV="$VENV" \
+            TC_STORE_DB="$STORE_DB" \
+            TC_SERVICE_USER="$SERVICE_USER" \
+            TC_SERVICE_NAME="$SERVICE_NAME" \
+            TC_BACKUP_DIR="$BACKUP_DIR" \
+            "$DEPLOY_SCRIPT" --apply
+        ;;
+    rollback)
+        [ "$#" -eq 0 ] || die "rollback takes no arguments — there is nothing to choose"
+        # Rollback restores the previous snapshot from $BACKUP_DIR, which is root-owned. It does
+        # NOT read systemd's WorkingDirectory to find code: that path points into a
+        # service-user-writable worktree, and using it to select an executable would reintroduce
+        # exactly the defect this program exists to prevent.
+        assert_root_owned "$BACKUP_DIR" "snapshot directory"
+        exec /usr/bin/env -i \
+            PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            HOME=/root \
+            TC_SERVICE_NAME="$SERVICE_NAME" \
+            TC_BACKUP_DIR="$BACKUP_DIR" \
+            "$DEPLOY_SCRIPT" --rollback
+        ;;
+    *)
+        die "unknown verb '$VERB' — only 'apply' and 'rollback' exist"
+        ;;
 esac
-[ "${#SHA}" -eq 40 ] || die "not a lowercase 40-hex commit SHA (length ${#SHA})"
-
-REL="$RELEASES_DIR/$SHA"
-[ -d "$REL" ] || die "no release worktree at $REL — the runner creates it before calling this"
-
-# HEAD is still checked, but ONLY as a cheap sanity check that the caller staged the worktree it
-# claims to have staged. It is explicitly NOT treated as a content-integrity or clean-worktree
-# guarantee (see the header). The integrity control is that root runs $DEPLOY_SCRIPT, not
-# anything from $REL.
-HEAD="$(git -C "$REL" rev-parse HEAD 2>/dev/null || true)"
-[ "$HEAD" = "$SHA" ] || die "release worktree HEAD ($HEAD) is not the requested SHA"
-
-# The release worktree is DATA to the privileged step: the deploy script reads it to publish the
-# unit's WorkingDirectory, and the Console later runs that code UNPRIVILEGED as $SERVICE_USER —
-# which is the normal, accepted arrangement. What must never happen is root executing it.
-export TC_RELEASE_DIR="$REL"
-export TC_RELEASE_SHA="$SHA"
-export TC_VENV="$VENV"
-export TC_STORE_DB="$STORE_DB"
-export TC_SERVICE_USER="$SERVICE_USER"
-exec "$DEPLOY_SCRIPT" --apply
