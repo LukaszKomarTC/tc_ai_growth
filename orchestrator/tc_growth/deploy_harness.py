@@ -175,6 +175,40 @@ def _write(root: Path, rel: str, content: str) -> None:
         path.chmod(0o755)
 
 
+def resolve_target(root: Path, *, name: str = "disposable",
+                   venv_dir: Path | None = None) -> deploy_target.Target:
+    """Work out the complete Target for `root` and CREATE NOTHING.
+
+    Split out of `build` because a guard that runs after provisioning has already done the thing it
+    was meant to prevent. The acceptance command resolves first, refuses on any production value,
+    and only then materialises — and `build` uses this same function, so the thing approved is the
+    thing built rather than a second derivation that can drift.
+    """
+    root = Path(root).resolve()
+    venv = Path(venv_dir).resolve() if venv_dir else root / "venv"
+    return deploy_target.make_disposable_target(
+        name=name,
+        app_dir=str(root / "app"),
+        releases_dir=str(root / "releases"),
+        backup_dir=str(root / "backups"),
+        db_path=str(root / "state" / "store.db"),
+        venv=str(venv),
+        service=f"tc-console-{name}",
+        unit_prefix=f"tc-deploy-{name}",
+        evidence_namespace=f"disposable/{name}",
+        port="0",
+        remote_ref="origin/main",
+        privileged_prefix=str(root / "privileged" / "lib"),
+        runtime_dir=str(root / "privileged" / "runtime"),
+        unit_path=str(root / "host" / f"tc-console-{name}.service"),
+        inspector_dest=str(root / "host" / "wp-integrity-scan.sh"),
+        sudoers_file=str(root / "host" / f"sudoers-{name}"),
+        snapshot_dir=str(root / "host" / "snapshots"),
+        console_env_file=str(root / "host" / f"{name}.env"),
+        service_user=_service_user(),
+    )
+
+
 def build(root: Path, *, name: str = "disposable", privileged: bool | None = None,
           venv_dir: Path | None = None) -> Disposable:
     """Create a complete, isolated deployment target under `root`.
@@ -242,27 +276,7 @@ def build(root: Path, *, name: str = "disposable", privileged: bool | None = Non
 
     SqliteStore(str(state / "store.db")).close()
 
-    target = deploy_target.make_disposable_target(
-        name=name,
-        app_dir=str(app),
-        releases_dir=str(releases),
-        backup_dir=str(backups),
-        db_path=str(state / "store.db"),
-        venv=str(venv),
-        service=f"tc-console-{name}",
-        unit_prefix=f"tc-deploy-{name}",
-        evidence_namespace=f"disposable/{name}",
-        port="0",
-        remote_ref="origin/main",
-        privileged_prefix=str(privileged_dir / "lib"),
-        runtime_dir=str(privileged_dir / "runtime"),
-        unit_path=str(host / f"tc-console-{name}.service"),
-        inspector_dest=str(host / "wp-integrity-scan.sh"),
-        sudoers_file=str(host / f"sudoers-{name}"),
-        snapshot_dir=str(host / "snapshots"),
-        console_env_file=str(host / f"{name}.env"),
-        service_user=_service_user(),
-    )
+    target = resolve_target(Path(root), name=name, venv_dir=venv_dir)
     if privileged:
         # The interpreter is part of what the authorized SHA has to cover (review blocker 1): a
         # venv the service user can write is a way to change what executes without touching a

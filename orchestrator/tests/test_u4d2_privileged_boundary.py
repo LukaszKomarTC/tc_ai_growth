@@ -910,3 +910,84 @@ def test_rollback_names_the_correct_service_action_for_the_prior_state(target):
     assert run_verb(target, "apply", target.target_sha).returncode in (0, 3)
     proc = run_verb(target, "rollback")
     assert "status=restart" in proc.stdout, proc.stdout
+
+
+# --- a poisoned target must leave the host untouched --------------------------------------------
+
+def test_a_poisoned_target_is_refused_before_a_single_mutation(tmp_path, monkeypatch):
+    """The property the module CLAIMED and the code did not have.
+
+    `run()` used to call `build()` first and check afterwards, so directories, a git repository and
+    a store already existed by the time the production guard looked. The docstring said "refuses
+    before a single directory is created". That is the explanation-ahead-of-implementation failure
+    this work package exists to end, in the file written to prevent it.
+
+    So this poisons the RESOLVED target and then proves the host is untouched: no path created, no
+    mode changed, no account added.
+    """
+    from tc_growth import deploy_acceptance
+
+    root = tmp_path / "poisoned"
+    poisoned = None
+
+    original = deploy_harness.resolve_target        # captured BEFORE patching, or it recurses
+
+    def resolve_poisoned(where, *, name="disposable", venv_dir=None):
+        nonlocal poisoned
+        real = original(where, name=name, venv_dir=venv_dir)
+        deploy_target.open_cli_target_gate()
+        poisoned = deploy_target.make_disposable_target(
+            **{**{f.name: getattr(real, f.name) for f in real.__dataclass_fields__.values()},
+               "app_dir": "/opt/tc_ai_growth/app"})
+        return poisoned
+
+    monkeypatch.setattr(deploy_harness, "resolve_target", resolve_poisoned)
+
+    accounts_before = open("/etc/passwd", "rb").read()
+    parent_mode_before = tmp_path.stat().st_mode
+
+    with pytest.raises(deploy_acceptance.AcceptanceRefused) as exc:
+        deploy_acceptance.run(root)
+
+    assert "would touch production" in str(exc.value)
+    assert "/opt/tc_ai_growth/app" in str(exc.value)
+    assert not root.exists(), "the acceptance root was created despite the refusal"
+    assert tmp_path.stat().st_mode == parent_mode_before, "an ancestor's mode was changed"
+    assert open("/etc/passwd", "rb").read() == accounts_before, "an account was created"
+
+
+def test_the_guard_runs_before_build_is_ever_called(tmp_path, monkeypatch):
+    """Ordering, asserted directly: if `build` is reached at all for a poisoned target, the
+    refusal came too late no matter what the filesystem happens to look like afterwards."""
+    from tc_growth import deploy_acceptance
+
+    called = []
+    original = deploy_harness.resolve_target
+    monkeypatch.setattr(deploy_harness, "build",
+                        lambda *a, **kw: called.append(a) or pytest.fail("build was called"))
+
+    def resolve_poisoned(where, *, name="disposable", venv_dir=None):
+        real = original(where, name=name, venv_dir=venv_dir)
+        deploy_target.open_cli_target_gate()
+        return deploy_target.make_disposable_target(
+            **{**{f.name: getattr(real, f.name) for f in real.__dataclass_fields__.values()},
+               "unit_path": "/etc/systemd/system/tc-console.service"})
+
+    monkeypatch.setattr(deploy_harness, "resolve_target", resolve_poisoned)
+    with pytest.raises(deploy_acceptance.AcceptanceRefused):
+        deploy_acceptance.run(tmp_path / "never")
+    assert not called
+
+
+def test_an_untraversable_acceptance_root_is_refused_not_loosened(tmp_path):
+    """The command used to walk to `/` adding o+x to every ancestor that lacked it — a host
+    permission mutation outside its own tree, on a path the owner supplied."""
+    from tc_growth import deploy_acceptance
+
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+    before = private.stat().st_mode
+    with pytest.raises(deploy_acceptance.AcceptanceRefused) as exc:
+        deploy_acceptance.assert_acceptance_root(private / "run")
+    assert "will NOT loosen directories outside its own tree" in str(exc.value)
+    assert private.stat().st_mode == before

@@ -97,37 +97,63 @@ def assert_nothing_production(target: deploy_target.Target) -> list[str]:
 
 # --------------------------------------------------------------------------- ownership
 
-def service_account() -> str:
-    """The account the unprivileged half runs as. `tcgrowth` on the host; whoever exists here."""
+def resolve_service_account() -> str:
+    """Which account the unprivileged half will run as. READ ONLY — creates nothing.
+
+    Split from `ensure_service_account` because `useradd` is a host mutation, and the production
+    guard has to be able to refuse before any mutation including that one.
+    """
     for candidate in ("tcgrowth", "tcgrowth-probe"):
         try:
             pwd.getpwnam(candidate)
             return candidate
         except KeyError:
             continue
-    subprocess.run(["useradd", "-M", "-s", "/usr/sbin/nologin", "tcgrowth-probe"],
-                   capture_output=True, timeout=120)
     return "tcgrowth-probe"
 
 
-def ensure_traversable(root: Path, account: str) -> list[str]:
-    """The service account must be able to reach its own trees.
+def ensure_service_account(account: str) -> None:
+    """Create the account if it is missing. The first mutation the run performs."""
+    try:
+        pwd.getpwnam(account)
+    except KeyError:
+        subprocess.run(["useradd", "-M", "-s", "/usr/sbin/nologin", account],
+                       capture_output=True, timeout=120)
 
-    `chown` gives it the directories; it does not give it the path TO them. On a real host
-    `/srv/...` is already world-traversable, but a scratch root under a private parent is not — and
-    the failure looks like a permission bug in the deployment rather than in the setup. Fixed here,
-    and every directory changed is RECORDED, because silently loosening directory modes during a
-    security acceptance run would be its own finding.
+
+#: The only parent an acceptance root may live under without further argument. Fixed, so the
+#: command cannot be pointed at a home directory whose ancestors would need loosening.
+SAFE_ACCEPTANCE_PARENT = "/srv/tc-u4d-acceptance"
+
+
+def assert_acceptance_root(root: Path) -> list[str]:
+    """The root must be usable WITHOUT changing any mode outside it.
+
+    The previous version walked from the supplied root to `/` adding `o+x` to every ancestor that
+    lacked it. That is a host permission mutation outside the disposable tree, on a path the owner
+    supplied — under a private home directory it would have quietly widened traversal to somebody's
+    files. A security acceptance run does not get to do that.
+
+    So this CHECKS and refuses, naming the directory and the one command that fixes it. A root
+    under the fixed safe parent needs nothing; anywhere else has to already be traversable.
     """
-    changed = []
-    current = root.resolve()
+    root = Path(root).resolve()
+    if str(root).startswith(SAFE_ACCEPTANCE_PARENT + "/") or str(root) == SAFE_ACCEPTANCE_PARENT:
+        return []
+    blocking = []
+    current = root.parent if root.exists() else root.parent
     while current != current.parent:
-        mode = current.stat().st_mode
-        if not mode & 0o001:
-            os.chmod(current, mode | 0o001)
-            changed.append(f"{current} o+x")
+        if current.exists() and not current.stat().st_mode & 0o001:
+            blocking.append(str(current))
         current = current.parent
-    return changed
+    if blocking:
+        raise AcceptanceRefused(
+            "the service account could not traverse to the acceptance root, and this command will "
+            "NOT loosen directories outside its own tree.\n"
+            "  not traversable: " + ", ".join(blocking) + "\n"
+            f"  either use a root under {SAFE_ACCEPTANCE_PARENT}/<run-id>, or make those "
+            "directories traversable yourself (chmod o+x) if that is what you intend.")
+    return []
 
 
 def apply_ownership_split(target: deploy_target.Target, account: str) -> dict:
@@ -246,25 +272,45 @@ def run(root: Path, *, keep: bool = False) -> dict:
     if os.geteuid() != 0:
         raise AcceptanceRefused("this acceptance run installs root-owned machinery; run it as root")
 
-    account = service_account()
+    # ---------------------------------------------------------------- PURE RESOLUTION PHASE
+    #
+    # Nothing below this comment touches the host until the guard has passed. The previous version
+    # called `build()` first and then checked — so the module said "refuses before a single
+    # directory is created" while the code created directories, a git repository and a store
+    # before looking. That is the explanation-ahead-of-implementation failure this work package
+    # exists to end, in my own file.
     booted = systemd_is_booted()
+    root = Path(root)
+    deploy_target._reset_for_tests()
+    deploy_target.open_cli_target_gate()
+    try:
+        target = deploy_harness.resolve_target(root, name="vpsprobe")
+    finally:
+        deploy_target.close_cli_target_gate()
+
+    checked = assert_nothing_production(target)      # refuses; creates nothing
+    assert_acceptance_root(root)                     # refuses; changes no mode
+    account = resolve_service_account()              # reads; creates no account
+
     report: dict = {"service_account": account, "systemd_booted": booted,
                     "executed": [], "deferred": [], "steps": {}}
+    report["steps"]["preflight"] = {"checked": checked, "root": str(root.resolve()),
+                                    "resolved_before_any_mutation": True}
+    report["executed"].append("preflight-refuses-production")
 
+    # ---------------------------------------------------------------- MUTATION BEGINS HERE
+    ensure_service_account(account)
     deploy_target._reset_for_tests()
     deploy_target.open_cli_target_gate()
     try:
         disposable = deploy_harness.build(root, name="vpsprobe", privileged=False)
     finally:
         deploy_target.close_cli_target_gate()
-    target = disposable.target
+    # The thing built must be the thing approved. `build` uses the same resolver, so this is a
+    # regression guard rather than a real possibility — which is exactly when they are cheap.
+    if disposable.target != target:
+        raise AcceptanceRefused("the materialised target differs from the approved one")
 
-    # 1. Refuse before mutating anything further.
-    report["steps"]["preflight"] = {"checked": assert_nothing_production(target)}
-    report["executed"].append("preflight-refuses-production")
-
-    # 2. Ownership split, applied and read back.
-    report["steps"]["traversal"] = ensure_traversable(Path(root), account)
     report["steps"]["ownership"] = apply_ownership_split(target, account)
     report["executed"].append("ownership-split")
 
