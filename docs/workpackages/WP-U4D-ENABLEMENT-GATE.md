@@ -78,11 +78,57 @@ Nothing else. The helper, its installer and the sudoers surface are withdrawn.
 
 ### Successor: WP-U4d.1 — the privileged chain, reviewed as one unit
 
-**Tracked in its own PR** (see the link at the top of this document once opened). This section is
-the durable scope; the PR description carries the same criteria.
+**Tracked in PR #80.** This section is the durable scope; the PR description carries the same
+criteria.
 
-**Status: SPECIFICATION ONLY. No implementation exists yet.** Stated first because the whole
-reason #79 was reduced is that descriptions here ran ahead of code.
+**Status: increment 1 of 2 is implemented and executed. The privileged program is NOT written.**
+Stated with that precision because the whole reason #79 was reduced is that descriptions here ran
+ahead of code.
+
+#### Increment 1 — the target seam and the disposable harness (implemented, executed)
+
+The paths, store, service, unit prefix and evidence namespace are a `Target` value
+(`tc_growth/deploy_target.py`) instead of module constants. Production is the default and the only
+target that exists unless a command-line gate is open; `Target` refuses to construct at all
+otherwise. Any process that binds or serves the Console latches that gate shut for its whole life,
+so the Console cannot select a target — proven by driving a **real Console in its own process**
+with target-injection attempts across form fields, query strings, headers and cookies, with a
+control step showing the same process could open the gate *before* it served anything.
+
+`tc_growth/deploy_harness.py` builds a genuine throwaway target — its own git repository and
+remote, store, backup directory, service and unit names, evidence namespace — and runs the
+**production executors** against it as real subprocesses. A new `stage` step hashes every file in
+the staged release worktree and compares it against a manifest read from the **committed
+objects**, so a release edited after checkout is refused. That is PR #79 defect 2 answered: the
+worktree's own `.git` is never the witness.
+
+Executed, not described: `python -m tc_growth.cli deploy-harness <dir> --tamper` substitutes
+content into the release worktree after checkout and the chain ends **refused** at `stage`, with
+the privileged stand-in never started and the substituted payload never executed. A control run
+with the content check — and only the content check — disabled shows that payload really does
+execute, so the refusal is the check doing work rather than the harness's shape.
+
+**Defect 1 is partly fixed.** The `sudo -u tcgrowth` no-ops are gone from `preflight`, `converge`
+and `migrate` — the runner already runs as `tcgrowth`, so they bought nothing and cost a sudoers
+rule wide enough to run `python -m <anything>`. `ex_release` still calls `sudo install` and
+`sudo ./scripts/deploy-console.sh`; those are the real escalations and they belong to increment 2.
+
+**What increment 1 does NOT establish**, listed so no later reader has to reconstruct it:
+
+- The manifest comes from the app checkout's object store, which the same unprivileged account can
+  write. It proves the release tree matches the commit; it does **not** give root a trust anchor.
+  That needs a root-owned manifest.
+- `health`, rollback and restart survival are not in the disposable chain, and nothing here claims
+  them.
+- The disposable run produces no secret-bearing output — no `.env`, no `systemctl show` — so
+  criterion 10 (inspection by eye of real secret-bearing output) is untouched by it.
+- Production's child processes still inherit their environment. Overrides are now bounded to the
+  target's allowlist, which is a tightening, not the constructed environment criterion 5 asks of
+  the privileged program.
+
+#### Increment 2 — the privileged program (not started)
+
+Everything below in this section remains specification.
 
 #### The design constraint that broke the first attempt
 
@@ -220,9 +266,12 @@ used for U4c.
 
 **4. The disposable proof.** A throwaway target — its own directory tree, its own store, its own
 service unit — exercised end-to-end with the **real** executors: exact-SHA refusal, verified
-backup, stop-on-failure, restart survival, durable reconnection, terminal Evidence. This needs a
-target seam (the paths are module constants today). That seam is security-relevant and will be
-designed so the override is unreachable from any HTTP request — a test will pin exactly that.
+backup, stop-on-failure, restart survival, durable reconnection, terminal Evidence.
+
+*Partly done (increment 1, PR #80).* The target seam exists and the harness runs the real
+executors for `preflight`, `backup`, `converge`, `suite`, `migrate` and `stage` against a genuine
+disposable target; substituted release content is refused before any privileged mutation. Restart
+survival, rollback and the health check are **not** covered — they need the privileged program.
 
 **5. Rollback exercised** against the disposable target, through the wrapper's `--rollback` entry.
 

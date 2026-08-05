@@ -34,6 +34,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote
 
+from . import deploy_target
 from .core.actions import OPERATIONS, validate_registry
 from .core.approval import Phase
 from .core.executor import Executor, StepEvent
@@ -494,6 +495,18 @@ function renderEvent(ev, stream){
 class _Handler(BaseHTTPRequestHandler):
     # HTTP/1.1 so we can stream the execution with chunked transfer encoding.
     protocol_version = "HTTP/1.1"
+
+    def handle_one_request(self) -> None:
+        """WP-U4d.1. Latch this process as an HTTP server before the request is parsed.
+
+        Placed here rather than in `do_GET`/`do_POST` because it must hold for every request the
+        Console will ever see, including ones no handler recognises. Once latched, the deployment
+        target seam is closed for the life of the process: no request — well-formed, malformed, or
+        aimed at a route that does not exist — can put this process in a state where a target
+        other than production could be constructed.
+        """
+        deploy_target.note_http_boundary()
+        super().handle_one_request()
 
     # ---- low-level helpers ----
     def _headers(self, status: int, content_type: str, *, extra: list[tuple[str, str]] | None = None,
@@ -1183,6 +1196,9 @@ def serve(host: str = "127.0.0.1", port: int = 8385) -> int:
         print(f"Set one first, e.g.:  export {_TOKEN_ENV}=\"$(python -c 'import secrets;print(secrets.token_urlsafe(32))')\"")
         return 1
     validate_registry()  # never serve a catalogue that contradicts the enforcement layer
+    # WP-U4d.1: latch BEFORE binding, so the deployment target seam is closed in this process even
+    # if the bind itself fails and something later reuses the process.
+    deploy_target.note_http_boundary()
     httpd = ThreadingHTTPServer((host, port), _Handler)
     print(f"TC Operations Console on http://{host}:{port}  — Ctrl+C to stop")
     print(f"Remote access: ssh -L {port}:127.0.0.1:{port} <user>@<vps>  then open http://localhost:{port}")
