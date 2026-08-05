@@ -134,9 +134,48 @@ rule wide enough to run `python -m <anything>`. `ex_release` still calls `sudo i
   target's allowlist, which is a tightening, not the constructed environment criterion 5 asks of
   the privileged program.
 
-#### Increment 2 — the privileged program (not started)
+#### Increment 2 — the privileged program (implemented; systemd phases deferred to the host)
 
-Everything below in this section remains specification.
+`orchestrator/scripts/tc-deploy-privileged.sh` is the **one** escalation entry point, and
+`install-tc-deploy.sh` is the installer that actually writes the trust anchor PR #79 defect 3 only
+ever referenced. The installer copies the reviewed program, the merged permission guard and the
+target's reviewed inspector into a root-owned prefix **outside every service-user-writable tree**,
+bakes that target's constants into `target.conf`, records `manifest.sha256`, and then runs the
+installed program's `self-check` — an installer that does not exercise what it installed is how a
+path that dies on first use passes review four times.
+
+The interface is verbs: `self-check`, `apply <sha>`, `rollback`, `start-run <id>`. The **only**
+caller-supplied value in the whole surface is the SHA. No path, user, service, unit, port or
+environment variable is ever accepted; root re-derives all of them from `target.conf` and verifies
+owner, mode and digest of every file it trusts on **every** invocation.
+
+**The laundering defect is inverted into a property.** Root installs the inspector from *its own
+copy* and refuses when the release's copy disagrees with the root-owned manifest — so release
+bytes can neither be installed nor executed, and the unprivileged `stage` verdict is not something
+root inherits.
+
+Executed as root, not inspected: the trust anchor written and self-verified; altered program,
+guard, `target.conf` and inspector each refused; a manifest with an entry *dropped* refused;
+prefix modes 0777/0775/0757/0733/0702 refused; a non-root caller refused by the program itself
+rather than by filesystem permissions; thirteen non-verb argv shapes refused; eleven bad SHAs
+refused; a forged environment naming `sshd`, `/etc/sudoers.d/pwn` and `/usr/bin/id` changing
+nothing; rollback restoring from root-owned state and refusing a poisoned pointer; and the
+**post-`stage` TOCTOU substitution** — `stage` passes, the release is substituted in the window,
+and root refuses with nothing installed.
+
+The bootstrap predicate the program needs before it can source the guard is duplicated on
+purpose; a test runs **both** implementations over all 512 modes and requires identical verdicts,
+turning the duplication into a proven equivalence rather than a second place to be wrong.
+
+**Not proven anywhere off-host, and reported as `unavailable` rather than claimed:** daemon-reload,
+service restart, restart survival, health, and the transient unit. The program exits 3 for that
+case and the runner treats it as a **failed** step — a deployment that did not restart the service
+did not deploy. Those phases are the owner-run VPS acceptance, against disposable paths, unit
+names, port and evidence namespace.
+
+**CI does not prove increment 2.** The boundary tests require root and *skip* on CI's unprivileged
+runner. Their verbatim root-run output is attached to PR #80; a green badge means they were
+skipped.
 
 #### The design constraint that broke the first attempt
 

@@ -148,6 +148,18 @@ class Target:
     port: str
     remote_ref: str = "origin/main"
     disposable: bool = False
+    #: Where the ROOT-OWNED privileged machinery lives (WP-U4d.1 increment 2). It must sit outside
+    #: `allowed_paths` — root's own program cannot live in the tree the service user can write, or
+    #: every digest check below it is theatre. `__post_init__` enforces that rather than trusting it.
+    privileged_prefix: str = "/usr/local/lib/tc-deploy"
+    #: Fixed host locations the privileged program mutates. Named on the target so a disposable run
+    #: cannot touch production's, and so they are never arguments a caller supplies.
+    unit_path: str = "/etc/systemd/system/tc-console.service"
+    inspector_dest: str = "/usr/local/bin/wp-integrity-scan.sh"
+    sudoers_file: str = "/etc/sudoers.d/tc-console-scan"
+    snapshot_dir: str = "/var/backups/tc-console"
+    console_env_file: str = "/etc/tc-console.env"
+    service_user: str = "tcgrowth"
 
     def __post_init__(self) -> None:
         if not (_BOOTSTRAP or _CLI_GATE_OPEN):
@@ -161,12 +173,24 @@ class Target:
                 "never rebuilt from arguments")
         if not _NAME_RE.match(self.name or ""):
             raise DeployRefused(f"unusable target name: {self.name!r}")
-        for field_name in ("app_dir", "releases_dir", "backup_dir", "db_path", "venv"):
+        for field_name in ("app_dir", "releases_dir", "backup_dir", "db_path", "venv",
+                           "privileged_prefix", "unit_path", "inspector_dest", "sudoers_file",
+                           "snapshot_dir", "console_env_file"):
             value = getattr(self, field_name)
             if not value or not os.path.isabs(value) or value != os.path.normpath(value):
                 raise DeployRefused(
                     f"target {field_name} must be an absolute, normalised path: {value!r}")
-        for field_name in ("service", "unit_prefix"):
+        # The property increment 2 rests on. Enforced here, at construction, because a prefix that
+        # drifts inside the writable tree would make root's manifest, digest and mode checks
+        # decorative — and it would do so silently.
+        for writable in (self.app_dir, self.releases_dir):
+            if self.privileged_prefix == writable or \
+                    self.privileged_prefix.startswith(writable + "/"):
+                raise DeployRefused(
+                    f"the privileged prefix {self.privileged_prefix!r} sits inside the "
+                    f"service-user-writable tree {writable!r}; root's machinery must live outside "
+                    "every path the deployment can write")
+        for field_name in ("service", "unit_prefix", "service_user"):
             if not _NAME_RE.match(getattr(self, field_name) or ""):
                 raise DeployRefused(
                     f"target {field_name} must be a plain unit-safe name: "
@@ -180,6 +204,12 @@ class Target:
         target keeps its backups outside the app tree, and the production target's backups sit
         beside its store."""
         return (self.app_dir, self.releases_dir, self.backup_dir)
+
+    @property
+    def privileged_entry(self) -> str:
+        """The ONE escalation entry point. A verb interface, installed root-owned; see
+        `scripts/tc-deploy-privileged.sh`."""
+        return f"{self.privileged_prefix}/tc-deploy-privileged.sh"
 
     @property
     def venv_python(self) -> str:

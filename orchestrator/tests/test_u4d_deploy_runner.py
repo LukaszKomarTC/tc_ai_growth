@@ -282,7 +282,10 @@ def test_the_plan_names_irreversible_steps_before_authorization():
     assert plan["irreversible_steps"] == list(deploy.IRREVERSIBLE)
     assert plan["touches_production_wordpress"] is False
     assert plan["stop_on_failure"] is True
-    assert "rollback" in plan and "--rollback" in plan["rollback"]
+    # The rollback text names the VERB, not `--rollback`: increment 2 replaced the release
+    # script's flag interface with a fixed-verb privileged program, and a plan that still
+    # described the old flag would be telling the owner about a path that no longer exists.
+    assert "rollback" in plan and "`rollback` verb" in plan["rollback"]
     text = deploy.plan_text(plan)
     assert "NOT REVERSIBLE" in text
     for name in deploy.IRREVERSIBLE:
@@ -658,6 +661,39 @@ def test_a_malformed_or_empty_mode_is_treated_as_unsafe():
         assert proc.stdout.strip() == "UNSAFE", f"{bogus!r} was treated as safe"
 
 
+def test_the_privileged_bootstrap_predicate_agrees_with_the_merged_guard_on_every_mode():
+    """The privileged program cannot source the guard to decide whether sourcing it is safe, so it
+    carries its own copy of the predicate for that one bootstrap check.
+
+    Duplication in a security check is how the `[0-57]` defect survived: two spellings, one of
+    them wrong, and nothing comparing them. This runs BOTH implementations over all 512 modes and
+    requires identical verdicts, which turns the duplication into a proven equivalence.
+
+    Runs unprivileged — it compares two shell functions and needs no root.
+    """
+    privileged = os.path.join(os.path.dirname(os.path.dirname(GUARD)),
+                              "tc-deploy-privileged.sh")
+    bootstrap = subprocess.run(
+        ["sed", "-n", "/^_bootstrap_mode_is_unsafe() {/,/^}/p", privileged],
+        capture_output=True, text=True, timeout=30).stdout
+    assert "8#22" in bootstrap, "the bootstrap predicate was not extracted"
+
+    script = (open(GUARD).read() + "\n" + bootstrap + "\n"
+              'for m in $(seq -w 0 777); do\n'
+              '  case "$m" in *[!0-7]*) continue ;; esac\n'
+              '  a=no; b=no\n'
+              '  mode_has_write_bits "$m" && a=yes\n'
+              '  _bootstrap_mode_is_unsafe "$m" && b=yes\n'
+              '  [ "$a" = "$b" ] || echo "DISAGREE $m guard=$a bootstrap=$b"\n'
+              'done\n'
+              'echo DONE\n')
+    proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=120)
+    assert proc.returncode == 0, proc.stderr
+    disagreements = [ln for ln in proc.stdout.splitlines() if ln.startswith("DISAGREE")]
+    assert not disagreements, disagreements
+    assert "DONE" in proc.stdout
+
+
 def test_the_predicate_does_not_encode_write_bits_with_a_character_range():
     """Checked on CODE only — the comment legitimately quotes the broken range while explaining
     why it was wrong, and forbidding the explanation would push the reasoning out of the file."""
@@ -665,13 +701,45 @@ def test_the_predicate_does_not_encode_write_bits_with_a_character_range():
     assert not any("[0-57]" in ln for ln in code)
 
 
-def test_the_withdrawn_privileged_surface_is_absent_from_this_pr():
-    """PR #79 reduced scope: the helper, its installer and the sudoers surface were withdrawn
-    because root still executed service-user-writable code one process hop downstream. Nothing
-    here may reference them, or the description would again outrun the implementation."""
-    scripts = os.path.dirname(GUARD)
-    for gone in ("tc-deploy-release.sh", "install-tc-deploy.sh"):
-        assert not os.path.exists(os.path.join(os.path.dirname(scripts), gone)), \
-            f"{gone} is still present but its boundary is unproven"
-    assert "DEPLOY_WRAPPER" not in open(deploy.__file__).read(), \
-        "the runner must not call a privileged program this PR does not ship"
+def test_the_withdrawn_wrapper_design_never_returns():
+    """PR #79 withdrew `tc-deploy-release.sh`: a wrapper around the existing deploy script, which
+    left root executing service-user-writable code one process hop downstream.
+
+    This test used to assert that the installer was absent too, because at that moment NOTHING
+    privileged was shipping and an absent installer was the honest state. WP-U4d.1 increment 2
+    ships a privileged program deliberately, so that half is now asserted the other way round in
+    `test_u4d2_privileged_boundary.py`. What must never come back is the *wrapper design* — the
+    one whose boundary ended a process too early.
+    """
+    import ast
+
+    scripts = os.path.dirname(os.path.dirname(GUARD))
+    assert not os.path.exists(os.path.join(scripts, "tc-deploy-release.sh")), \
+        "the withdrawn wrapper is back; its boundary was never safe"
+
+    # Checked on argv literals, not on the text. `ex_release`'s docstring legitimately names the
+    # old script while explaining why root no longer runs it, and forbidding the explanation
+    # would push the reasoning out of the file — the same trade the permission-guard test makes.
+    for node in ast.walk(ast.parse(open(deploy.__file__).read())):
+        if isinstance(node, ast.List):
+            words = [e.value for e in node.elts
+                     if isinstance(e, ast.Constant) and isinstance(e.value, str)]
+            assert not any("deploy-console.sh" in w for w in words), \
+                f"the runner builds a command that runs the release checkout's script: {words}"
+
+
+def test_the_runner_escalates_exactly_once():
+    """Criterion 1, checked on the PARSED code so a comment mentioning sudo cannot change the
+    answer. Every escalation in the runner must be the single verb call to the privileged entry
+    point — two `sudo` sites is precisely the over-escalation defect 1 named."""
+    import ast
+
+    escalations = []
+    for node in ast.walk(ast.parse(open(deploy.__file__).read())):
+        if isinstance(node, ast.List) and node.elts:
+            first = node.elts[0]
+            if isinstance(first, ast.Constant) and first.value == "sudo":
+                escalations.append(ast.unparse(node))
+    assert len(escalations) == 1, f"expected exactly one escalation, found {escalations}"
+    assert "privileged_entry" in escalations[0], escalations[0]
+    assert "'apply'" in escalations[0] and "'-n'" in escalations[0], escalations[0]

@@ -171,10 +171,12 @@ STEPS: tuple[Step, ...] = (
          "git metadata, which the same account can rewrite. A file added, removed, resized or "
          "edited after checkout stops the deployment here, before anything is deployed. "
          "Reversible: the worktree is removed and nothing outside releases/<sha> has changed."),
-    Step("release", "Deploy the Console from the verified release worktree", False,
-         "deploy-console.sh --apply against the worktree staged and verified in the previous "
-         "step. Reversible via the script's own --rollback, which restores the previous unit, "
-         "inspector and sudoers."),
+    Step("release", "Deploy the Console through the single privileged verb", False,
+         "One escalation: `sudo tc-deploy-privileged.sh apply <sha>`. Root takes a verb and a "
+         "SHA — no path, user, service, unit, port or environment — verifies its own machinery "
+         "against a root-owned manifest, re-authenticates the release bytes against its own copy, "
+         "snapshots the current unit/inspector/sudoers, then installs and restarts. Reversible "
+         "via the same program's `rollback` verb, which restores that snapshot."),
     Step("health", "Check the Console answers on loopback", True,
          "HTTP 200 from 127.0.0.1 on the service port, and the running unit pins the target SHA."),
 )
@@ -207,11 +209,12 @@ def build_plan(sha: str, *, current_sha: str | None = None, target: Target | Non
                    "detail": s.detail} for s in STEPS],
         "irreversible_steps": list(IRREVERSIBLE),
         "stop_on_failure": True,
-        "rollback": "scripts/deploy-console.sh --rollback restores the previous unit, inspector "
-                    "and sudoers state. The store is recovered from the step-2 backup, which is "
-                    "proven by SQLite integrity_check AND a full row-content digest match — not "
-                    "by row counts. A converged checkout is returned by deploying the previous "
-                    "SHA.",
+        "rollback": "The privileged program's `rollback` verb restores the previous unit, "
+                    "inspector and sudoers from a root-owned snapshot, selected by a root-written "
+                    "pointer rather than by anything the caller supplies. The store is recovered "
+                    "from the step-2 backup, which is proven by SQLite integrity_check AND a full "
+                    "row-content digest match — not by row counts. A converged checkout is "
+                    "returned by deploying the previous SHA.",
     }
     return plan
 
@@ -550,24 +553,42 @@ def ex_stage(sha: str, ctx: dict) -> StepResult:
     return StepResult(True, f"release {sha[:12]} staged and verified against the commit", detail)
 
 
+#: The privileged program's exit codes, mirrored here so the runner can tell "policy refused" from
+#: "the file phases ran and the manager phases could not" without parsing prose.
+PRIVILEGED_REFUSED = 2
+PRIVILEGED_SYSTEMD_ABSENT = 3
+
+
 def ex_release(sha: str, ctx: dict) -> StepResult:
+    """ONE escalation, through a verb interface (WP-U4d.1 increment 2).
+
+    This used to escalate twice: `sudo install` to stage an env file, then `sudo` on
+    `deploy-console.sh` **from the release worktree** — handing root a script out of a tree the
+    service user owns, which is the boundary defect review round 5 found. Both are gone.
+
+    What is passed to root is a verb and a SHA. Not a path, not a service name, not a unit name,
+    not a port, and no environment: the privileged program re-derives every one of those from
+    root-owned constants installed beside it, and verifies its own machinery before acting. The
+    argv below is the whole interface.
+    """
     target = target_of(ctx)
-    rel = _assert_allowed_path(ctx.get("release_dir") or release_dir(sha, target), target)
-    code, out = _run(["sudo", "install", "-m", "600", "-o", "tcgrowth", "-g", "tcgrowth",
-                      f"{target.orchestrator_dir}/.env", f"{rel}/orchestrator/.env"])
+    sha = validate_sha(sha)
+    # `sudo -n`: never prompt. The runner is unattended, and a deployment that waits for a
+    # password on a TTY nobody is watching is a deployment that hangs rather than fails.
+    code, out = _run(["sudo", "-n", target.privileged_entry, "apply", sha],
+                     timeout=900.0, env=ctx.get("child_env"))
+    tail = "\n".join(out.strip().splitlines()[-25:])
+    if code == PRIVILEGED_SYSTEMD_ABSENT:
+        # Not success. The privileged program completed its file phases and stopped rather than
+        # reporting a restart it never performed; saying "released" here would be the exact class
+        # of claim this work package exists to end.
+        return StepResult(False, "the privileged program completed its file phases and STOPPED: "
+                                 "systemd is not booted on this host, so daemon-reload, restart "
+                                 "and health did not run and the release is not serving", tail)
     if code != 0:
-        return StepResult(False, "could not stage the release environment file", out)
-    env = dict(os.environ, TC_VENV=ctx["venv"], TC_STORE_DB=ctx["db_path"])
-    proc = subprocess.run(["sudo", "TC_VENV=" + ctx["venv"], "TC_STORE_DB=" + ctx["db_path"],
-                           "./scripts/deploy-console.sh", "--apply"],
-                          cwd=f"{rel}/orchestrator", capture_output=True, text=True,
-                          timeout=900.0, env=env)
-    out = redact((proc.stdout or "") + (proc.stderr or ""))
-    if proc.returncode != 0:
-        return StepResult(False, "deploy-console.sh --apply failed — rollback is available",
-                          "\n".join(out.strip().splitlines()[-25:]))
-    return StepResult(True, f"Console released from {sha[:12]}",
-                      "\n".join(out.strip().splitlines()[-25:]))
+        return StepResult(False, f"the privileged apply refused or failed (exit {code}) — "
+                                 "rollback is available", tail)
+    return StepResult(True, f"Console released from {sha[:12]} through one privileged verb", tail)
 
 
 def ex_health(sha: str, ctx: dict) -> StepResult:

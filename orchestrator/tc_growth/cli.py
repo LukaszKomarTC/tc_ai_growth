@@ -30,7 +30,7 @@
     python -m tc_growth.cli validation                   # Release 0.3 validation report (from docs/VALIDATION.md)
     python -m tc_growth.cli dashboard [port]             # read-only web view (127.0.0.1 only)
     python -m tc_growth.cli console [port]               # Operations Console (execute ops; 127.0.0.1 + token)
-    python -m tc_growth.cli deploy-harness <dir> [--tamper] [--keep]  # build a DISPOSABLE deploy target and run the real chain against it
+    python -m tc_growth.cli deploy-harness <dir> [--tamper] [--keep] [--stand-in]  # build a DISPOSABLE deploy target and run the real chain against it
 
 `smoke` exercises a single host-side tool WITHOUT the AI runtime — the fastest way to surface
 OAuth/vault/credential problems (the usual first failure point). `weekly-report` runs the full
@@ -557,7 +557,8 @@ def cmd_deploy_run(run_id_raw: str) -> int:
     return 0 if outcome == "succeeded" else 1
 
 
-def cmd_deploy_harness(root_raw: str, *, tamper: bool, keep: bool) -> int:
+def cmd_deploy_harness(root_raw: str, *, tamper: bool, keep: bool,
+                       stand_in: bool = False) -> int:
     """WP-U4d.1: build a disposable deployment target and run the real chain against it.
 
     **This is the only caller that opens the deployment target gate**, and it is a command-line
@@ -567,7 +568,11 @@ def cmd_deploy_harness(root_raw: str, *, tamper: bool, keep: bool) -> int:
 
     `--tamper` substitutes content into the staged release worktree after checkout and expects the
     chain to refuse before the privileged step: with it, a zero exit means the deployment was
-    REFUSED and neither the privileged stand-in nor the substituted payload ran.
+    REFUSED and neither the privileged step nor the substituted payload ran.
+
+    Run as root, the harness installs and drives the REAL privileged program. Run unprivileged it
+    cannot, so `--stand-in` forces the increment-1 stand-in explicitly — which proves nothing
+    about the root boundary and says so in its own report.
     """
     from . import deploy_harness, deploy_target
 
@@ -577,7 +582,7 @@ def cmd_deploy_harness(root_raw: str, *, tamper: bool, keep: bool) -> int:
         return 2
     deploy_target.open_cli_target_gate()
     try:
-        disposable = deploy_harness.build(root)
+        disposable = deploy_harness.build(root, privileged=False if stand_in else None)
     finally:
         # Shut the gate as soon as the target exists. The run itself needs no gate — it carries the
         # target it was given — so the window stays as small as the work requires.
@@ -694,9 +699,10 @@ def main(argv: list[str] | None = None) -> int:
     if cmd == "deploy-harness":
         positional = [a for a in rest if not a.startswith("--")]
         if not positional:
-            print("Usage: deploy-harness <empty-directory> [--tamper] [--keep]")
+            print("Usage: deploy-harness <empty-directory> [--tamper] [--keep] [--stand-in]")
             return 1
-        return cmd_deploy_harness(positional[0], tamper="--tamper" in rest, keep="--keep" in rest)
+        return cmd_deploy_harness(positional[0], tamper="--tamper" in rest,
+                                  keep="--keep" in rest, stand_in="--stand-in" in rest)
     if cmd == "case-note":
         if len(rest) < 2:
             print('Usage: case-note <ref> "<text>"')

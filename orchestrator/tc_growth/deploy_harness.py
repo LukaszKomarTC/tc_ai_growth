@@ -38,6 +38,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -91,9 +92,23 @@ if __name__ == "__main__":
         "# content never reaches execution.\n"
         "set -euo pipefail\n"
         'echo "disposable deploy-console.sh: $*"\n'),
+    # The inspector is the file the privileged program authenticates against its ROOT-OWNED copy
+    # before installing. It is the disposable target's own, so the installer's copy and the
+    # release's copy start identical and a post-checkout substitution makes them differ.
+    "orchestrator/scripts/wp-integrity-scan.sh": (
+        "#!/usr/bin/env bash\n"
+        "# The disposable target's integrity inspector. Root installs this from ITS OWN copy,\n"
+        "# never from the release tree.\n"
+        "set -euo pipefail\n"
+        'echo "disposable inspector ok"\n'),
 }
 
-_EXECUTABLE = {"orchestrator/scripts/deploy-console.sh"}
+_EXECUTABLE = {"orchestrator/scripts/deploy-console.sh",
+               "orchestrator/scripts/wp-integrity-scan.sh"}
+
+
+#: Where the reviewed privileged sources live in this checkout.
+REPO_SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 
 
 @dataclass(frozen=True)
@@ -107,6 +122,10 @@ class Disposable:
     privileged_dir: Path
     base_sha: str
     target_sha: str
+    #: True when the REAL root-owned privileged program was installed for this target. False means
+    #: the run uses the increment-1 stand-in, which proves nothing about the root boundary — the
+    #: report says which, so a reader never has to guess.
+    privileged: bool = False
 
     @property
     def privileged_marker(self) -> Path:
@@ -156,16 +175,32 @@ def _write(root: Path, rel: str, content: str) -> None:
         path.chmod(0o755)
 
 
-def build(root: Path, *, name: str = "disposable") -> Disposable:
+def build(root: Path, *, name: str = "disposable", privileged: bool | None = None) -> Disposable:
     """Create a complete, isolated deployment target under `root`.
 
     Requires the command-line target gate to be open — that is the seam, and the harness is
     subject to it like everything else rather than being exempt from it.
+
+    `privileged` installs the REAL root-owned program for this target, which needs root. Left as
+    `None` it follows whether we are root, so a CI run (unprivileged) transparently gets the
+    increment-1 stand-in while a root run gets the real boundary. Asking for it explicitly
+    without root is an error rather than a silent downgrade — a harness that quietly proves less
+    than it was asked to is worse than one that refuses.
     """
+    if privileged and os.geteuid() != 0:
+        raise deploy_target.DeployRefused(
+            "the privileged boundary can only be installed as root; refusing to silently fall "
+            "back to the stand-in, which proves nothing about root")
+    if privileged is None:
+        privileged = os.geteuid() == 0
+
     root = Path(root).resolve()
     app, releases, backups = root / "app", root / "releases", root / "backups"
-    state, privileged, venv = root / "state", root / "privileged", root / "venv"
-    for directory in (app, releases, backups, state, privileged, venv / "bin"):
+    state, privileged_dir, venv = root / "state", root / "privileged", root / "venv"
+    # The host-shaped locations the privileged program mutates. Under the disposable root, and
+    # NOT under app/ or releases/ — the target refuses to construct otherwise.
+    host = root / "host"
+    for directory in (app, releases, backups, state, privileged_dir, venv / "bin", host):
         directory.mkdir(parents=True, exist_ok=True)
 
     # Its own interpreter, reachable exactly the way the target says it is. A symlink rather than
@@ -196,7 +231,7 @@ def build(root: Path, *, name: str = "disposable") -> Disposable:
     # `preflight`'s ancestry check is answering a question rather than restating an assumption.
     _git(app, "reset", "--hard", base_sha)
 
-    _write_privileged_standin(privileged, state)
+    _write_privileged_standin(privileged_dir, state)
 
     SqliteStore(str(state / "store.db")).close()
 
@@ -212,9 +247,72 @@ def build(root: Path, *, name: str = "disposable") -> Disposable:
         evidence_namespace=f"disposable/{name}",
         port="0",
         remote_ref="origin/main",
+        privileged_prefix=str(privileged_dir / "lib"),
+        unit_path=str(host / f"tc-console-{name}.service"),
+        inspector_dest=str(host / "wp-integrity-scan.sh"),
+        sudoers_file=str(host / f"sudoers-{name}"),
+        snapshot_dir=str(host / "snapshots"),
+        console_env_file=str(host / f"{name}.env"),
+        service_user=_service_user(),
     )
+    if privileged:
+        install_privileged(target, app)
     return Disposable(target=target, root=root, origin=origin, state_dir=state,
-                      privileged_dir=privileged, base_sha=base_sha, target_sha=target_sha)
+                      privileged_dir=privileged_dir, base_sha=base_sha, target_sha=target_sha,
+                      privileged=privileged)
+
+
+def _service_user() -> str:
+    """The account the disposable deployment runs as.
+
+    Production's is `tcgrowth`. The disposable target names whoever is actually running, because
+    the sudoers drop-in the privileged program writes has to name a real account for `visudo -c`
+    to validate it — and a rule naming a user who does not exist would validate nothing.
+    """
+    import pwd
+    return pwd.getpwuid(os.getuid()).pw_name
+
+
+def install_privileged(target: deploy_target.Target, app: Path) -> str:
+    """Install the real root-owned privileged program for this target, and return the output.
+
+    The `--source` directory is assembled rather than pointed at the repository, because the
+    inspector root will authenticate against must be THE TARGET'S OWN reviewed inspector. For
+    production that is the repo's; for the disposable target it is the one committed into the
+    disposable application. Root's copy is taken here, at install time, from the reviewed source —
+    and never again from the release.
+    """
+    with tempfile.TemporaryDirectory() as staging_str:
+        staging = Path(staging_str)
+        (staging / "lib").mkdir()
+        shutil.copy2(REPO_SCRIPTS / "tc-deploy-privileged.sh", staging / "tc-deploy-privileged.sh")
+        shutil.copy2(REPO_SCRIPTS / "lib" / "permission-guard.sh",
+                     staging / "lib" / "permission-guard.sh")
+        shutil.copy2(app / "orchestrator" / "scripts" / "wp-integrity-scan.sh",
+                     staging / "wp-integrity-scan.sh")
+        argv = [
+            "bash", str(REPO_SCRIPTS / "install-tc-deploy.sh"),
+            "--prefix", target.privileged_prefix,
+            "--app-dir", target.app_dir,
+            "--releases-dir", target.releases_dir,
+            "--service", target.service,
+            "--service-user", target.service_user,
+            "--port", target.port or "8385",
+            "--unit-path", target.unit_path,
+            "--inspector-dest", target.inspector_dest,
+            "--sudoers-file", target.sudoers_file,
+            "--snapshot-dir", target.snapshot_dir,
+            "--unit-prefix", target.unit_prefix,
+            "--store-db", target.db_path,
+            "--venv", target.venv,
+            "--console-env-file", target.console_env_file,
+            "--source", str(staging),
+        ]
+        proc = subprocess.run(argv, capture_output=True, text=True, timeout=300.0)
+    if proc.returncode != 0:
+        raise RuntimeError("installing the privileged program failed:\n"
+                           + (proc.stdout or "") + (proc.stderr or ""))
+    return (proc.stdout or "") + (proc.stderr or "")
 
 
 def _write_privileged_standin(privileged_dir: Path, state_dir: Path) -> None:
@@ -288,7 +386,42 @@ def tamper_with_release(disposable: Disposable, *, sha: str | None = None) -> Pa
     return payload
 
 
-def run(disposable: Disposable, *, requested_by: str | None = None) -> dict:
+def substitute_inspector(disposable: Disposable) -> Path:
+    """Replace the release's inspector with a payload, in place, after checkout.
+
+    This is the file the PRIVILEGED program authenticates. Root compares it against its own
+    root-owned copy and refuses on mismatch, and installs from its own copy regardless — so a
+    substitution here can neither be installed nor executed.
+    """
+    victim = disposable.release_path() / "orchestrator" / "scripts" / "wp-integrity-scan.sh"
+    victim.parent.mkdir(parents=True, exist_ok=True)
+    victim.write_text(
+        "#!/usr/bin/env bash\n"
+        "# Substituted inspector. If root ever installs or runs THIS, the marker proves it.\n"
+        f': > {json.dumps(str(disposable.state_dir / PAYLOAD_MARKER))}\n'
+        'echo "payload executed"\n')
+    victim.chmod(0o755)
+    return victim
+
+
+def _tamper_after_stage_executor(disposable: Disposable):
+    """The TOCTOU window, made concrete and executed.
+
+    `stage` verifies the release against the committed objects and returns ok. The release tree
+    stays writable by the service account after that verdict, so this substitutes content in the
+    gap between the unprivileged check passing and the privileged consumer acting. Root must not
+    inherit the unprivileged half's confidence.
+    """
+    def ex_stage_then_tamper(sha: str, ctx: dict) -> deploy.StepResult:
+        result = deploy.ex_stage(sha, ctx)
+        if result.ok:
+            substitute_inspector(disposable)
+        return result
+    return ex_stage_then_tamper
+
+
+def run(disposable: Disposable, *, requested_by: str | None = None,
+        tamper_after_stage: bool = False) -> dict:
     """Run the disposable chain end to end and return what actually happened.
 
     The report is assembled from the store and from the filesystem — the run's terminal status, the
@@ -304,7 +437,12 @@ def run(disposable: Disposable, *, requested_by: str | None = None) -> dict:
             sha=disposable.target_sha, plan=plan, plan_digest=deploy.plan_digest(plan),
             requested_by=requested_by or f"harness:{target.evidence_namespace}")
         executors = dict(deploy.EXECUTORS)
-        executors["release"] = _privileged_standin_executor(disposable)
+        if not disposable.privileged:
+            # Increment-1 mode: a labelled stand-in, which proves nothing about root. The report
+            # carries `privileged_boundary: "stand-in"` so no reader can mistake the two.
+            executors["release"] = _privileged_standin_executor(disposable)
+        if tamper_after_stage:
+            executors["stage"] = _tamper_after_stage_executor(disposable)
         outcome = deploy.execute(store, run_id, context=deploy.context_for(target),
                                  executors=executors, steps=DISPOSABLE_STEPS)
         row = store.get_deploy_run(run_id)
@@ -314,6 +452,10 @@ def run(disposable: Disposable, *, requested_by: str | None = None) -> dict:
     return {
         "target": target.name,
         "evidence_namespace": target.evidence_namespace,
+        "privileged_boundary": "real" if disposable.privileged else "stand-in",
+        "installed_inspector_digest": _digest(target.inspector_dest),
+        "root_owned_inspector_digest": _digest(
+            os.path.join(target.privileged_prefix, "wp-integrity-scan.sh")),
         "run_id": run_id,
         "outcome": outcome,
         "status": row["status"],
@@ -327,11 +469,23 @@ def run(disposable: Disposable, *, requested_by: str | None = None) -> dict:
     }
 
 
+def _digest(path: str) -> str | None:
+    """sha256 of a file, or None if it is not there. Used to show, in the report itself, that what
+    root installed is root's own copy rather than whatever the release contained."""
+    import hashlib
+    try:
+        with open(path, "rb") as fh:
+            return hashlib.sha256(fh.read()).hexdigest()
+    except OSError:
+        return None
+
+
 def report_text(report: dict) -> str:
     """The report as lines an operator reads, including the two markers — which are the whole
     point and must not be something you have to go looking for."""
     lines = [
         f"target ................. {report['target']}  ({report['evidence_namespace']})",
+        f"privileged boundary .... {report['privileged_boundary']}",
         f"deploy run ............. #{report['run_id']}",
         f"terminal status ........ {report['status'].upper()}",
         f"terminal message ....... {report['terminal_message']}",
@@ -341,10 +495,20 @@ def report_text(report: dict) -> str:
     for step in report["step_records"]:
         if step["status"] in ("ok", "failed"):
             lines.append(f"  [{step['status']:<6}] {step['name']:<10} {step['summary']}")
+    installed, owned = report["installed_inspector_digest"], report["root_owned_inspector_digest"]
+    # The stand-in's marker is meaningless once the real boundary is in play — root does not write
+    # it — and printing "no" there would read as "root never acted", which would be false.
+    reached = ("n/a — the real privileged program was used, not the stand-in"
+               if report["privileged_boundary"] == "real"
+               else "YES" if report["privileged_mutation_reached"] else "no")
     lines += [
         "",
-        f"privileged mutation reached ... {'YES' if report['privileged_mutation_reached'] else 'no'}",
+        f"privileged mutation reached ... {reached}",
         f"substituted payload executed .. {'YES' if report['payload_executed'] else 'no'}",
+        f"inspector root installed ...... {installed[:12] if installed else 'NOT INSTALLED'}",
+        f"inspector root owns ........... {owned[:12] if owned else 'not installed'}"
+        + ("   (same bytes — installed from root's own copy)" if installed and installed == owned
+           else "   (DIFFER)" if installed and owned else ""),
         "",
         "steps not part of the disposable chain: "
         + ", ".join(s.name for s in deploy.STEPS if s.name not in report["steps_declared"])

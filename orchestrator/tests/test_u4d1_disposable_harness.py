@@ -38,7 +38,11 @@ def disposable(tmp_path):
     deploy_target._reset_for_tests()
     deploy_target.open_cli_target_gate()
     try:
-        built = deploy_harness.build(tmp_path / "target", name="probe")
+        # `privileged=False` explicitly. These are increment-1 tests: they cover the target seam,
+        # the content verification and the chain's shape, and they must give the same answer
+        # whether or not the run happens to have root. The real privileged boundary is increment
+        # 2's, and it is exercised in test_u4d2_privileged_boundary.py.
+        built = deploy_harness.build(tmp_path / "target", name="probe", privileged=False)
     finally:
         deploy_target.close_cli_target_gate()
     try:
@@ -265,7 +269,7 @@ def test_the_harness_runs_from_the_command_line_and_reports_the_adversarial_resu
     it, and the only place the target gate is ever opened."""
     root = tmp_path / "cli-target"
     proc = subprocess.run(
-        [sys.executable, "-m", "tc_growth.cli", "deploy-harness", str(root), "--tamper"],
+        [sys.executable, "-m", "tc_growth.cli", "deploy-harness", str(root), "--tamper", "--stand-in"],
         cwd=os.path.dirname(os.path.dirname(deploy.__file__)),
         capture_output=True, text=True, timeout=600)
     assert proc.returncode == 0, proc.stdout + proc.stderr
