@@ -30,6 +30,7 @@ say() { printf '%s\n' "$*"; }
 PREFIX=""; APP_DIR=""; RELEASES_DIR=""; SERVICE=""; SERVICE_USER=""; PORT=""
 UNIT_PATH=""; INSPECTOR_DEST=""; SUDOERS_FILE=""; SNAPSHOT_DIR=""; UNIT_PREFIX=""
 STORE_DB=""; VENV=""; CONSOLE_ENV_FILE=""; SOURCE_DIR=""; RUNTIME_DIR=""
+PROVISION_VENV=0; PYTHON_FOR_VENV=""; VENV_SYSTEM_SITE=0
 
 usage() {
     cat <<'USAGE'
@@ -38,6 +39,10 @@ Usage: install-tc-deploy.sh --prefix DIR --app-dir DIR --releases-dir DIR \
          --inspector-dest FILE --sudoers-file FILE --snapshot-dir DIR --unit-prefix NAME \
          --runtime-dir DIR \
          [--store-db FILE] [--venv DIR] [--console-env-file FILE] [--source DIR]
+         [--provision-venv] [--python PYTHON] [--venv-system-site-packages]
+
+--provision-venv creates a ROOT-OWNED virtualenv at --venv. Without it, --venv is validated and
+the install is rejected if the service user could write the interpreter.
 
 Installs the single privileged deployment entry point for ONE target. Run as root.
 --source defaults to the directory containing this script (the reviewed checkout).
@@ -62,6 +67,9 @@ while [ $# -gt 0 ]; do
         --venv) VENV="${2-}"; shift 2 ;;
         --console-env-file) CONSOLE_ENV_FILE="${2-}"; shift 2 ;;
         --source) SOURCE_DIR="${2-}"; shift 2 ;;
+        --provision-venv) PROVISION_VENV=1; shift ;;
+        --venv-system-site-packages) VENV_SYSTEM_SITE=1; shift ;;
+        --python) PYTHON_FOR_VENV="${2-}"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *) usage >&2; die "unknown argument: $1" ;;
     esac
@@ -108,6 +116,91 @@ case "$RUNTIME_DIR/" in
     "$APP_DIR"/*|"$RELEASES_DIR"/*)
         die "--runtime-dir is inside a service-user-writable tree ($RUNTIME_DIR); the whole point is that the service user cannot reach what runs" ;;
 esac
+
+# --------------------------------------------------------------- the interpreter, decided here
+#
+# Review blocker 3. `resolve_interpreter()` in the privileged program refuses an interpreter the
+# service user can write — correctly, because a writable venv changes what executes without
+# touching one application file. But production's venv IS service-user-owned today, so that
+# refusal would have made the real apply path fail at the last step. Safe, and useless.
+#
+# So the decision is made at INSTALL time, once, by the owner, rather than discovered at deploy
+# time by a refusal:
+#
+#   * `--provision-venv` creates a root-owned virtualenv at --venv and locks it down;
+#   * otherwise --venv (or the runtime tree's own .venv) is CHECKED here and the install is
+#     rejected with the exact remediation if it would not satisfy the boundary.
+#
+# The operational consequence, stated because it is real and permanent: a root-owned venv means
+# dependency changes are a root-performed provisioning step, not something a deployment does.
+# `pip install` during a deploy would put the service user back in control of what root's unit
+# executes, which is the whole thing this increment exists to prevent.
+
+# This MUST mirror resolve_interpreter() in tc-deploy-privileged.sh, or the installer will bless
+# something the deployment then refuses — which is worse than no check at all, because it moves
+# the failure to the one moment nobody is watching.
+#
+# In particular: a venv's bin/python is a SYMLINK, and symlink modes are always 0777 on Linux.
+# Checking the link's mode rejects every virtualenv in existence while proving nothing. What
+# matters is the directory (permission to replace the link comes from there), the resolved binary,
+# and the link's owner.
+_owner_is_root() { [ "$(stat -c %U:%G "$1" 2>/dev/null)" = "root:root" ]; }
+
+_not_group_or_other_writable() {
+    local mode
+    mode="$(stat -c %a "$1" 2>/dev/null)"
+    [ -n "$mode" ] || return 1
+    case "$mode" in *[!0-7]*) return 1 ;; esac
+    (( 8#$mode & 8#22 )) && return 1
+    return 0
+}
+
+interpreter_is_locked() {
+    local entry="$1" real
+    [ -e "$entry" ] || return 1
+    real="$(readlink -f "$entry")" || return 1
+    _owner_is_root "$entry" || return 1
+    _owner_is_root "$real" && _not_group_or_other_writable "$real" || return 1
+    _owner_is_root "$(dirname "$entry")" && _not_group_or_other_writable "$(dirname "$entry")"
+}
+
+if [ "$PROVISION_VENV" = 1 ]; then
+    [ -n "$VENV" ] || die "--provision-venv needs --venv to say where"
+    say "provisioning a root-owned virtualenv at $VENV"
+    if [ ! -x "$VENV/bin/python" ]; then
+        venv_args=()
+        # Dependencies have to come from somewhere root controls. Either root installs them into
+        # this venv at provisioning time (the production shape), or the venv inherits the
+        # system's — also root-owned — packages. What must never happen is a deployment running
+        # `pip install` into the interpreter root's unit executes.
+        [ "$VENV_SYSTEM_SITE" = 1 ] && venv_args+=(--system-site-packages)
+        "${PYTHON_FOR_VENV:-python3}" -m venv "${venv_args[@]}" "$VENV" \
+            || die "could not create a virtualenv at $VENV"
+    fi
+    chown -R root:root "$VENV" || die "could not take ownership of $VENV"
+    # go-w, but readable and executable: the service user must be able to RUN the interpreter,
+    # and must not be able to change it.
+    chmod -R go-w "$VENV" || die "could not lock down $VENV"
+    say "  $VENV is root-owned and not writable by the service user"
+    say "  dependency installation is now a ROOT action: sudo $VENV/bin/pip install -e <release>/orchestrator"
+    say ""
+fi
+
+if [ -n "$VENV" ]; then
+    if ! interpreter_is_locked "$VENV/bin/python"; then
+        die "the interpreter at $VENV/bin/python does not satisfy the boundary the privileged
+program enforces: both it and its directory must be root-owned and not group/other writable.
+The deployment would be refused at its last step, so this install is rejected instead.
+
+Fix it either way:
+  re-run with --provision-venv         (creates and locks a root-owned venv at that path), or
+  sudo chown -R root:root $VENV && sudo chmod -R go-w $VENV   (adopt the existing one)
+
+Then install dependencies AS ROOT — a venv the service user can write is a venv the service user
+can use to change what your unit executes."
+    fi
+    say "  interpreter ..... $VENV/bin/python (root-owned, not service-user writable)"
+fi
 
 say "installing the privileged deployment entry point"
 say "  prefix ......... $PREFIX"

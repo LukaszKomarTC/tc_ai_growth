@@ -258,7 +258,13 @@ assert_release_inspector_matches_root() {
 # not this one. What is closed here is the window between verification and consumption.
 
 materialize_runtime() {
-    local sha="$1" release="$2" runtime="$TC_RUNTIME_DIR/$sha" manifest="$TC_RUNTIME_DIR/$sha.manifest"
+    # Separate statements, not one `local a=$1 b=$a`. Under `set -u` this bash does NOT make the
+    # first name visible to the second assignment, so the b= form silently resolved to the
+    # CALLER's variable through dynamic scoping — which happened to be right in apply and wrong
+    # everywhere else. Found by start-run, whose caller names it `current`.
+    local sha="$1" release="$2" runtime manifest
+    runtime="$TC_RUNTIME_DIR/$sha"
+    manifest="$TC_RUNTIME_DIR/$sha.manifest"
 
     run_clean install -d -m 0755 -o root -g root "$TC_RUNTIME_DIR" || die "cannot create $TC_RUNTIME_DIR"
     # A previous materialisation is root-owned, so removing it is safe and keeps apply idempotent.
@@ -291,10 +297,24 @@ materialize_runtime() {
 # adversary who can rewrite git objects *and* the tree consistently still passes. Closing that
 # needs commit signatures verified against a root-held key, and it is the next anchor increment.
 # What this closes is the post-`stage` substitution window, which is what was open.
+# `--no-replace-objects` and GIT_NO_REPLACE_OBJECTS=1 are the load-bearing part, not tidiness.
+#
+# `refs/replace/<oid>` makes git substitute one object for another TRANSPARENTLY: `ls-tree` and
+# `cat-file` then return the replacement while every command still names the authorized SHA. The
+# service user owns this repository, so they can write that ref — and root's "I authenticated the
+# tree against commit X myself" would be a statement about objects the adversary chose. Both the
+# flag and the variable are set because the flag covers this invocation and the variable covers
+# anything git re-execs.
+#
+# Grafts are deliberately not addressed here: they rewrite a commit's PARENTS, not its tree, and
+# this reads trees. Alternates cannot help an attacker either — objects are looked up by exact
+# oid, and an extra object source does not change which oid a tree entry names.
 git_ro() {
     env -i PATH="$PATH" HOME=/root LANG=C.UTF-8 \
         GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_TERMINAL_PROMPT=0 \
-        git -c core.fsmonitor= -c core.hooksPath=/dev/null -c core.pager=cat "$@"
+        GIT_NO_REPLACE_OBJECTS=1 \
+        git --no-replace-objects \
+            -c core.fsmonitor= -c core.hooksPath=/dev/null -c core.pager=cat "$@"
 }
 
 verify_against_commit() {
@@ -326,7 +346,9 @@ verify_against_commit() {
 }
 
 verify_runtime() {
-    local sha="$1" runtime="$TC_RUNTIME_DIR/$sha" manifest="$TC_RUNTIME_DIR/$sha.manifest" actual
+    local sha="$1" runtime manifest actual        # see materialize_runtime on why these split
+    runtime="$TC_RUNTIME_DIR/$sha"
+    manifest="$TC_RUNTIME_DIR/$sha.manifest"
     _assert_root_owned_and_locked "$TC_RUNTIME_DIR"
     _assert_root_owned_and_locked "$runtime"
     _assert_root_owned_and_locked "$manifest"
@@ -391,6 +413,10 @@ verb_apply() {
     _snapshot_artifact inspector "$TC_INSPECTOR_DEST" "$snapshot"
     _snapshot_artifact sudoers "$TC_SUDOERS_FILE" "$snapshot"
     run_clean chmod 0644 "$snapshot/state"
+    # `current` is snapshotted like any other managed artifact, BEFORE it is overwritten, so a
+    # rollback restores the pointer as well as the files. Its own prior absence counts: on a first
+    # deployment there is no current runtime, and rollback must return to that.
+    _snapshot_artifact current "$TC_SNAPSHOT_DIR/current" "$snapshot"
     printf '%s\n' "$sha" > "$TC_SNAPSHOT_DIR/previous"
     run_clean chmod 0644 "$TC_SNAPSHOT_DIR/previous"
     phase "snapshot" ok
@@ -422,6 +448,11 @@ verb_apply() {
     verify_runtime "$sha"
     phase "verify-runtime" ok
     note "$(wc -l < "$TC_RUNTIME_DIR/$sha.manifest") files match the root-owned runtime manifest"
+
+    # Only now is there a runtime worth pointing at. `current` is what start-run executes from,
+    # so it must never name a tree that failed verification.
+    printf '%s\n' "$sha" > "$TC_SNAPSHOT_DIR/current"
+    run_clean chmod 0644 "$TC_SNAPSHOT_DIR/current"
 
     local interpreter
     interpreter="$(resolve_interpreter "$sha")" || return "$EXIT_REFUSED"
@@ -463,6 +494,7 @@ write_sudoers() {
 $TC_SERVICE_USER ALL=(root) NOPASSWD: $SELF apply [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]
 $TC_SERVICE_USER ALL=(root) NOPASSWD: $SELF rollback
 $TC_SERVICE_USER ALL=(root) NOPASSWD: $SELF self-check
+$TC_SERVICE_USER ALL=(root) NOPASSWD: $SELF start-run [0-9]*
 $TC_SERVICE_USER ALL=(root) NOPASSWD: $TC_INSPECTOR_DEST ""
 SUDOERS
     chmod 0440 "$staged"
@@ -586,6 +618,7 @@ verb_rollback() {
     _restore_artifact unit "$TC_UNIT_PATH" 0644 "$snapshot"
     _restore_artifact inspector "$TC_INSPECTOR_DEST" 0755 "$snapshot"
     _restore_artifact sudoers "$TC_SUDOERS_FILE" 0440 "$snapshot"
+    _restore_artifact current "$TC_SNAPSHOT_DIR/current" 0644 "$snapshot"
 
     # Sudoers is validated AFTER the fact, whichever way it went: a restored file must parse, and
     # a removed one must leave the directory parsing. A broken drop-in locks the operator out.
@@ -630,21 +663,51 @@ verb_rollback() {
 }
 
 verb_start_run() {
-    local run_id="$1"
+    # Review blocker 1, both halves.
+    #
+    # Reachability: the sudoers drop-in now grants exactly `start-run [0-9]*`. The pattern makes
+    # the first character a digit and the program re-validates the whole argument below — two
+    # layers, because a sudoers `*` matches more than people expect and the program is the one
+    # that can be strict. `systemd-run` itself is never granted; the transient unit is created
+    # only through this entry point (issue #77 Decision 2).
+    #
+    # What it runs: NOT the service-user-writable checkout. The runner is unprivileged, but "the
+    # unprivileged half" is not a licence to execute mutable code from a unit root created — that
+    # is how the boundary ends one process early. It runs from a root-owned materialised runtime
+    # and the verified interpreter, or it does not run at all.
+    local run_id="$1" current runtime interpreter
     case "$run_id" in ''|*[!0-9]*) die "start-run takes a numeric run id and nothing else" ;; esac
+
+    [ -f "$TC_SNAPSHOT_DIR/current" ] || die \
+        "no deployment has been applied on this target yet, so there is no root-owned runtime to "\
+"run the deployment runner from. Perform the first deployment from the terminal; after that this "\
+"verb has an immutable code path to use."
+    _assert_root_owned_and_locked "$TC_SNAPSHOT_DIR/current"
+    current="$(cat "$TC_SNAPSHOT_DIR/current")"
+    valid_sha "$current" || die "the current-runtime pointer is not a SHA: refusing to act on it"
+    runtime="$TC_RUNTIME_DIR/$current"
+    _assert_root_owned_and_locked "$runtime"
+    verify_runtime "$current"
+    phase "verify-runtime" ok
+    note "the runner will execute from $runtime, which the service user cannot write"
+
+    interpreter="$(resolve_interpreter "$current")" || return "$EXIT_REFUSED"
+    phase "verify-interpreter" ok
+
     [ -d /run/systemd/system ] || {
         phase "transient-unit" unavailable
         note "systemd is not booted here; no transient unit was created."
+        note "the command it WOULD have run: $interpreter -m tc_growth.cli deploy-run $run_id"
+        note "  working directory: $runtime/orchestrator"
         return "$EXIT_SYSTEMD_ABSENT"
     }
-    # The transient unit is created through THIS program — issue #77 Decision 2 required that the
-    # unit not become a second general capability, so `systemd-run` is never in the sudoers rule.
     run_clean systemd-run --collect --unit="$TC_UNIT_PREFIX-run-$run_id" \
-        --uid="$TC_SERVICE_USER" --working-directory="$TC_APP_DIR/orchestrator" \
-        "${TC_VENV:-$TC_APP_DIR/orchestrator/.venv}/bin/python" -m tc_growth.cli deploy-run "$run_id" \
+        --uid="$TC_SERVICE_USER" --working-directory="$runtime/orchestrator" \
+        --setenv=TC_DB_PATH="$TC_STORE_DB" \
+        "$interpreter" -m tc_growth.cli deploy-run "$run_id" \
         || die "could not create the transient deployment unit"
     phase "transient-unit" ok
-    note "$TC_UNIT_PREFIX-run-$run_id created"
+    note "$TC_UNIT_PREFIX-run-$run_id created, running from the root-owned runtime"
     return 0
 }
 

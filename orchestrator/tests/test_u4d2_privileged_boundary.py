@@ -37,13 +37,32 @@ pytestmark = pytest.mark.skipif(
 SHA = "a" * 40
 
 
+@pytest.fixture(scope="session")
+def shared_venv(tmp_path_factory):
+    """One root-owned interpreter for the whole file.
+
+    Provisioning a virtualenv costs about four seconds; at one per test that is five minutes of
+    setup for a suite whose subject is not virtualenv creation. Production shares a single venv
+    across releases, so sharing one across disposable targets is the faithful shape as well as the
+    fast one — and `test_the_installer_provisions_a_root_owned_interpreter` still exercises the
+    provisioning path itself.
+    """
+    venv = tmp_path_factory.mktemp("shared-venv") / "venv"
+    subprocess.run([sys.executable, "-m", "venv", "--system-site-packages", str(venv)],
+                   check=True, capture_output=True, timeout=300)
+    subprocess.run(["chown", "-R", "root:root", str(venv)], check=True, timeout=120)
+    subprocess.run(["chmod", "-R", "go-w", str(venv)], check=True, timeout=120)
+    return venv
+
+
 @pytest.fixture()
-def target(tmp_path):
+def target(tmp_path, shared_venv):
     """A disposable target with the REAL privileged program installed for it."""
     deploy_target._reset_for_tests()
     deploy_target.open_cli_target_gate()
     try:
-        built = deploy_harness.build(tmp_path / "target", name="probe", privileged=True)
+        built = deploy_harness.build(tmp_path / "target", name="probe", privileged=True,
+                                     venv_dir=shared_venv)
     finally:
         deploy_target.close_cli_target_gate()
     try:
@@ -350,10 +369,18 @@ def test_a_service_user_writable_interpreter_is_refused(target):
     """The venv is part of what the SHA has to cover: swapping the interpreter changes what runs
     without touching one application file."""
     staged_release(target)
-    os.chmod(Path(target.target.venv) / "bin", 0o777)
-    proc = run_verb(target, "apply", target.target_sha)
-    assert proc.returncode == 2
-    assert "writable" in proc.stderr
+    entry_dir = Path(target.target.venv) / "bin"
+    original = entry_dir.stat().st_mode
+    try:
+        os.chmod(entry_dir, 0o777)
+        proc = run_verb(target, "apply", target.target_sha)
+        assert proc.returncode == 2
+        assert "writable" in proc.stderr
+    finally:
+        # The interpreter is shared across this file's targets, so a test that loosens it must put
+        # it back. Leaving it 0777 poisoned every subsequent fixture — which is how a suite ends up
+        # reporting failures that belong to its own setup rather than to the code.
+        os.chmod(entry_dir, original)
 
 
 # --- blocker 2: rollback restores ABSENCE, not just content -------------------------------------
@@ -373,10 +400,12 @@ def test_a_first_deployment_rolls_back_to_nothing(target):
 
     proc = run_verb(target, "rollback")
     assert proc.returncode in (0, 3), proc.stdout + proc.stderr
-    for name in ("unit", "inspector", "sudoers"):
+    for name in ("unit", "inspector", "sudoers", "current"):
         assert f"phase=rollback-{name}" in proc.stdout
         assert "removed" in proc.stdout
-    assert "restored=0 removed=3 failed=0" in proc.stdout
+    # Four, not three: the current-runtime pointer is a managed artifact too, and its prior
+    # ABSENCE has to be restored or start-run would keep naming a rolled-back runtime.
+    assert "restored=0 removed=4 failed=0" in proc.stdout
 
     for artifact in (target.target.unit_path, target.target.inspector_dest,
                      target.target.sudoers_file):
@@ -396,7 +425,7 @@ def test_rollback_reports_each_artifact_separately(target):
     assert proc.returncode in (0, 3), proc.stdout + proc.stderr
     assert "phase=rollback-inspector     status=restored" in proc.stdout
     assert "phase=rollback-unit          status=removed" in proc.stdout
-    assert "restored=1 removed=2 failed=0" in proc.stdout
+    assert "restored=1 removed=3 failed=0" in proc.stdout
     assert Path(target.target.inspector_dest).read_text() == "#!/bin/sh\n# pre-existing\n"
     assert not Path(target.target.unit_path).exists()
 
@@ -457,6 +486,152 @@ def test_a_poisoned_rollback_pointer_is_refused(target):
     assert "not a SHA" in proc.stderr
 
 
+# --- git object replacement cannot forge root's authentication ----------------------------------
+
+def test_a_replace_ref_cannot_make_root_authenticate_substituted_content(target):
+    """Review blocker 2, executed.
+
+    `refs/replace/<oid>` substitutes objects TRANSPARENTLY: `ls-tree`/`cat-file` return the
+    attacker's tree while every command still names the authorized SHA. The service user owns this
+    repository, so they can write that ref. Root reads with `--no-replace-objects` and
+    `GIT_NO_REPLACE_OBJECTS=1`, so its authentication is against the real objects.
+    """
+    staged_release(target)
+    deploy_harness.substitute_application_module(target)
+    deploy_harness.install_replace_ref(target)
+
+    # The control: plain git IS fooled. Without it this test could pass because of any refusal.
+    fooled = subprocess.run(["git", "-C", target.target.app_dir, "ls-tree", "-r",
+                             target.target_sha], capture_output=True, text=True,
+                            timeout=120).stdout
+    honest = subprocess.run(["git", "-C", target.target.app_dir, "--no-replace-objects",
+                             "ls-tree", "-r", target.target_sha], capture_output=True, text=True,
+                            timeout=120, env={**os.environ, "GIT_NO_REPLACE_OBJECTS": "1"}).stdout
+    fooled_line = [ln for ln in fooled.splitlines() if "cli.py" in ln][0]
+    honest_line = [ln for ln in honest.splitlines() if "cli.py" in ln][0]
+    assert fooled_line != honest_line, \
+        "the replace ref had no effect, so this proves nothing about disabling it"
+
+    proc = run_verb(target, "apply", target.target_sha)
+    assert proc.returncode == 2
+    assert "does not match commit" in proc.stderr
+    assert not target.payload_marker.exists()
+    assert not Path(target.target.unit_path).exists()
+
+
+def test_root_reads_git_with_replacement_disabled(target):
+    """Supporting, and labelled: both the flag and the variable, because the flag covers this
+    invocation and the variable covers anything git re-execs."""
+    source = (Path(target.target.privileged_prefix) / "tc-deploy-privileged.sh").read_text()
+    assert "GIT_NO_REPLACE_OBJECTS=1" in source
+    assert "--no-replace-objects" in source
+
+
+# --- start-run is reachable, and runs immutable code --------------------------------------------
+
+def test_the_sudoers_drop_in_grants_the_transient_unit_verb(target):
+    """Review blocker 1, first half: the verb existed in the script and was unreachable in the
+    installed system, so the accepted criterion-3 architecture was present but not usable."""
+    staged_release(target)
+    assert run_verb(target, "apply", target.target_sha).returncode in (0, 3)
+    sudoers = Path(target.target.sudoers_file).read_text()
+    entry = target.target.privileged_entry
+    assert f"{entry} start-run [0-9]*" in sudoers
+    for verb in ("apply", "rollback", "self-check"):
+        assert f"{entry} {verb}" in sudoers
+    assert "systemd-run" not in sudoers, "systemd-run must never be granted as a capability"
+
+
+def test_start_run_refuses_before_any_deployment_has_been_applied(target):
+    """There is no root-owned runtime yet, so there is no immutable code path to run the runner
+    from. Refusing beats falling back to the service-user-writable checkout."""
+    proc = run_verb(target, "start-run", "7")
+    assert proc.returncode == 2
+    assert "no deployment has been applied" in proc.stderr
+
+
+def test_start_run_uses_the_root_owned_runtime_and_verified_interpreter(target):
+    """Review blocker 1, second half: it used to launch from TC_APP_DIR and TC_VENV — both the
+    service-user side of the boundary. Root creating a unit that executes mutable code is the
+    boundary ending one process early, again."""
+    staged_release(target)
+    assert run_verb(target, "apply", target.target_sha).returncode in (0, 3)
+
+    proc = run_verb(target, "start-run", "7")
+    assert proc.returncode in (0, 3), proc.stdout + proc.stderr
+    assert "phase=verify-runtime         status=ok" in proc.stdout
+    assert "phase=verify-interpreter     status=ok" in proc.stdout
+    assert target.target.runtime_dir in proc.stdout
+    assert f"{target.target.app_dir}/orchestrator" not in proc.stdout, \
+        "the runner would execute from the service-user-writable checkout"
+
+
+def test_the_current_runtime_pointer_is_restored_by_rollback(target):
+    """`current` is what start-run executes from, so it is snapshotted and restored like any other
+    managed artifact — including its prior ABSENCE on a first deployment."""
+    staged_release(target)
+    assert run_verb(target, "apply", target.target_sha).returncode in (0, 3)
+    assert (Path(target.target.snapshot_dir) / "current").exists()
+
+    assert run_verb(target, "rollback").returncode in (0, 3)
+    assert not (Path(target.target.snapshot_dir) / "current").exists(), \
+        "rollback left a current-runtime pointer that did not exist before apply"
+    assert run_verb(target, "start-run", "7").returncode == 2
+
+
+# --- the interpreter is deployable, not merely refused ------------------------------------------
+
+def test_the_installer_provisions_a_root_owned_interpreter(tmp_path):
+    """Review blocker 3: refusing a service-user-owned venv is safe but leaves the real host apply
+    path non-functional. The installer provisions and locks one instead.
+
+    Builds its own target rather than using the shared-venv fixture, because the thing under test
+    IS the provisioning path."""
+    deploy_target._reset_for_tests()
+    deploy_target.open_cli_target_gate()
+    try:
+        target = deploy_harness.build(tmp_path / "provisioned", name="probe", privileged=True)
+    finally:
+        deploy_target.close_cli_target_gate()
+    venv = Path(target.target.venv)
+    assert (venv / "bin" / "python").exists()
+    real = (venv / "bin" / "python").resolve()
+    assert real.stat().st_uid == 0
+    assert not real.stat().st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+    assert (venv / "bin").stat().st_uid == 0
+    assert not (venv / "bin").stat().st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+    deploy_harness.teardown(target)
+    deploy_target._reset_for_tests()
+
+
+def test_the_installer_refuses_an_interpreter_the_service_user_could_write(tmp_path):
+    """And says exactly how to fix it, rather than letting the deployment discover it later at the
+    one moment nobody is watching."""
+    venv = tmp_path / "writable-venv"
+    (venv / "bin").mkdir(parents=True)
+    (venv / "bin" / "python").symlink_to(sys.executable)
+    os.chmod(venv / "bin", 0o777)
+    root = tmp_path / "t"
+    for sub in ("app", "releases", "priv", "host"):
+        (root / sub).mkdir(parents=True)
+    scripts = deploy_harness.REPO_SCRIPTS
+    proc = subprocess.run(
+        ["bash", str(scripts / "install-tc-deploy.sh"),
+         "--prefix", str(root / "priv" / "lib"), "--app-dir", str(root / "app"),
+         "--releases-dir", str(root / "releases"), "--service", "tc-console-x",
+         "--service-user", "root", "--port", "8401",
+         "--unit-path", str(root / "host" / "x.service"),
+         "--inspector-dest", str(root / "host" / "insp.sh"),
+         "--sudoers-file", str(root / "host" / "sudoers-x"),
+         "--snapshot-dir", str(root / "host" / "snap"), "--unit-prefix", "tc-deploy-x",
+         "--runtime-dir", str(root / "priv" / "runtime"), "--venv", str(venv)],
+        capture_output=True, text=True, timeout=300)
+    assert proc.returncode == 2
+    assert "does not satisfy the boundary" in proc.stderr
+    assert "--provision-venv" in proc.stderr
+    assert not (root / "priv" / "lib").exists(), "the install proceeded despite rejecting"
+
+
 # --- what is NOT proven here, pinned so it cannot be quietly claimed -----------------------------
 
 def test_apply_reports_the_systemd_phases_as_unavailable_rather_than_claiming_them(target):
@@ -485,8 +660,13 @@ def test_the_runner_treats_the_systemd_gap_as_a_failure_not_a_success(target):
 
 
 def test_the_transient_unit_verb_refuses_rather_than_pretending(target):
+    """A deployment must have been applied first, or start-run refuses earlier for a different and
+    better reason — no immutable runtime to launch from. That refusal has its own test; this one
+    is about not claiming a unit it did not create."""
     if Path("/run/systemd/system").is_dir():
         pytest.skip("systemd IS booted here")
+    staged_release(target)
+    assert run_verb(target, "apply", target.target_sha).returncode in (0, 3)
     proc = run_verb(target, "start-run", "7")
     assert proc.returncode == 3
     assert "phase=transient-unit         status=unavailable" in proc.stdout

@@ -175,7 +175,8 @@ def _write(root: Path, rel: str, content: str) -> None:
         path.chmod(0o755)
 
 
-def build(root: Path, *, name: str = "disposable", privileged: bool | None = None) -> Disposable:
+def build(root: Path, *, name: str = "disposable", privileged: bool | None = None,
+          venv_dir: Path | None = None) -> Disposable:
     """Create a complete, isolated deployment target under `root`.
 
     Requires the command-line target gate to be open — that is the seam, and the harness is
@@ -196,18 +197,24 @@ def build(root: Path, *, name: str = "disposable", privileged: bool | None = Non
 
     root = Path(root).resolve()
     app, releases, backups = root / "app", root / "releases", root / "backups"
-    state, privileged_dir, venv = root / "state", root / "privileged", root / "venv"
+    state, privileged_dir = root / "state", root / "privileged"
+    # A caller may supply an already-provisioned root-owned venv. Production shares one across
+    # releases, so sharing one across disposable targets is the faithful shape — and provisioning
+    # a fresh virtualenv per target costs about four seconds each, which is minutes across a suite.
+    venv = Path(venv_dir).resolve() if venv_dir else root / "venv"
     # The host-shaped locations the privileged program mutates. Under the disposable root, and
     # NOT under app/ or releases/ — the target refuses to construct otherwise.
     host = root / "host"
-    for directory in (app, releases, backups, state, privileged_dir, venv / "bin", host):
+    for directory in (app, releases, backups, state, privileged_dir, host):
         directory.mkdir(parents=True, exist_ok=True)
+    if venv_dir is None:
+        (venv / "bin").mkdir(parents=True, exist_ok=True)
 
     # Its own interpreter, reachable exactly the way the target says it is. A symlink rather than
     # a real virtualenv: building one per run would cost seconds for no property gained, and the
     # chain only ever invokes `<venv>/bin/python`.
     python_link = venv / "bin" / "python"
-    if not python_link.exists():
+    if venv_dir is None and not python_link.exists():
         python_link.symlink_to(sys.executable)
 
     origin = root / "origin.git"
@@ -261,11 +268,12 @@ def build(root: Path, *, name: str = "disposable", privileged: bool | None = Non
         # venv the service user can write is a way to change what executes without touching a
         # single application file. Production's answer is a root-owned venv; the disposable
         # target's is the same, made so here. `apply` refuses a writable one either way.
-        for path in (venv, venv / "bin", venv / "bin" / "python"):
-            os.chown(path, 0, 0, follow_symlinks=False)
-        os.chmod(venv, 0o755)
-        os.chmod(venv / "bin", 0o755)
-        install_privileged(target, app)
+        # The installer provisions and locks a REAL root-owned venv (review blocker 3), so the
+        # harness no longer fakes one. `python -m venv` needs the directory not to be a
+        # half-built symlink farm, so the placeholder is cleared first.
+        if venv_dir is None:
+            shutil.rmtree(venv, ignore_errors=True)
+        install_privileged(target, app, provision_venv=venv_dir is None)
     return Disposable(target=target, root=root, origin=origin, state_dir=state,
                       privileged_dir=privileged_dir, base_sha=base_sha, target_sha=target_sha,
                       privileged=privileged)
@@ -282,7 +290,8 @@ def _service_user() -> str:
     return pwd.getpwuid(os.getuid()).pw_name
 
 
-def install_privileged(target: deploy_target.Target, app: Path) -> str:
+def install_privileged(target: deploy_target.Target, app: Path, *,
+                       provision_venv: bool = True) -> str:
     """Install the real root-owned privileged program for this target, and return the output.
 
     The `--source` directory is assembled rather than pointed at the repository, because the
@@ -316,6 +325,10 @@ def install_privileged(target: deploy_target.Target, app: Path) -> str:
             "--store-db", target.db_path,
             "--venv", target.venv,
             "--console-env-file", target.console_env_file,
+            *(["--provision-venv", "--python", sys.executable,
+               # The disposable app's suite needs pytest; on a real host root would install the
+               # dependencies into this venv instead. Either way the interpreter stays root-owned.
+               "--venv-system-site-packages"] if provision_venv else []),
             "--source", str(staging),
         ]
         proc = subprocess.run(argv, capture_output=True, text=True, timeout=300.0)
@@ -431,6 +444,47 @@ def substitute_application_module(disposable: Disposable) -> Path:
         "print('payload executed')\n"
         "sys.exit(0)\n")
     return victim
+
+
+def install_replace_ref(disposable: Disposable, sha: str | None = None) -> str:
+    """Point `refs/replace/<sha>` at a commit whose tree carries the payload.
+
+    This is the attack the reviewer named: git substitutes replaced objects TRANSPARENTLY, so
+    `ls-tree`/`cat-file` return the attacker's tree while every command still names the authorized
+    SHA. If root reads with replacement enabled, its "I authenticated this myself" is a statement
+    about objects the adversary chose.
+
+    Built with plumbing (`read-tree` into a scratch index, `write-tree`, `commit-tree`) so the
+    working tree, HEAD and branches are all left exactly as the deployment expects them.
+    """
+    sha = sha or disposable.target_sha
+    app = Path(disposable.target.app_dir)
+    payload = ("import sys\n"
+               f"open({json.dumps(str(disposable.state_dir / PAYLOAD_MARKER))}, 'w').close()\n"
+               "print('payload executed')\nsys.exit(0)\n")
+
+    blob = subprocess.run(["git", "-C", str(app), "hash-object", "-w", "--stdin"],
+                          input=payload, capture_output=True, text=True, timeout=60,
+                          check=True).stdout.strip()
+    index = app / ".git" / "tc-harness-index"
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(app),
+           "GIT_INDEX_FILE": str(index), "GIT_CONFIG_GLOBAL": os.devnull,
+           "GIT_CONFIG_SYSTEM": os.devnull, "GIT_AUTHOR_NAME": "harness",
+           "GIT_AUTHOR_EMAIL": "harness@invalid", "GIT_COMMITTER_NAME": "harness",
+           "GIT_COMMITTER_EMAIL": "harness@invalid"}
+
+    def git(*args, **kw):
+        return subprocess.run(["git", "-C", str(app), *args], env=env, capture_output=True,
+                              text=True, timeout=120, check=True, **kw).stdout.strip()
+
+    git("read-tree", sha)
+    git("update-index", "--add", "--cacheinfo",
+        f"100644,{blob},orchestrator/tc_growth/cli.py")
+    tree = git("write-tree")
+    payload_commit = git("commit-tree", tree, "-m", "substituted via replace ref")
+    git("replace", "-f", sha, payload_commit)
+    index.unlink(missing_ok=True)
+    return payload_commit
 
 
 def _tamper_after_stage_executor(disposable: Disposable, what: str = "inspector"):
