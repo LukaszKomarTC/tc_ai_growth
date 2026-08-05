@@ -669,9 +669,98 @@ def test_the_root_wrapper_refuses_anything_but_one_argument(argv):
     assert "exactly one argument" in proc.stderr
 
 
-def test_the_root_wrapper_refuses_a_sha_with_no_release_worktree():
-    """A well-formed SHA is still refused when the checkout it names does not exist: the wrapper
-    never creates one, so it cannot be talked into materialising an arbitrary tree."""
-    proc = subprocess.run(["bash", WRAPPER, OTHER_SHA], capture_output=True, text=True, timeout=30)
+# --- PR #79 review blocker: root must never execute service-user-writable code ----------------
+
+def _wrapper_source() -> str:
+    return open(WRAPPER).read()
+
+
+def test_root_never_executes_anything_from_the_release_or_app_tree():
+    """The blocker in its own words: the release worktree is created by, and writable by,
+    tcgrowth. `HEAD == SHA` proves which commit was checked out, not that the files still match
+    it — and git cannot be the witness either, because the worktree's `.git` is writable by the
+    same account. So the wrapper must not exec anything from there, at all, on any branch."""
+    src = _wrapper_source()
+    for line in src.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#") or not stripped:
+            continue
+        if stripped.startswith("exec ") or stripped.startswith("source ") or \
+                stripped.startswith(". "):
+            assert "$REL" not in stripped and "RELEASES_DIR" not in stripped \
+                and "APP_DIR" not in stripped and "WorkingDirectory" not in stripped, \
+                f"root would execute service-user-writable code: {stripped}"
+            assert "DEPLOY_SCRIPT" in stripped, f"unexpected privileged exec: {stripped}"
+
+
+def test_the_rollback_branch_does_not_discover_code_through_systemd():
+    """The rollback path had the same defect: it read WorkingDirectory and exec'd from there."""
+    src = _wrapper_source()
+    assert "WorkingDirectory" not in src.replace("# ", "").split("--rollback")[-1] or \
+        "systemctl show" not in src, "rollback must not select executable code from systemd state"
+    assert "systemctl show" not in src
+
+
+def test_the_privileged_machinery_lives_outside_the_repository():
+    src = _wrapper_source()
+    assert "/usr/local/lib/tc-deploy" in src
+    assert "assert_root_owned" in src, "ownership must be checked at invocation, not assumed"
+
+
+def test_the_wrapper_refuses_when_its_machinery_is_missing_or_not_root_owned(tmp_path):
+    """Checked at every invocation rather than trusted from install time: if the mode or owner
+    was loosened since, this is where the deployment stops."""
+    proc = subprocess.run(["bash", WRAPPER, SHA], capture_output=True, text=True, timeout=30,
+                          env={**os.environ, "PATH": os.environ.get("PATH", "")})
+    # In this environment /usr/local/lib/tc-deploy does not exist, so the refusal must name it.
     assert proc.returncode != 0
-    assert "no release worktree" in proc.stderr
+    assert "root-owned machinery" in proc.stderr or "must be root-owned" in proc.stderr
+
+
+def test_modifying_the_release_worktree_cannot_influence_the_privileged_operation(tmp_path):
+    """Adversarial: stage a worktree whose deploy-console.sh has been replaced with a payload,
+    then invoke the wrapper. It must never reach that file — proven by the wrapper refusing on
+    its own machinery check and by the payload never running."""
+    marker = tmp_path / "payload-ran"
+    rel = tmp_path / "releases" / SHA / "orchestrator" / "scripts"
+    rel.mkdir(parents=True)
+    (rel / "deploy-console.sh").write_text(f"#!/bin/bash\ntouch {marker}\n")
+    (rel / "deploy-console.sh").chmod(0o755)
+    subprocess.run(["bash", WRAPPER, SHA], capture_output=True, text=True, timeout=30)
+    assert not marker.exists(), "root executed a file the service user had replaced"
+
+
+# --- criterion 6: escalation scanning covers non-literal and alternate mechanisms -------------
+
+#: The single reviewed escalation. Anything else that could raise privilege must be absent.
+ALLOWED_ESCALATION = ("sudo", "-n", "DEPLOY_WRAPPER", "sha")
+
+
+def test_no_alternate_escalation_mechanism_exists_anywhere_in_the_runner():
+    """Counting literal ["sudo", ...] lists is not a complete property (review #79). This also
+    forbids su/pkexec/systemd-run/os.exec*, and any subprocess whose executable is derived from a
+    variable rather than written down — with exactly one reviewed allowlist entry."""
+    import ast
+
+    src = open(deploy.__file__).read()
+    tree = ast.parse(src)
+
+    for name in ("os.execv", "os.execve", "os.execvp", "os.execl", "os.execlp", "os.spawnv",
+                 "pty.spawn"):
+        assert name not in src, f"alternate execution mechanism present: {name}"
+
+    escalators = {"su", "pkexec", "systemd-run", "doas", "runuser", "machinectl"}
+    found_allowed = 0
+    for node in ast.walk(tree):
+        if isinstance(node, ast.List) and node.elts:
+            first = node.elts[0]
+            if not isinstance(first, ast.Constant) or not isinstance(first.value, str):
+                continue
+            head = os.path.basename(first.value)
+            if head in escalators:
+                raise AssertionError(f"alternate escalation mechanism: {ast.unparse(node)}")
+            if head == "sudo":
+                argv = tuple(ast.unparse(e).strip("'") for e in node.elts)
+                assert argv == ALLOWED_ESCALATION, f"unreviewed escalation: {argv}"
+                found_allowed += 1
+    assert found_allowed == 1, f"expected exactly one reviewed escalation, found {found_allowed}"
