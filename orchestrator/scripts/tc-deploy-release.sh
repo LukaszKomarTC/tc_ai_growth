@@ -40,24 +40,39 @@ BACKUP_DIR=/var/backups/tc-console
 
 die() { printf 'tc-deploy-release: %s\n' "$1" >&2; exit 2; }
 
-# A root-owned path must be owned by root and writable by nobody else. Checked at EVERY
-# invocation, not trusted from install time: if the mode or owner was loosened since, this is
-# where the deployment stops.
-assert_root_owned() {
-    local path="$1" kind="$2" meta
+# --- BEGIN shared permission predicate (byte-identical in tc-deploy-release.sh and
+# install-tc-deploy.sh; tests assert they have not drifted) ---
+# Refuse any path carrying a group- or other-write bit.
+#
+# Implemented as a NUMERIC MASK, not a glob. The first version of this guard used
+# "root:root "[0-7][0-57][0-57], and a shell character range cannot express "no write bit":
+# [0-57] is the set {0,1,2,3,4,5,7}, so it accepted 2, 3 and 7 — every one of them writable.
+# 0777 passed a check whose own error message said "not group/other writable" (PR #79 round 3).
+mode_has_write_bits() {
+    # $1 is an octal mode from `stat -c %a`, 3 or 4 digits. 8#22 is g+w | o+w.
+    local mode="$1"
+    [ -n "$mode" ] || return 0            # unreadable mode => treat as unsafe
+    case "$mode" in *[!0-7]*) return 0 ;; esac   # not octal => unsafe
+    (( 8#$mode & 8#22 ))
+}
+# --- END shared permission predicate ---
+
+require_root_owned() {
+    local path="$1" kind="$2" owner mode
     [ -e "$path" ] || die "missing root-owned $kind: $path (run scripts/install-tc-deploy.sh)"
-    meta="$(stat -c '%U:%G %a' "$path")"
-    case "$meta" in
-        "root:root "[0-7][0-57][0-57]) ;;
-        *) die "$path must be root:root and not group/other writable (found: $meta)" ;;
-    esac
+    owner="$(stat -c '%U:%G' "$path")"
+    [ "$owner" = "root:root" ] || die "$path must be root:root (found: $owner)"
+    mode="$(stat -c '%a' "$path")"
+    if mode_has_write_bits "$mode"; then
+        die "$path is group- or other-writable (mode $mode) — refusing to trust it"
+    fi
 }
 
 # The parent directory matters as much as the file: a writable directory means the file can be
 # replaced wholesale, whatever its own mode says.
-assert_root_owned "$ROOT_LIB" "directory"
-assert_root_owned "$DEPLOY_SCRIPT" "helper"
-assert_root_owned "$MANIFEST" "manifest"
+require_root_owned "$ROOT_LIB" "directory"
+require_root_owned "$DEPLOY_SCRIPT" "helper"
+require_root_owned "$MANIFEST" "manifest"
 
 # The installed helper must still be the reviewed one. The manifest is root-owned, so an
 # unprivileged account can neither swap the helper nor update the digest that would betray it.
@@ -105,7 +120,7 @@ case "$VERB" in
         # NOT read systemd's WorkingDirectory to find code: that path points into a
         # service-user-writable worktree, and using it to select an executable would reintroduce
         # exactly the defect this program exists to prevent.
-        assert_root_owned "$BACKUP_DIR" "snapshot directory"
+        require_root_owned "$BACKUP_DIR" "snapshot directory"
         exec /usr/bin/env -i \
             PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
             HOME=/root \

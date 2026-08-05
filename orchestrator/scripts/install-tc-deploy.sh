@@ -30,17 +30,35 @@ for f in tc-deploy-release.sh deploy-console.sh; do
     [ -f "$SRC_DIR/$f" ] || die "missing source file: $SRC_DIR/$f"
 done
 
+# --- BEGIN shared permission predicate (byte-identical in tc-deploy-release.sh and
+# install-tc-deploy.sh; tests assert they have not drifted) ---
+# Refuse any path carrying a group- or other-write bit.
+#
+# Implemented as a NUMERIC MASK, not a glob. The first version of this guard used
+# "root:root "[0-7][0-57][0-57], and a shell character range cannot express "no write bit":
+# [0-57] is the set {0,1,2,3,4,5,7}, so it accepted 2, 3 and 7 — every one of them writable.
+# 0777 passed a check whose own error message said "not group/other writable" (PR #79 round 3).
+mode_has_write_bits() {
+    # $1 is an octal mode from `stat -c %a`, 3 or 4 digits. 8#22 is g+w | o+w.
+    local mode="$1"
+    [ -n "$mode" ] || return 0            # unreadable mode => treat as unsafe
+    case "$mode" in *[!0-7]*) return 0 ;; esac   # not octal => unsafe
+    (( 8#$mode & 8#22 ))
+}
+# --- END shared permission predicate ---
+
 # A root-owned file inside a directory someone else can write is not protected: the file can be
 # replaced wholesale. Refuse to install into an unsafe parent rather than produce a surface that
 # only looks locked down.
 assert_safe_dir() {
-    local dir="$1" meta
+    local dir="$1" owner mode
     [ -d "$dir" ] || return 0
-    meta="$(stat -c '%U:%G %a' "$dir")"
-    case "$meta" in
-        "root:root "[0-7][0-57][0-57]) ;;
-        *) die "$dir must be root:root and not group/other writable (found: $meta)" ;;
-    esac
+    owner="$(stat -c '%U:%G' "$dir")"
+    [ "$owner" = "root:root" ] || die "$dir must be root:root (found: $owner)"
+    mode="$(stat -c '%a' "$dir")"
+    if mode_has_write_bits "$mode"; then
+        die "$dir is group- or other-writable (mode $mode) — refusing to install into it"
+    fi
 }
 
 assert_safe_dir /usr/local
