@@ -135,6 +135,12 @@ esac
 # dependency changes are a root-performed provisioning step, not something a deployment does.
 # `pip install` during a deploy would put the service user back in control of what root's unit
 # executes, which is the whole thing this increment exists to prevent.
+#
+# And it must hold only PINNED THIRD-PARTY dependencies. An editable install of the application
+# writes a `.pth`/`__editable__*` finder that resolves imports back into the release tree, which
+# would give a root-owned interpreter importing service-user-writable code — every ownership
+# property satisfied and the application still mutable. The privileged program refuses such a
+# venv at apply time; this refuses it at install time, where the owner is present to fix it.
 
 # This MUST mirror resolve_interpreter() in tc-deploy-privileged.sh, or the installer will bless
 # something the deployment then refuses — which is worse than no check at all, because it moves
@@ -182,7 +188,11 @@ if [ "$PROVISION_VENV" = 1 ]; then
     # and must not be able to change it.
     chmod -R go-w "$VENV" || die "could not lock down $VENV"
     say "  $VENV is root-owned and not writable by the service user"
-    say "  dependency installation is now a ROOT action: sudo $VENV/bin/pip install -e <release>/orchestrator"
+    say "  dependency installation is now a ROOT action, and must NOT be an editable install:"
+    say "      sudo $VENV/bin/pip install --no-deps -r <reviewed-requirements.txt>"
+    say "  \`pip install -e <release>/orchestrator\` would write a finder into this venv pointing"
+    say "  back at the service-user-writable release tree — a root-owned interpreter importing"
+    say "  mutable code. The application imports from the authenticated runtime working directory."
     say ""
 fi
 

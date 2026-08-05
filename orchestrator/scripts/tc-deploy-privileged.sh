@@ -36,6 +36,8 @@
 #   apply <40-hex-sha>  deploy that release; file phases always, systemd phases when booted
 #   rollback            restore the previous unit, inspector and sudoers from root-owned state
 #   start-run <id>      create the transient per-deployment unit (systemd only)
+#   bootstrap <sha>     ONE-TIME setup: establish the trusted runner runtime so start-run has
+#                       immutable code to launch from on a fresh host. Never in sudoers.
 #
 # No path, user, service, unit or port is ever accepted from the caller. They are read from
 # `$PREFIX/target.conf`, which is root-owned and verified before it is read.
@@ -363,6 +365,39 @@ verify_runtime() {
     die "the runtime tree contains group/other-writable content ($loose)"
 }
 
+# Review blocker: a root-owned interpreter and a root-owned working directory are not enough if
+# the venv itself points imports somewhere mutable.
+#
+# `pip install -e <release>/orchestrator` writes a `.pth` file or an `__editable__*` finder into
+# site-packages that resolves `tc_growth` back to the release tree. The unit would then have a
+# root-owned interpreter, a root-owned WorkingDirectory, and still import the service user's
+# code — every property above satisfied and the actual application mutable. Which is why this
+# checks where imports can COME FROM, not just what runs.
+assert_no_import_path_into_mutable_trees() {
+    local interpreter="$1" site offender
+    for site in $("$interpreter" -c \
+        'import site,sys,json
+paths = set(sys.path)
+try: paths.update(site.getsitepackages())
+except Exception: pass
+try: paths.add(site.getusersitepackages())
+except Exception: pass
+print("\n".join(p for p in paths if p))' 2>/dev/null); do
+        [ -d "$site" ] || continue
+        # Any redirection file that names a tree the service user can write.
+        offender="$(grep -rlE "$TC_APP_DIR|$TC_RELEASES_DIR" "$site" \
+            --include='*.pth' --include='__editable__*' 2>/dev/null | head -1)"
+        [ -n "$offender" ] && die \
+"the trusted virtualenv redirects imports into a service-user-writable tree: $offender
+
+An editable install (pip install -e) points the root-owned venv back at the release checkout, so
+the unit would run a root-owned interpreter from a root-owned directory and still import mutable
+code. Install pinned third-party dependencies into the venv instead, and let the application
+import from the authenticated root-owned runtime working directory."
+    done
+    return 0
+}
+
 # The interpreter is part of what the SHA has to cover: a venv the service user can write is a
 # way to change what executes without touching a single application file.
 resolve_interpreter() {
@@ -380,6 +415,7 @@ resolve_interpreter() {
     #     proving nothing; permission to replace a symlink comes from its directory.
     _assert_root_owned_and_locked "$(dirname "$candidate")"
     _assert_root_owned_and_locked "$real"
+    assert_no_import_path_into_mutable_trees "$candidate"
     local owner
     owner="$(_owner_of "$candidate")"
     [ "$owner" = "root:root" ] || die "the interpreter entry point is not root-owned: $candidate (owned by ${owner:-unknown})"
@@ -662,6 +698,48 @@ verb_rollback() {
     return 0
 }
 
+verb_bootstrap() {
+    # Review blocker: `start-run` refuses until a root-owned `current` runtime exists, but
+    # `start-run` is what launches the runner that creates one. On a fresh host that is circular,
+    # and the answer "do the first deployment from the terminal" reintroduces exactly the manual
+    # burden this work package exists to remove.
+    #
+    # So the trusted runner runtime is established ONCE, by the owner, during host setup — the
+    # same act that installs this program. It materialises and authenticates a runtime and sets
+    # `current`, and it touches NOTHING else: no unit, no inspector, no sudoers, no restart. It is
+    # not a deployment and must not be able to become one.
+    #
+    # It is deliberately not in the sudoers surface. The service user can never reach it; only a
+    # human already running as root can, which is what makes it a setup step rather than a second
+    # way to deploy.
+    local sha="$1" release
+    valid_sha "$sha" || die "bootstrap takes an exact 40-character lowercase hex SHA"
+    release="$TC_RELEASES_DIR/$sha"
+    [ -d "$release" ] || die "no release directory for $sha under the configured releases root; \
+stage the release worktree as part of host setup, then bootstrap it"
+
+    if [ -f "$TC_SNAPSHOT_DIR/current" ]; then
+        die "this target already has a trusted runtime; bootstrap is a one-time setup action and \
+refuses to replace one. Deploy through apply instead."
+    fi
+
+    phase "verify-machinery" ok
+    run_clean install -d -m 0755 -o root -g root "$TC_SNAPSHOT_DIR" || die "cannot create $TC_SNAPSHOT_DIR"
+    materialize_runtime "$sha" "$release"
+    phase "materialize-runtime" ok
+    verify_against_commit "$sha" "$TC_RUNTIME_DIR/$sha"
+    phase "authenticate-runtime" ok
+    verify_runtime "$sha"
+    phase "verify-runtime" ok
+    printf '%s\n' "$sha" > "$TC_SNAPSHOT_DIR/current"
+    run_clean chmod 0644 "$TC_SNAPSHOT_DIR/current"
+    phase "bootstrap" ok
+    note "the trusted runner runtime is $TC_RUNTIME_DIR/$sha"
+    note "no unit, inspector, sudoers or service state was touched — this is not a deployment."
+    note "start-run can now launch the deployment runner from immutable code."
+    return 0
+}
+
 verb_start_run() {
     # Review blocker 1, both halves.
     #
@@ -720,6 +798,7 @@ case "${1-}" in
     self-check) [ $# -eq 1 ] || die "self-check takes no arguments"; verb_self_check ;;
     apply)      [ $# -eq 2 ] || die "apply takes exactly one argument, the target SHA"; verb_apply "$2" ;;
     rollback)   [ $# -eq 1 ] || die "rollback takes no arguments"; verb_rollback ;;
+    bootstrap)  [ $# -eq 2 ] || die "bootstrap takes exactly one argument, the target SHA"; verb_bootstrap "$2" ;;
     start-run)  [ $# -eq 2 ] || die "start-run takes exactly one argument, the run id"; verb_start_run "$2" ;;
-    *)          die "not a verb: '${1-}' (the interface is: self-check, apply <sha>, rollback, start-run <id>)" ;;
+    *)          die "not a verb: '${1-}' (the interface is: self-check, apply <sha>, rollback, start-run <id>, bootstrap <sha>)" ;;
 esac

@@ -632,6 +632,150 @@ def test_the_installer_refuses_an_interpreter_the_service_user_could_write(tmp_p
     assert not (root / "priv" / "lib").exists(), "the install proceeded despite rejecting"
 
 
+# --- imports resolve only from the authenticated runtime ----------------------------------------
+
+def _site_packages(venv: Path) -> Path:
+    out = subprocess.run([str(venv / "bin" / "python"), "-c",
+                          "import site; print(site.getsitepackages()[0])"],
+                         capture_output=True, text=True, timeout=120, check=True).stdout
+    return Path(out.strip())
+
+
+def test_the_application_imports_only_from_the_authenticated_runtime(target):
+    """Review blocker, executed under the EXACT service command.
+
+    A root-owned interpreter and a root-owned WorkingDirectory still let the service user choose
+    what runs if the venv redirects imports. This runs the interpreter the unit names, from the
+    directory the unit names, and asks Python where the application actually came from.
+    """
+    staged_release(target)
+    assert run_verb(target, "apply", target.target_sha).returncode in (0, 3)
+    runtime = Path(target.target.runtime_dir) / target.target_sha
+
+    probe = ("import json, sys, tc_growth; "
+             "print(json.dumps({'origin': tc_growth.__file__, 'path': sys.path}))")
+    out = subprocess.run([str(Path(target.target.venv) / "bin" / "python"), "-c", probe],
+                         cwd=str(runtime / "orchestrator"), capture_output=True, text=True,
+                         timeout=120, check=True).stdout
+    resolved = __import__("json").loads(out)
+
+    assert resolved["origin"].startswith(str(runtime)), \
+        f"tc_growth resolved from {resolved['origin']}, not the authenticated runtime"
+    for entry in resolved["path"]:
+        if not entry:
+            continue
+        assert not entry.startswith(target.target.app_dir), f"sys.path reaches the app tree: {entry}"
+        assert not entry.startswith(target.target.releases_dir), \
+            f"sys.path reaches the releases tree: {entry}"
+
+
+def test_an_editable_install_pointing_into_a_mutable_tree_is_refused(target):
+    """`pip install -e <release>/orchestrator` writes exactly this shape. Every ownership property
+    would still hold and the application would still be mutable, which is why the check is about
+    where imports can COME FROM rather than what runs."""
+    staged_release(target)
+    planted = _site_packages(Path(target.target.venv)) / "__editable__.tc_growth.pth"
+    planted.write_text(f"{target.target.releases_dir}/{target.target_sha}/orchestrator\n")
+    try:
+        proc = run_verb(target, "apply", target.target_sha)
+        assert proc.returncode == 2
+        assert "redirects imports into a service-user-writable tree" in proc.stderr
+        assert "editable install" in proc.stderr
+        assert not Path(target.target.unit_path).exists()
+    finally:
+        # The venv is shared across this file's targets; a test that plants something in it must
+        # take it back out, or every later fixture inherits the failure.
+        planted.unlink(missing_ok=True)
+
+
+def test_the_installer_does_not_recommend_an_editable_install(target):
+    """It used to print `pip install -e <release>/orchestrator` as the remediation — advice that
+    defeated the boundary the same script had just established."""
+    source = (deploy_harness.REPO_SCRIPTS / "install-tc-deploy.sh").read_text()
+    # Only what the installer PRINTS. A comment legitimately quotes the bad advice while
+    # explaining why it is wrong, and forbidding the explanation would push the reasoning out of
+    # the file — the same trade the permission-guard test makes.
+    printed = [ln for ln in source.splitlines() if ln.strip().startswith("say ")]
+    # What is RECOMMENDED, not what is mentioned. One printed line quotes `pip install -e` while
+    # warning against it, and that warning is the most useful thing an operator reads here —
+    # forbidding the mention would delete the explanation along with the mistake.
+    recommended = [ln for ln in printed if "sudo " in ln and "pip install" in ln]
+    assert recommended, "the installer no longer tells the operator how to install dependencies"
+    assert not any("install -e" in ln for ln in recommended), recommended
+    assert any("must NOT be an editable install" in ln for ln in printed)
+    assert any("--no-deps -r" in ln for ln in printed)
+
+
+# --- a fresh host can start its own first deployment --------------------------------------------
+
+@pytest.fixture()
+def fresh(tmp_path, shared_venv):
+    """A target that has never been deployed to — no runtime, no current pointer."""
+    deploy_target._reset_for_tests()
+    deploy_target.open_cli_target_gate()
+    try:
+        built = deploy_harness.build(tmp_path / "fresh", name="probe", privileged=True,
+                                     venv_dir=shared_venv)
+    finally:
+        deploy_target.close_cli_target_gate()
+    try:
+        yield built
+    finally:
+        deploy_harness.teardown(built)
+        deploy_target._reset_for_tests()
+
+
+def test_bootstrap_gives_a_fresh_host_an_immutable_runner_runtime(fresh):
+    """Review blocker: `start-run` refused until a runtime existed, and `start-run` is what
+    launches the runner that creates one. On a fresh host that is circular, and answering it with
+    "deploy once from the terminal" reintroduces the burden this work exists to remove."""
+    assert run_verb(fresh, "start-run", "7").returncode == 2      # circular, before bootstrap
+    staged_release(fresh)
+
+    proc = run_verb(fresh, "bootstrap", fresh.target_sha)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "phase=authenticate-runtime   status=ok" in proc.stdout
+    assert "status=ok" in proc.stdout and "phase=bootstrap" in proc.stdout
+
+    started = run_verb(fresh, "start-run", "7")
+    assert started.returncode in (0, 3), started.stdout + started.stderr
+    assert fresh.target.runtime_dir in started.stdout
+
+
+def test_bootstrap_touches_no_deployment_state(fresh):
+    """It establishes a runner runtime and nothing else. A setup step that could also deploy would
+    be a second deployment path, which is the thing issue #77 Decision 2 forbids."""
+    staged_release(fresh)
+    assert run_verb(fresh, "bootstrap", fresh.target_sha).returncode == 0
+    for artifact in (fresh.target.unit_path, fresh.target.inspector_dest,
+                     fresh.target.sudoers_file):
+        assert not Path(artifact).exists(), f"bootstrap wrote {artifact}"
+    assert not (Path(fresh.target.snapshot_dir) / "previous").exists()
+
+
+def test_bootstrap_refuses_to_replace_an_existing_runtime(fresh):
+    staged_release(fresh)
+    assert run_verb(fresh, "bootstrap", fresh.target_sha).returncode == 0
+    proc = run_verb(fresh, "bootstrap", fresh.target_sha)
+    assert proc.returncode == 2
+    assert "one-time setup action" in proc.stderr
+
+
+def test_bootstrap_is_never_reachable_from_the_service_user(fresh):
+    """It is a human-at-the-console setup action. Granting it through sudoers would make it a
+    second way for the unprivileged half to establish what root later trusts."""
+    staged_release(fresh)
+    assert run_verb(fresh, "bootstrap", fresh.target_sha).returncode == 0
+    assert run_verb(fresh, "apply", fresh.target_sha).returncode in (0, 3)
+    sudoers = Path(fresh.target.sudoers_file).read_text()
+    # On the VERB, not on the word: pytest's tmp_path is named after the test, so the path itself
+    # contains "bootstrap" and a naive substring check passes for the wrong reason.
+    assert f"{fresh.target.privileged_entry} bootstrap" not in sudoers
+    granted = [ln.split(fresh.target.privileged_entry + " ")[1].split()[0]
+               for ln in sudoers.splitlines() if fresh.target.privileged_entry + " " in ln]
+    assert set(granted) == {"apply", "rollback", "self-check", "start-run"}, granted
+
+
 # --- what is NOT proven here, pinned so it cannot be quietly claimed -----------------------------
 
 def test_apply_reports_the_systemd_phases_as_unavailable_rather_than_claiming_them(target):
