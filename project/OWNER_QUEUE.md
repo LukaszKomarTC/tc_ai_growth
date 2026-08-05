@@ -7,9 +7,11 @@ objects (PROTOCOL.md, Phase 2). Pointers, not copies — evidence lives where it
 
 | ID | Priority | Decision / action | Evidence | Recommendation | Waiting since | Status |
 |---|---|---|---|---|---|---|
-| U4D-1 | normal | Authorize merge of PR #78 (U4d: governed deployment runner) — merges as a DISABLED capability; enabling is a separate later decision after the host review + disposable proof | PR #78 thread (head `c436da2`, CI green, 398 tests, 1 review round: 2 blockers found and cleared) | Reviewer: "suitable for owner merge authorization as a disabled capability" | 2026-08-05 | waiting |
+| _(empty)_ | — | — | — | — | — | — |
 
-_Not owner-queue items: #77 is fully decided (D1 reviewer-confirmed A; D2 owner-binding —
+_Not owner-queue items: U4d's ENABLEMENT gate (7 post-merge criteria on PR #78) is engineering
+work, not an owner decision — it comes back to the queue only when a disposable proof and the
+host privilege review are ready for authorization. #77 is fully decided (D1 reviewer-confirmed A; D2 owner-binding —
 owner-clicked Console operation + detached runner, no remote identity). U4d is authorized to
 build on current `main` with no further owner decision before its PR._
 
@@ -37,6 +39,7 @@ build on current `main` with no further owner decision before its PR._
 | U4A1-1 | Owner "merge" 2026-08-04 → PR #72 rebase-merged (main 8dafa5c, 265 green); console redeploy + 5-check acceptance next | PR #72 thread |
 | U4A2-1 | Owner "ok-go" 2026-08-04 → PR #73 rebase-merged (main 9dd11ef, 266 green); redeploy + 5-check acceptance next | PR #73 thread |
 | U4B-1 | Owner "go" 2026-08-04 → PR #74 rebase-merged (main 3edb0de, 297 green on merged tip); deploy + D#13 acceptance per 6 criteria next | PR #74 thread |
+| U4D-1 | Owner "merge" 2026-08-05 → PR #78 rebase-merged (main 5beb562, 398 green on merged tip) as a DISABLED capability. Merging deployed nothing and enabled nothing: `deploy_release` stays enabled=False and server-refused until the 7 post-merge criteria pass | PR #78 thread |
 | U4D-2 | #77 Decision 2 RESOLVED by owner 2026-08-04 (binding, final): owner-clicked Operation Registry action + DETACHED supervised runner surviving the Console restart; remote SSH identity / inbound trigger / shell REJECTED. U4d authorized to build on current main; PR must reference #77 and carry full scope | issue #77 thread |
 | U4C-ACC | U4c DEPLOYED (684681c, schema v6) and all 8 criteria evidenced — 1-2 on the production store, 3-7 lead-run over real HTTP against the deployed commit (NOT a production browser pass; recorded as such) | WP-CONSOLE-USABILITY.md §U4c acceptance record |
 | U4D-SEQ | #77 Decision 1 RESOLVED by owner 2026-08-04: option A — deploy U4c now via the rehearsed procedure; build U4d after, with a staging dry run, first production exercise = the NEXT increment (not its own bootstrap). #77 stays open, scope and security boundary unreduced | issue #77 thread |
