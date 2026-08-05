@@ -76,6 +76,65 @@ described in PR #79's withdrawn rounds.
 tests that build real directories at each mode and run the actual shell function against them.
 Nothing else. The helper, its installer and the sudoers surface are withdrawn.
 
+### Successor: WP-U4d.1 — the privileged chain, reviewed as one unit
+
+**Tracked in its own PR** (see the link at the top of this document once opened). This section is
+the durable scope; the PR description carries the same criteria.
+
+**Status: SPECIFICATION ONLY. No implementation exists yet.** Stated first because the whole
+reason #79 was reduced is that descriptions here ran ahead of code.
+
+#### The design constraint that broke the first attempt
+
+`orchestrator/scripts/deploy-console.sh` was written to run **from** a release checkout: it
+derives `APP_DIR` from `TC_APP_DIR` or its own location (line 47), executes
+`"$VENV/bin/python" -m tc_growth.cli` (line 154), and installs
+`"$APP_DIR/scripts/wp-integrity-scan.sh"` into `/usr/local/bin` (line 262). **No wrapper makes
+that safe to run as root** — wrapping only moves the boundary one process further along, which is
+exactly what review round 5 found.
+
+So the script must be **split**, not wrapped:
+
+- **Unprivileged part**, runs as `tcgrowth`: preflight, ancestry, worktree staging, the test
+  suite, `db-init`, and computing the *declarative inputs* the privileged part will need
+  (release path, target SHA, the inspector's bytes and their digest).
+- **Privileged part**, root-owned and installed outside the repository: performs only fixed host
+  mutations — write the systemd unit, install the inspector from **verified bytes**, install the
+  sudoers drop-in, restart the service, create the transient deployment unit. It reads
+  declarative inputs; it executes nothing from `/opt/tc_ai_growth`.
+
+The inspector install is the subtle one: copying a script out of a `tcgrowth`-writable tree into
+a root-executed location launders the trust. Its bytes must be verified against a root-owned
+manifest produced at install time from the reviewed source, not taken from the release.
+
+#### Acceptance criteria (issue #77 Decision 2 + PR #79 rounds 1–6)
+
+1. Defect 1 fixed: no `sudo -u tcgrowth` no-ops; the runner escalates once, through one entry point.
+2. Root performs only narrow fixed host mutations.
+3. No root process imports Python or executes scripts/modules from a `tcgrowth`-writable checkout.
+4. Apply and rollback use only root-owned code and root-controlled state; rollback selects nothing
+   through `WorkingDirectory` or any other caller-influenced value.
+5. The privileged program re-derives every path/user/service from internal constants, re-validates
+   the SHA, and starts children with a constructed minimal environment.
+6. It verifies its own machinery at every invocation — owner, mode (via
+   `scripts/lib/permission-guard.sh`, already merged and proven) and digest.
+7. The transient per-deployment unit is created through that **same** single privileged entry
+   point; `tc-console` `KillMode` stays unchanged.
+8. An end-to-end **disposable run** proves apply, restart survival, durable Evidence completion
+   and rollback. **No description in that PR may assert the boundary until this run has executed.**
+9. Adversarial cases fail closed: forged environment, modified release content, unsafe
+   permissions, altered helper bytes, path traversal, non-verb arguments.
+10. Secret-bearing output from the disposable run is **inspected by eye** — unit tests proving
+    anticipated shapes are explicitly insufficient.
+11. `deploy_release` remains `enabled=False` and server-refused until 1–10 pass.
+
+#### Method, adopted from six defects
+
+Build the disposable target harness **first**, and let it be what proves each property, rather
+than writing the property into a description and testing the description. The recurring failure was
+never a missing check; it was a check whose inputs I controlled, or a claim about code I had never
+executed.
+
 ### What the successor PR must do
 
 Review the **complete privileged chain as one unit**: root performs only narrow fixed host
