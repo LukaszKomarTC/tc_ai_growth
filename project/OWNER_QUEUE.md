@@ -7,7 +7,7 @@ objects (PROTOCOL.md, Phase 2). Pointers, not copies — evidence lives where it
 
 | ID | Priority | Decision / action | Evidence | Recommendation | Waiting since | Status |
 |---|---|---|---|---|---|---|
-| U4D-GATE-1 | normal | Authorize merge of PR #79 (REDUCED scope: permission-guard fix + criterion-3 decision record). Merging installs, enables and executes NOTHING — deploy_release stays disabled and server-refused | PR #79 thread (head `2fc5c67`, CI green, 421 tests, 5 review rounds: 5 defects found, 4 withdrawn to a successor PR) | Reviewer: "Reduced scope cleared. Recommend merge; privileged-helper redesign remains a separate blocking successor increment" | 2026-08-05 | waiting |
+| U4D-GATE-1 | normal | Authorize merge of PR #79 (REDUCED scope: permission-guard fix + criterion-3 decision record). Merging installs, enables and executes NOTHING — deploy_release stays disabled and server-refused | PR #79 thread (head `6430cb2` rebased onto main @ `26abeb1`, CI green, 421 tests, 6 review rounds: 5 defects found, 4 withdrawn to a successor PR; reviewer re-verified the reduced diff at this head) | Reviewer: "Reduced scope cleared. Recommend merge; privileged-helper redesign remains a separate blocking successor increment" | 2026-08-05 | waiting |
 
 _Not owner-queue items: U4d's ENABLEMENT gate (7 post-merge criteria on PR #78) is engineering
 work, not an owner decision — it comes back to the queue only when a disposable proof and the
