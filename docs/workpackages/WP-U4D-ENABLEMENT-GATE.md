@@ -69,6 +69,42 @@ fails if a second `sudo` argv list ever appears, or if this one gains an argumen
 - `--rollback` is a separate entry point taking **no SHA at all** — nothing to choose, so nothing
   to get wrong — and refuses unless the running service points at a release worktree.
 
+### The blocker found in review, and what actually fixes it
+
+The first version of this wrapper still failed criterion 2, and the reviewer was right about why.
+
+It `exec`'d `deploy-console.sh` **from the release worktree**. That worktree is created by, and
+writable by, `tcgrowth`. I had reasoned that checking `git rev-parse HEAD == <sha>` made the
+content trustworthy. It does not: **HEAD proves which commit was checked out, not that the files
+still match it.** `tcgrowth` can edit the script after checkout and leave HEAD untouched.
+
+Nor can git be made the witness. The obvious patch — also require `git status --porcelain` to be
+empty — fails for the same reason one level down: the worktree's `.git` is writable by the same
+account, so any verification computed from it can be forged by whoever we are trying to detect.
+**Any check whose inputs the adversary owns is not a check.**
+
+The rollback branch had the identical defect in a different costume: it read `WorkingDirectory`
+from `systemctl show` and exec'd a script from that path — using systemd state to *select
+executable code* that lives in a writable directory.
+
+**The fix is structural, not another check.** The privileged machinery lives outside the
+repository, root-owned:
+
+```
+/usr/local/lib/tc-deploy/deploy-console.sh    root:root 0755
+```
+
+The wrapper executes only that, on both branches, and verifies ownership and mode **at every
+invocation** rather than trusting the install. The release worktree is *data* to the privileged
+step — the deploy script reads it to publish the unit's `WorkingDirectory`, and the Console later
+runs that code **unprivileged as `tcgrowth`**, which is the normal accepted arrangement. What must
+never happen is root executing it.
+
+**The consequence, stated rather than hidden:** a change to the deployment machinery itself is no
+longer picked up by running a deployment. Updating `/usr/local/lib/tc-deploy/` is a deliberate host
+action with its own review. That asymmetry is correct — *the thing that performs deployments must
+not be silently replaceable by a deployment.*
+
 ### The sudoers rule
 
 ```
@@ -129,7 +165,14 @@ and nothing else about the Console's process behaviour changes.
   the unit name embeds the SHA, so the same "validate before use" discipline applies again. It is
   more moving parts.
 
-### Recommendation: **Option B**, with the escalation folded into the existing wrapper
+### DECIDED: Option B — transient per-deployment unit (reviewer, PR #79)
+
+The reviewer's verdict: *"Recommend the transient per-deployment systemd unit. Reject
+`KillMode=process`. … Fold creation of that transient unit into the same root-owned helper so
+there remains one privileged entry point, not a second general capability."* `KillMode` for
+`tc-console` stays unchanged.
+
+### The original recommendation, kept for the record
 
 The cost of A is not that it is insecure today; it is that it is **unscoped and permanent**. It
 buys restart survival for the deployment by granting it to everything the Console will ever spawn,
