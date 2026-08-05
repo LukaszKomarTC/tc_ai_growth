@@ -364,7 +364,9 @@ def ex_release(sha: str, ctx: dict) -> StepResult:
     # THE one escalation: a fixed root-owned wrapper taking a single validated SHA. Not
     # `sudo <script>` from inside the release worktree — that would make a tree this runner can
     # write into the thing root executes.
-    code, out = _run(["sudo", "-n", DEPLOY_WRAPPER, sha], timeout=900.0)
+    # Fixed verb + validated SHA. The wrapper re-validates both and ignores everything we
+    # export — the environment below reaches nothing privileged (PR #79 review round 2).
+    code, out = _run(["sudo", "-n", DEPLOY_WRAPPER, "apply", sha], timeout=900.0)
     if code != 0:
         return StepResult(False, "the release step failed — rollback is available",
                           "\n".join(out.strip().splitlines()[-25:]))

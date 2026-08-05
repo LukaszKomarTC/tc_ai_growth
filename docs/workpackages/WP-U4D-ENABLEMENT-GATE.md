@@ -49,7 +49,7 @@ copying `.env` into the release (both files belong to `tcgrowth`; the copy needs
 Exactly **one** action escalates:
 
 ```
-sudo -n /usr/local/bin/tc-deploy-release.sh <40-hex-sha>
+sudo -n /usr/local/bin/tc-deploy-release.sh apply <40-hex-sha>
 ```
 
 `test_the_runner_escalates_exactly_once_and_only_through_the_wrapper` parses the module's AST and
@@ -107,13 +107,40 @@ longer picked up by running a deployment. Updating `/usr/local/lib/tc-deploy/` i
 action with its own review. That asymmetry is correct — *the thing that performs deployments must
 not be silently replaceable by a deployment.*
 
+### Round 2: the trust anchor was referenced but not written
+
+The structural fix above pointed root at `/usr/local/lib/tc-deploy/deploy-console.sh` — and **no
+such file existed in the repository**. I described a trust anchor without building one, which
+moved the most security-sensitive code outside the review boundary. A root-owned file can still
+be unsafe: it can execute release content, trust its environment, accept arbitrary paths, or keep
+rollback state somewhere the service user can rewrite. None of that was reviewable, because none
+of it was written.
+
+**Now in-repo and auditable:**
+
+- `orchestrator/scripts/tc-deploy-release.sh` — the single privileged program. Fixed verbs
+  (`apply <40-hex-sha>` / `rollback`), every path and name an **internal constant**, the SHA
+  re-validated here rather than accepted, and the child started via `env -i` with a constructed
+  minimal environment. **Caller-supplied `TC_*` values are ignored entirely** — they are not
+  authority, they are noise.
+- `orchestrator/scripts/install-tc-deploy.sh` — the deterministic host install. Refuses unsafe
+  parent directories (a root-owned file inside a writable directory can be replaced wholesale),
+  installs `root:root 0755`, writes a root-owned `MANIFEST.sha256`, and **verifies what actually
+  landed** rather than assuming the copy worked.
+- The privileged program checks, at **every invocation**: `$ROOT_LIB`, the helper and the
+  manifest are `root:root` and not group/other writable, and the helper still matches its
+  recorded digest. A swapped helper is caught before it runs; the manifest is root-owned, so the
+  service user can neither swap the helper nor rewrite the digest that would betray the swap.
+- Rollback restores from `/var/backups/tc-console`, root-owned and ownership-checked, and takes
+  no argument at all.
+
 ### The sudoers rule
 
 ```
 tcgrowth ALL=(root) NOPASSWD: /usr/local/bin/tc-deploy-release.sh
 ```
 
-**A known limitation, stated rather than hidden:** sudoers cannot express "one argument matching
+**A known limitation, stated rather than hidden:** sudoers cannot express "the verb `apply` plus one argument matching
 `^[0-9a-f]{40}$`". Written bare as above, sudo permits the script with *no* arguments; written
 with a glob it permits one *arbitrary* argument. Either way the argument check is the wrapper's
 job, which is why the wrapper validates before it uses. This is the same shape as the existing
