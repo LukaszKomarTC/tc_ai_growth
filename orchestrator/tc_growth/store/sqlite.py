@@ -143,6 +143,31 @@ class SqliteStore:
     def set_artifact_delivery_by_hash(self, content_sha256: str, status: str) -> bool:
         return records.set_artifact_delivery_by_hash(self._conn, content_sha256, status)
 
+    # -- WP-U4d deploys --
+    def plan_deploy(self, *, sha: str, plan: dict, plan_digest: str, requested_by: str) -> int:
+        return records.plan_deploy(self._conn, sha=sha, plan=plan, plan_digest=plan_digest,
+                                   requested_by=requested_by)
+
+    def get_deploy_run(self, run_id: int) -> dict | None:
+        return records.get_deploy_run(self._conn, run_id)
+
+    def list_deploy_runs(self, *, limit: int = 20) -> list[dict]:
+        return records.list_deploy_runs(self._conn, limit=limit)
+
+    def start_deploy_run(self, run_id: int, *, pid: int) -> bool:
+        return records.start_deploy_run(self._conn, run_id, pid=pid)
+
+    def finish_deploy_run(self, run_id: int, *, status: str, outcome: str) -> None:
+        records.finish_deploy_run(self._conn, run_id, status=status, outcome=outcome)
+
+    def record_deploy_step(self, run_id: int, *, seq: int, name: str, status: str,
+                           summary: str, detail: str | None = None) -> int:
+        return records.record_deploy_step(self._conn, run_id, seq=seq, name=name, status=status,
+                                          summary=summary, detail=detail)
+
+    def list_deploy_steps(self, run_id: int) -> list[dict]:
+        return records.list_deploy_steps(self._conn, run_id)
+
     # -- lifecycle --
     def seed_incident_case(self) -> int:
         return seed.seed_incident_case(self._conn)

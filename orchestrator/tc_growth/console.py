@@ -53,6 +53,27 @@ _KEEPALIVE_FRAME = b": keepalive\n\n"  # SSE comment — MUST start with ':' so 
 
 # U4a decision actions: POST /decision/<id>/<act>. Outcome text is server-fixed and selected by
 # WHITELISTED query keys only — the redirect target can never carry reflected content.
+# WP-U4d. Server-fixed text, whitelisted by key — the URL can never inject a message.
+_DEPLOY_RUN = re.compile(r"^/deploy/(\d+)$")
+_DEPLOY_START = re.compile(r"^/deploy/(\d+)/start$")
+_DEPLOY_NOTICES = {
+    "planned": "Deployment plan created. Read it in full — including the steps that cannot be "
+               "undone — before authorizing.",
+    "started": "Deployment authorized and running in its own process. It continues even while "
+               "the Console restarts.",
+}
+_DEPLOY_ERRORS = {
+    "sha": "That is not an exact 40-character commit SHA. Branch names, short SHAs and refs are "
+           "refused, because a deployment target must mean the same thing tomorrow.",
+    "not-offered": "Deployment from the browser is not enabled yet — it must prove its full path "
+                   "on a disposable target first (issue #77).",
+    "digest": "That authorization did not match the plan you were shown. Open the plan again and "
+              "read it before authorizing.",
+    "state": "That deployment is not waiting to be authorized.",
+    "internal": "Something went WRONG INSIDE THE CONSOLE — this is a defect, not a policy "
+                "refusal. It has been recorded in Evidence.",
+}
+
 _DECISION_ACT = re.compile(
     r"^/decision/(\d+)/(approve|reject|unapprove|verify|verify-confirm|adopt-live)$")
 _DECISION_NOTICES = {
@@ -317,7 +338,7 @@ def _shell(title: str, active: str, body: str, *, site_name: str, env_kind: str)
     # takes you somewhere other than what it says is a truth defect on this surface).
     nav = "".join([
         _tab("Home", "/"), _tab("Decisions", "/decisions"), _tab("Operations", "/operations"),
-        _tab("Evidence", "/logs"), _tab("Cases", "/cases"),
+        _tab("Evidence", "/logs"), _tab("Cases", "/cases"), _tab("Deploy", "/deploy"),
     ])
     kind = (env_kind or "staging").strip().lower()
     badge_cls = "prod" if kind == "production" else "stag"
@@ -637,6 +658,54 @@ class _Handler(BaseHTTPRequestHandler):
                 attempts=attempts, comparison=comparison, snapshot=snapshot,
                 snapshot_token=snap_token)
             self._html(200, _shell(f"Decision D#{decision.id}", "decisions", body, **chrome))
+        elif path == "/deploy" or _DEPLOY_RUN.match(path):
+            # WP-U4d. Reading deployment history is never dangerous, so the page always renders;
+            # the control that AUTHORIZES one appears only when the operation is enabled.
+            from . import deploy as deploy_mod
+            from .core.actions import get_operation
+            from . import console_views  # noqa: F811 - function-local name in do_GET
+            from .store import open_store  # noqa: F811 - same reason
+
+            op = get_operation("deploy_release")
+            offered = op.enabled
+            reason = ("Deployment from the browser is not offered yet: this operation must "
+                      "prove its full path on a disposable target before its first real use "
+                      "(issue #77). Until then deployments are run from the terminal and "
+                      "recorded here.")
+            csrf = csrf_for(session, secret)
+            q = parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+            notice = _DEPLOY_NOTICES.get(q.get("msg", [""])[0], "")
+            error = _DEPLOY_ERRORS.get(q.get("err", [""])[0], "")
+            m = _DEPLOY_RUN.match(path)
+            try:
+                store = open_store()
+                if m:
+                    run = store.get_deploy_run(int(m.group(1)))
+                    if run is None:
+                        self._send(404, b"no such deploy run", "text/plain; charset=utf-8")
+                        return
+                    if run["status"] == "planned":
+                        plan = json.loads(run["plan"])
+                        body = console_views.deploy_plan_body(
+                            run, plan, deploy_mod.plan_text(plan), csrf=csrf, offered=offered,
+                            notice=notice, error=error)
+                    else:
+                        body = console_views.deploy_run_body(
+                            run, store.list_deploy_steps(run["id"]))
+                    title = f"Deploy #{run['id']}"
+                else:
+                    body = console_views.deploy_body(
+                        store.list_deploy_runs(limit=20), csrf=csrf, offered=offered,
+                        disabled_reason=reason, notice=notice, error=error)
+                    title = "Deploy"
+            except Exception as exc:  # noqa: BLE001 - a defect, and it must say so. Rendered
+                # in place, never redirected: a failing view that redirects to ITSELF is an
+                # infinite loop, which is a worse way to fail than saying what went wrong.
+                self._record_internal_error("deploy/view", exc)
+                body = (f"<div class='sev-warn'>{_DEPLOY_ERRORS['internal']}</div>")
+                self._html(200, _shell("Deploy", "deploy", body, **chrome))
+                return
+            self._html(200, _shell(title, "deploy", body, **chrome))
         elif path.startswith("/report/"):
             from . import console_views
 
@@ -711,6 +780,13 @@ class _Handler(BaseHTTPRequestHandler):
             self._stream_execute(form.get("op", ""))
             return
 
+        if path == "/deploy/plan" or _DEPLOY_START.match(path):
+            if not valid_csrf(form.get("csrf"), session, secret):
+                self._json(403, {"error": "bad csrf token"})
+                return
+            self._deploy_act(path, form)
+            return
+
         m = _DECISION_ACT.match(path)
         if m:
             if not valid_csrf(form.get("csrf"), session, secret):
@@ -720,6 +796,54 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         self._send(404, b"not found", "text/plain; charset=utf-8")
+
+    def _redirect_deploy(self, run_id: int | None, param: str) -> None:
+        where = f"/deploy/{run_id}" if run_id else "/deploy"
+        self._headers(303, "text/html; charset=utf-8",
+                      extra=[("Location", f"{where}?{param}")], body_len=0)
+
+    def _deploy_act(self, path: str, form: dict) -> None:
+        """Plan a deployment, or authorize one that was already planned.
+
+        Approval and execution are separate acts on separate rows in time: planning writes the
+        target and the plan the owner will read; authorizing requires the digest of THAT plan.
+        The commit is never an argument to the runner — it lives on the immutable planned row.
+        """
+        from . import deploy as deploy_mod
+        from .core.actions import get_operation
+        from .store import open_store  # noqa: F811 - see do_GET
+
+        if not get_operation("deploy_release").enabled:
+            self._redirect_deploy(None, "err=not-offered")
+            return
+        try:
+            store = open_store()
+            m = _DEPLOY_START.match(path)
+            if m is None:
+                try:
+                    sha = deploy_mod.validate_sha(form.get("sha", ""))
+                except deploy_mod.DeployRefused:
+                    self._redirect_deploy(None, "err=sha")
+                    return
+                plan = deploy_mod.build_plan(sha)
+                run_id = store.plan_deploy(sha=sha, plan=plan,
+                                           plan_digest=deploy_mod.plan_digest(plan),
+                                           requested_by="owner")
+                self._redirect_deploy(run_id, "msg=planned")
+                return
+
+            run_id = int(m.group(1))
+            run = store.get_deploy_run(run_id)
+            if run is None or run["status"] != "planned":
+                self._redirect_deploy(run_id if run else None, "err=state")
+                return
+            if not hmac.compare_digest(form.get("digest", ""), run["plan_digest"]):
+                self._redirect_deploy(run_id, "err=digest")
+                return
+            deploy_mod.spawn_detached(run_id)
+            self._redirect_deploy(run_id, "msg=started")
+        except Exception as exc:  # noqa: BLE001 - defects never wear policy's clothes
+            self._redirect_deploy(None, f"err={self._record_internal_error('deploy/act', exc)}")
 
     def _record_internal_error(self, where: str, exc: BaseException) -> str:
         """An UNEXPECTED exception is a defect, not a policy outcome (review #76). Record it as

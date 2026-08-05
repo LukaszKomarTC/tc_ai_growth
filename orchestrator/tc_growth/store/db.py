@@ -16,7 +16,7 @@ from pathlib import Path
 
 from ..config import BASE_DIR, active_site, get_settings
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 # One statement per table; CREATE ... IF NOT EXISTS makes init idempotent.
 _SCHEMA = """
@@ -140,6 +140,38 @@ CREATE TABLE IF NOT EXISTS decision_verify_attempts (
 
 CREATE INDEX IF NOT EXISTS idx_verify_attempts ON decision_verify_attempts(decision_id);
 
+-- WP-U4d: governed deployments. A deploy is REQUESTED (plan recorded, owner reviews it) and
+-- only then STARTED — approval and execution stay separate rows in time, exactly as decisions
+-- do. `sha` is the single authorized target: the runner refuses anything else, so the row IS
+-- the authorization. Steps live in their own append-only table because the runner writes them
+-- from a DETACHED process that outlives the Console (issue #77 Decision 2) — the evidence must
+-- not depend on the web process surviving.
+CREATE TABLE IF NOT EXISTS deploy_runs (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    sha           TEXT NOT NULL,               -- exact 40-hex target; nothing else may run
+    requested_at  TEXT NOT NULL,
+    requested_by  TEXT NOT NULL,
+    plan          TEXT NOT NULL,               -- the plan the owner reviewed, verbatim
+    plan_digest   TEXT NOT NULL,               -- consent binding: start must present this digest
+    status        TEXT NOT NULL,               -- planned | running | succeeded | failed | refused
+    started_at    TEXT,
+    finished_at   TEXT,
+    outcome       TEXT,                        -- short owner-readable terminal result
+    runner_pid    INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS deploy_steps (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id   INTEGER NOT NULL REFERENCES deploy_runs(id),
+    seq      INTEGER NOT NULL,
+    at       TEXT NOT NULL,
+    name     TEXT NOT NULL,
+    status   TEXT NOT NULL,                    -- running | ok | failed | skipped
+    summary  TEXT NOT NULL,
+    detail   TEXT,
+    UNIQUE (run_id, seq)
+);
+
 CREATE TABLE IF NOT EXISTS decision_adoptions (
     -- Adopt-live idempotence as a DURABLE EXACT KEY (review #76): source decision + its
     -- revision + its envelope hash + the digest of the snapshot the owner was shown. UNIQUE, so
@@ -202,6 +234,39 @@ END;
 # pre-v4 store _SCHEMA executes BEFORE the ALTER TABLE migration adds those columns — creating
 # them there would fail with "no such column". init_db applies them after migration, when the
 # columns exist on every path (fresh create and migrated alike).
+_DEPLOY_TRIGGERS = """
+-- A deploy step is evidence the moment it is written: a later step can never rewrite or delete
+-- an earlier one, so a failed deploy cannot be tidied into a clean-looking history.
+CREATE TRIGGER IF NOT EXISTS trg_deploy_steps_no_update
+BEFORE UPDATE ON deploy_steps
+BEGIN
+    SELECT RAISE(ABORT, 'deploy steps are append-only evidence');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_deploy_steps_no_delete
+BEFORE DELETE ON deploy_steps
+BEGIN
+    SELECT RAISE(ABORT, 'deploy steps are append-only evidence');
+END;
+
+-- A deploy run is terminal once it succeeds, fails or is refused: nothing may resurrect it.
+CREATE TRIGGER IF NOT EXISTS trg_deploy_runs_terminal
+BEFORE UPDATE ON deploy_runs
+WHEN OLD.status IN ('succeeded', 'failed', 'refused')
+BEGIN
+    SELECT RAISE(ABORT, 'a finished deploy run is terminal');
+END;
+
+-- The authorized target can never be edited after the owner reviewed the plan: changing `sha`
+-- or `plan_digest` would let a reviewed plan execute a different commit.
+CREATE TRIGGER IF NOT EXISTS trg_deploy_runs_target_immutable
+BEFORE UPDATE ON deploy_runs
+WHEN NEW.sha <> OLD.sha OR NEW.plan_digest <> OLD.plan_digest OR NEW.plan <> OLD.plan
+BEGIN
+    SELECT RAISE(ABORT, 'the authorized deploy target is immutable');
+END;
+"""
+
 _DECISION_TRIGGERS = """
 -- The spec's one rule for approved envelopes (WP-U4 state machine): an approved envelope is
 -- immutable AT THE STORAGE LAYER; the only path to editing is explicit Unapprove (a status
@@ -285,6 +350,7 @@ def init_db(conn: sqlite3.Connection) -> None:
         conn.execute("UPDATE schema_version SET version = ?;", (SCHEMA_VERSION,))
     # After migration on purpose — these triggers reference v4 columns (see _DECISION_TRIGGERS).
     conn.executescript(_DECISION_TRIGGERS)
+    conn.executescript(_DEPLOY_TRIGGERS)
     conn.commit()
 
 
@@ -330,6 +396,10 @@ def _migrate(conn: sqlite3.Connection, *, from_version: int) -> None:
             except sqlite3.OperationalError as exc:
                 if "duplicate column" not in str(exc).lower():
                     raise
+    if from_version < 7:
+        # v6 -> v7 (WP-U4d): deploy_runs + deploy_steps — additive tables only, created by
+        # _SCHEMA above, with their triggers applied after migration like the decision ones.
+        pass
     if from_version < 6:
         # v5 -> v6: decision_adoptions — additive table only, created by _SCHEMA above.
         pass

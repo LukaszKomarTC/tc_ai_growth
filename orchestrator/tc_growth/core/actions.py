@@ -39,6 +39,7 @@ class Category(str, Enum):
     DIAGNOSTICS = "diagnostics"    # operator-facing health/inspection checks
     DRAFTING = "drafting"          # produce reviewable artifacts, never live changes
     EXECUTION = "execution"        # change external state (always human-confirmed)
+    PLATFORM = "platform"          # change THIS platform's own installation (never the site)
 
 
 class Approval(str, Enum):
@@ -68,6 +69,12 @@ class Operation:
                                        # integrity scan runs ~100s against the executor's generic
                                        # 120s cap — too thin a margin. An op that legitimately
                                        # runs long declares its own budget; None => executor default.
+    # What an operation can reach. The staging-only cap on write-capable operations exists
+    # because production WORDPRESS writes are capped — it is a statement about the customer's
+    # site, not about this platform's own host. A deployment writes the platform and provably
+    # never the site, so it declares target_surface="platform" and is held to the U4d boundary
+    # (fixed allowlists, exact SHA, no shell) instead of to a rule that does not apply to it.
+    target_surface: str = "site"
     preconditions: tuple[str, ...] = ()
     enforced_by: tuple[str, ...] = ()  # code layers that actually refuse a bad call
     rollback_description: str = ""     # prose — NOT machine-enforced (see module docstring)
@@ -143,6 +150,54 @@ OPERATIONS: tuple[Operation, ...] = (
                                  "wp-config markers) streams as output; exit 2 = anomalies found "
                                  "and logged; the run is recorded to the ledger as evidence",
     ),
+    Operation(
+        id="deploy_release",
+        name="Deploy a reviewed release (WP-U4d)",
+        category=Category.PLATFORM,
+        min_phase=Phase.CONTROLLED_EXECUTION,
+        environments=("staging", "production"),
+        approval=Approval.ALWAYS_ASK,
+        command="deploy-run",
+        # The ONLY accepted input is the id of a deploy run the owner already planned and
+        # reviewed. The commit itself is not an argument to this operation — it lives on the
+        # authorized row, where the store's triggers make it immutable. There is therefore no
+        # request shape that can deploy an unreviewed commit.
+        allowed_args=("run_id",),
+        result_policy=((0, "success"), (1, "failure")),
+        timeout_s=3600.0,
+        target_surface="platform",
+        preconditions=("a deploy run in status 'planned' whose plan the owner has reviewed",
+                       "the target is an exact 40-hex commit that is an ancestor of origin/main",
+                       "a VERIFIED backup of the evidence store (step 2 refuses to continue "
+                       "without one)"),
+        enforced_by=(_GATE,
+                     "tc_growth.deploy.validate_sha — exact 40-hex only; refs and short SHAs "
+                     "refused",
+                     "tc_growth.deploy.EXECUTORS — closed dispatch table of fixed argv builders; "
+                     "no shell, no interpolation, no caller-supplied words",
+                     "tc_growth.deploy._assert_allowed_path / _assert_allowed_service — closed "
+                     "path and service allowlists, normalized before comparison",
+                     "store triggers trg_deploy_runs_target_immutable / _terminal — the reviewed "
+                     "target cannot be edited and a finished run cannot be resurrected",
+                     "never invokes the WordPress connector: no site write path exists here"),
+        rollback_description="scripts/deploy-console.sh --rollback restores the previous unit, "
+                             "inspector and sudoers state; the evidence store is recovered from "
+                             "the verified backup taken before migration; a converged checkout "
+                             "is returned by deploying the previous SHA. Irreversible steps "
+                             "(converge, migrate, release) are listed in the plan BEFORE "
+                             "authorization, never discovered during execution.",
+        verification_description="each step is written to deploy_steps as append-only evidence "
+                                 "by the DETACHED runner, so the record survives the Console "
+                                 "restart the deployment itself performs; the run ends in an "
+                                 "explicit terminal status (succeeded/failed/refused) and the "
+                                 "health step confirms HTTP 200 plus the running service pinning "
+                                 "the target SHA",
+        # DISABLED until its host prerequisites exist (the fixed deployment sudoers surface and
+        # KillMode=process on tc-console.service) and the staging/disposable proof has run. The
+        # registry describes CURRENT AUTHORITY: a capability that has not been proven is present
+        # here to be reviewed, not offered to be clicked. #77 requires the proof before first use.
+        enabled=False,
+    ),
 )
 
 
@@ -181,11 +236,17 @@ def validate_registry(ops: tuple[Operation, ...] = OPERATIONS) -> None:
             raise RegistryError(f"{op.id}: timeout_s must be a positive number, got {op.timeout_s!r}")
         if not op.verification_description:
             raise RegistryError(f"{op.id}: verification_description is required")
+        if op.target_surface not in ("site", "platform"):
+            raise RegistryError(f"{op.id}: target_surface must be 'site' or 'platform', "
+                                f"got {op.target_surface!r}")
+        if op.target_surface == "platform" and op.category is not Category.PLATFORM:
+            raise RegistryError(f"{op.id}: only PLATFORM-category operations may declare "
+                                "target_surface='platform'")
         if op.min_phase > Phase.READ_ONLY:
             if not op.rollback_description:
                 raise RegistryError(f"{op.id}: write-capable operations require a "
                                     "rollback_description")
-            if op.environments != ("staging",):
+            if op.target_surface == "site" and op.environments != ("staging",):
                 raise RegistryError(f"{op.id}: write-capable operations may only target "
                                     "staging (profile write cap is the production reality)")
         if op.tool is not None:

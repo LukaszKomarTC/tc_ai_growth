@@ -646,3 +646,91 @@ def cases_body(store) -> str:
         "</div>"
         for c in cases)
     return _section(f"Cases ({len(cases)})", rows)
+
+
+# --- WP-U4d: the deployment surface (issue #77 Decision 2) --------------------------------
+
+def deploy_body(runs: list[dict], *, csrf: str, offered: bool, disabled_reason: str,
+                notice: str = "", error: str = "") -> str:
+    """The deployment list. The Console can always SHOW deployments — reading history is never
+    dangerous — but the control to authorize one appears only when the operation is enabled."""
+    head = ""
+    if notice:
+        head += f"<div class='ok'>{_e(notice)}</div>"
+    if error:
+        head += f"<div class='sev-warn'>{_e(error)}</div>"
+
+    if offered:
+        form = (
+            "<form method='post' action='/deploy/plan' style='margin-top:10px'>"
+            f"<input type='hidden' name='csrf' value='{_e(csrf)}'>"
+            "<label class='muted'>Reviewed commit to deploy (exact 40-character SHA)</label><br>"
+            "<input name='sha' size='46' autocomplete='off' spellcheck='false'>"
+            "<button type='submit'>Show me the plan</button>"
+            "<div class='muted' style='margin-top:4px'>You will review the full plan — including "
+            "every step that cannot be undone — before anything runs.</div></form>")
+    else:
+        form = (f"<div class='muted' style='margin-top:10px'>{_e(disabled_reason)}</div>")
+
+    rows = []
+    for r in runs:
+        badge = {"succeeded": "ok", "failed": "sev-warn", "refused": "sev-warn",
+                 "running": "muted", "planned": "muted"}.get(r["status"], "muted")
+        rows.append(
+            f"<div class='card'><div><b>Deploy #{r['id']}</b> — "
+            f"<span class='{badge}'>{_e(r['status'])}</span></div>"
+            f"<div class='muted'>{_e(r['sha'][:12])} · requested {_e(r['requested_at'])} "
+            f"by {_e(r['requested_by'])}</div>"
+            f"<div>{_e(r['outcome'] or '')}</div>"
+            f"<div><a href='/deploy/{r['id']}'>Open →</a></div></div>")
+    body = head + _section("Deploy a reviewed release", form)
+    body += _section("Deployment history", "".join(rows) or
+                     "<div class='muted'>No deployments recorded yet.</div>")
+    return body
+
+
+def deploy_plan_body(run: dict, plan: dict, plan_text: str, *, csrf: str,
+                     offered: bool, notice: str = "", error: str = "") -> str:
+    """What the owner reads BEFORE authorizing. Irreversible steps are called out separately and
+    prominently — they are never discovered during execution."""
+    head = (f"<div class='ok'>{_e(notice)}</div>" if notice else "")
+    head += (f"<div class='sev-warn'>{_e(error)}</div>" if error else "")
+    irreversible = plan.get("irreversible_steps") or []
+    warn = ("<div class='sev-warn'><b>These steps cannot be undone:</b> "
+            + _e(", ".join(irreversible)) +
+            ". The evidence store is backed up and the copy VERIFIED before any of them run; "
+            "if the backup cannot be verified the deployment stops.</div>")
+    start = ""
+    if offered and run["status"] == "planned":
+        start = (
+            f"<form method='post' action='/deploy/{run['id']}/start' style='margin-top:12px'>"
+            f"<input type='hidden' name='csrf' value='{_e(csrf)}'>"
+            f"<input type='hidden' name='digest' value='{_e(run['plan_digest'])}'>"
+            "<button type='submit'>Authorize and run this deployment</button>"
+            "<div class='muted' style='margin-top:4px'>Authorization binds to the plan above. "
+            "It runs in its own process, so it survives the Console restart it performs.</div>"
+            "</form>")
+    return head + _section(f"Deployment plan — {_e(plan['target_sha'][:12])}",
+                           warn + f"<pre class='plan'>{_e(plan_text)}</pre>" + start)
+
+
+def deploy_run_body(run: dict, steps: list[dict]) -> str:
+    """The observation view. Reconnection is by durable id: a restarted Console shows the same
+    run and its terminal result rather than orphaning it."""
+    terminal = run["status"] in ("succeeded", "failed", "refused")
+    head = (f"<div class='{'ok' if run['status'] == 'succeeded' else 'sev-warn'}'>"
+            f"{_e(run['status'].upper())} — {_e(run['outcome'] or 'in progress')}</div>"
+            if terminal else
+            "<div class='muted'>Running. This page refreshes itself; the deployment continues "
+            "even while the Console restarts.</div>")
+    rows = []
+    for st in steps:
+        mark = {"ok": "✅", "failed": "❌", "running": "…", "skipped": "—"}.get(st["status"], "·")
+        detail = (f"<details><summary class='muted'>detail</summary>"
+                  f"<pre>{_e(st['detail'])}</pre></details>") if st.get("detail") else ""
+        rows.append(f"<div class='card'><div>{mark} <b>{_e(st['name'])}</b> — "
+                    f"{_e(st['summary'])}</div><div class='muted'>{_e(st['at'])}</div>"
+                    f"{detail}</div>")
+    refresh = "" if terminal else "<script>setTimeout(()=>location.reload(), 4000)</script>"
+    return (_section(f"Deploy #{run['id']} — {_e(run['sha'][:12])}", head + "".join(rows))
+            + refresh)
