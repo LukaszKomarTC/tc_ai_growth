@@ -16,6 +16,7 @@ import http.cookiejar
 import json
 import os
 import re
+import select
 import subprocess
 import sys
 import textwrap
@@ -171,6 +172,29 @@ _INJECTIONS = {
 }
 
 
+def _readline(proc, *, timeout: float, what: str) -> str:
+    """A readline that CANNOT hang the suite.
+
+    `proc.stdout.readline()` blocks forever if the child is alive but wedged, which would turn a
+    failing test into a stuck CI job — and a job that hangs tells you nothing about which
+    assertion broke. `select` bounds the wait; running out of time is a test failure with a name.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise AssertionError(f"timed out after {timeout:g}s waiting for {what}")
+        if not select.select([proc.stdout], [], [], min(remaining, 0.5))[0]:
+            if proc.poll() is not None:
+                raise AssertionError(f"the Console driver exited ({proc.returncode}) "
+                                     f"while waiting for {what}")
+            continue
+        line = proc.stdout.readline()
+        if not line:
+            raise AssertionError(f"the Console driver closed its output while waiting for {what}")
+        return line
+
+
 class _Driver:
     def __init__(self, proc, port):
         self.proc, self.port = proc, port
@@ -179,9 +203,7 @@ class _Driver:
         self.proc.stdin.write("probe\n")
         self.proc.stdin.flush()
         while True:
-            line = self.proc.stdout.readline()
-            if not line:
-                raise AssertionError("the Console driver process died")
+            line = _readline(self.proc, timeout=60, what="a PROBE reply")
             if line.startswith("PROBE "):
                 return json.loads(line[len("PROBE "):])
 
@@ -198,7 +220,7 @@ def console_process(tmp_path):
     proc = subprocess.Popen([sys.executable, str(script)], env=env, text=True,
                             stdin=subprocess.PIPE, stdout=subprocess.PIPE)
     try:
-        first = proc.stdout.readline()
+        first = _readline(proc, timeout=60, what="the Console driver's port")
         assert first.startswith("PORT "), f"the Console driver did not start: {first!r}"
         yield _Driver(proc, int(first.split()[1])), db
     finally:
@@ -210,11 +232,17 @@ def console_process(tmp_path):
             proc.kill()
 
 
+#: Every HTTP call here is bounded. An unbounded urlopen against a server that never answers would
+#: hang the whole suite instead of failing this one test.
+_HTTP_TIMEOUT = 30
+
+
 def _opener(port: int):
     cj = http.cookiejar.CookieJar()
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
     opener.open(urllib.request.Request(f"http://127.0.0.1:{port}/login",
-                                       data=b"token=seam-test-token", method="POST"))
+                                       data=b"token=seam-test-token", method="POST"),
+                timeout=_HTTP_TIMEOUT)
     return opener
 
 
@@ -222,7 +250,7 @@ def _read(opener, url: str, *, data: bytes | None = None, headers: dict | None =
     request = urllib.request.Request(url, data=data, method="POST" if data else "GET",
                                      headers=headers or {})
     try:
-        return opener.open(request).read().decode()
+        return opener.open(request, timeout=_HTTP_TIMEOUT).read().decode()
     except urllib.error.HTTPError as exc:      # 403/404 are answers, not test failures
         return exc.read().decode()
 
@@ -300,9 +328,13 @@ def test_binding_the_console_latches_the_seam_before_a_single_request(monkeypatc
     thread = threading.Thread(target=lambda: console.serve(port=0), daemon=True)
     thread.start()
     try:
+        # Wait for the SERVER OBJECT, not just the latch. The latch is set before the bind — that
+        # is the property under test — so waiting on it alone can win the race and leave `servers`
+        # empty, and then teardown shuts nothing down and blocks on a join that never comes.
         deadline = time.time() + 10
-        while time.time() < deadline and not deploy_target.http_boundary_latched():
-            time.sleep(0.05)
+        while time.time() < deadline and not servers:
+            time.sleep(0.02)
+        assert servers, "console.serve never constructed its server"
         assert deploy_target.http_boundary_latched() is True
         with pytest.raises(deploy.DeployRefused):
             deploy_target.open_cli_target_gate()
@@ -310,6 +342,7 @@ def test_binding_the_console_latches_the_seam_before_a_single_request(monkeypatc
         for server in servers:
             server.shutdown()
         thread.join(timeout=10)
+        assert not thread.is_alive(), "console.serve did not return after shutdown"
 
 
 def test_the_console_never_calls_the_seam_mutators():
