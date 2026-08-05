@@ -248,6 +248,7 @@ def build(root: Path, *, name: str = "disposable", privileged: bool | None = Non
         port="0",
         remote_ref="origin/main",
         privileged_prefix=str(privileged_dir / "lib"),
+        runtime_dir=str(privileged_dir / "runtime"),
         unit_path=str(host / f"tc-console-{name}.service"),
         inspector_dest=str(host / "wp-integrity-scan.sh"),
         sudoers_file=str(host / f"sudoers-{name}"),
@@ -256,6 +257,14 @@ def build(root: Path, *, name: str = "disposable", privileged: bool | None = Non
         service_user=_service_user(),
     )
     if privileged:
+        # The interpreter is part of what the authorized SHA has to cover (review blocker 1): a
+        # venv the service user can write is a way to change what executes without touching a
+        # single application file. Production's answer is a root-owned venv; the disposable
+        # target's is the same, made so here. `apply` refuses a writable one either way.
+        for path in (venv, venv / "bin", venv / "bin" / "python"):
+            os.chown(path, 0, 0, follow_symlinks=False)
+        os.chmod(venv, 0o755)
+        os.chmod(venv / "bin", 0o755)
         install_privileged(target, app)
     return Disposable(target=target, root=root, origin=origin, state_dir=state,
                       privileged_dir=privileged_dir, base_sha=base_sha, target_sha=target_sha,
@@ -303,6 +312,7 @@ def install_privileged(target: deploy_target.Target, app: Path) -> str:
             "--sudoers-file", target.sudoers_file,
             "--snapshot-dir", target.snapshot_dir,
             "--unit-prefix", target.unit_prefix,
+            "--runtime-dir", target.runtime_dir,
             "--store-db", target.db_path,
             "--venv", target.venv,
             "--console-env-file", target.console_env_file,
@@ -404,7 +414,26 @@ def substitute_inspector(disposable: Disposable) -> Path:
     return victim
 
 
-def _tamper_after_stage_executor(disposable: Disposable):
+def substitute_application_module(disposable: Disposable) -> Path:
+    """Replace an ORDINARY application module in the release, after checkout.
+
+    Review blocker 1: pinning the inspector while the unit points into the release tree leaves the
+    application itself mutable. This is the payload that matters — not a security artifact, just a
+    normal module the service imports on every start. If it executes, the marker says so.
+    """
+    victim = disposable.release_path() / "orchestrator" / "tc_growth" / "cli.py"
+    victim.parent.mkdir(parents=True, exist_ok=True)
+    marker = json.dumps(str(disposable.state_dir / PAYLOAD_MARKER))
+    victim.write_text(
+        '"""Substituted application module."""\n'
+        "import sys\n"
+        f"open({marker}, 'w').close()\n"
+        "print('payload executed')\n"
+        "sys.exit(0)\n")
+    return victim
+
+
+def _tamper_after_stage_executor(disposable: Disposable, what: str = "inspector"):
     """The TOCTOU window, made concrete and executed.
 
     `stage` verifies the release against the committed objects and returns ok. The release tree
@@ -415,13 +444,26 @@ def _tamper_after_stage_executor(disposable: Disposable):
     def ex_stage_then_tamper(sha: str, ctx: dict) -> deploy.StepResult:
         result = deploy.ex_stage(sha, ctx)
         if result.ok:
-            substitute_inspector(disposable)
+            (substitute_inspector if what == "inspector"
+             else substitute_application_module)(disposable)
         return result
     return ex_stage_then_tamper
 
 
+def teardown_release(disposable: Disposable, sha: str | None = None) -> None:
+    """Remove a staged release worktree so a test can re-stage it cleanly. Used by the blocker-1
+    control, which needs the same release both substituted and honest."""
+    release = disposable.release_path(sha)
+    if release.exists():
+        shutil.rmtree(release, ignore_errors=True)
+    try:
+        _git(Path(disposable.target.app_dir), "worktree", "prune")
+    except RuntimeError:
+        pass
+
+
 def run(disposable: Disposable, *, requested_by: str | None = None,
-        tamper_after_stage: bool = False) -> dict:
+        tamper_after_stage: bool | str = False) -> dict:
     """Run the disposable chain end to end and return what actually happened.
 
     The report is assembled from the store and from the filesystem — the run's terminal status, the
@@ -442,7 +484,9 @@ def run(disposable: Disposable, *, requested_by: str | None = None,
             # carries `privileged_boundary: "stand-in"` so no reader can mistake the two.
             executors["release"] = _privileged_standin_executor(disposable)
         if tamper_after_stage:
-            executors["stage"] = _tamper_after_stage_executor(disposable)
+            executors["stage"] = _tamper_after_stage_executor(
+                disposable,
+                tamper_after_stage if isinstance(tamper_after_stage, str) else "inspector")
         outcome = deploy.execute(store, run_id, context=deploy.context_for(target),
                                  executors=executors, steps=DISPOSABLE_STEPS)
         row = store.get_deploy_run(run_id)

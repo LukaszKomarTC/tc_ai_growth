@@ -145,27 +145,34 @@ mode_has_write_bits "$(_mode_of "$PREFIX")" && die "prefix is writable by others
 # target.conf is `key=value` only — parsed, never sourced, so a planted line cannot execute.
 TC_APP_DIR=""; TC_RELEASES_DIR=""; TC_SERVICE=""; TC_SERVICE_USER=""; TC_CONSOLE_PORT=""
 TC_UNIT_PATH=""; TC_INSPECTOR_DEST=""; TC_SUDOERS_FILE=""; TC_SNAPSHOT_DIR=""; TC_UNIT_PREFIX=""
-TC_STORE_DB=""; TC_VENV=""; TC_CONSOLE_ENV_FILE=""
+TC_STORE_DB=""; TC_VENV=""; TC_CONSOLE_ENV_FILE=""; TC_RUNTIME_DIR=""
 while IFS='=' read -r key value; do
     case "$key" in
         ''|'#'*) continue ;;
         TC_APP_DIR|TC_RELEASES_DIR|TC_SERVICE|TC_SERVICE_USER|TC_CONSOLE_PORT|TC_UNIT_PATH|\
         TC_INSPECTOR_DEST|TC_SUDOERS_FILE|TC_SNAPSHOT_DIR|TC_UNIT_PREFIX|TC_STORE_DB|TC_VENV|\
-        TC_CONSOLE_ENV_FILE)
+        TC_CONSOLE_ENV_FILE|TC_RUNTIME_DIR)
             printf -v "$key" '%s' "$value" ;;
         *) die "target.conf contains an unknown key: $key" ;;
     esac
 done < "$TARGET_CONF"
 
 for required_key in TC_APP_DIR TC_RELEASES_DIR TC_SERVICE TC_SERVICE_USER TC_CONSOLE_PORT \
-                    TC_UNIT_PATH TC_INSPECTOR_DEST TC_SUDOERS_FILE TC_SNAPSHOT_DIR TC_UNIT_PREFIX; do
+                    TC_UNIT_PATH TC_INSPECTOR_DEST TC_SUDOERS_FILE TC_SNAPSHOT_DIR \
+                    TC_UNIT_PREFIX TC_RUNTIME_DIR; do
     [ -n "${!required_key}" ] || die "target.conf is missing $required_key"
 done
 
 # The prefix must not live inside the tree the service user can write, or none of this holds.
+# The RUNTIME dir carries the same requirement for the same reason: it is what the service will
+# actually execute, so a service-user-writable runtime would defeat the whole point of copying.
 case "$PREFIX/" in
     "$TC_APP_DIR"/*|"$TC_RELEASES_DIR"/*)
         die "the privileged prefix sits inside a service-user-writable tree: $PREFIX" ;;
+esac
+case "$TC_RUNTIME_DIR/" in
+    "$TC_APP_DIR"/*|"$TC_RELEASES_DIR"/*)
+        die "the runtime directory sits inside a service-user-writable tree: $TC_RUNTIME_DIR" ;;
 esac
 
 # --------------------------------------------------------------------------- helpers
@@ -228,6 +235,135 @@ assert_release_inspector_matches_root() {
     fi
 }
 
+# --------------------------------------------------------------- pinning the COMPLETE runtime
+#
+# Review blocker 1. Authenticating the inspector and then writing a unit whose WorkingDirectory
+# and ExecStart point into the release tree pins one artifact and leaves the application itself
+# mutable: after `stage` returns ok, the service user can still edit `tc_growth/*.py`, templates,
+# package metadata or the venv entry point, and the restarted service executes bytes nobody
+# authorized. Root never imports that Python — but the deployment still *caused* unverified
+# mutable content to become the running application, which is the same failure wearing a
+# different hat.
+#
+# The fix is not another check. A check leaves a window; ownership does not. Root COPIES the
+# release into a directory only root can write, records a full-tree manifest of its own copy,
+# re-verifies immediately before the restart, and points the unit at the copy. From the moment
+# of the copy there is no interval in which the service user can redirect what runs, because the
+# bytes that run are not theirs to touch.
+#
+# What this does NOT establish, and it matters: root copies whatever the release tree held at
+# copy time. Authenticity — "this tree really is commit <sha>" — still rests on the unprivileged
+# `stage` step comparing against a git object store the service user can write. Closing THAT
+# needs commit signatures verified against a root-held key, and it is the next anchor increment,
+# not this one. What is closed here is the window between verification and consumption.
+
+materialize_runtime() {
+    local sha="$1" release="$2" runtime="$TC_RUNTIME_DIR/$sha" manifest="$TC_RUNTIME_DIR/$sha.manifest"
+
+    run_clean install -d -m 0755 -o root -g root "$TC_RUNTIME_DIR" || die "cannot create $TC_RUNTIME_DIR"
+    # A previous materialisation is root-owned, so removing it is safe and keeps apply idempotent.
+    [ -e "$runtime" ] && run_clean rm -rf "$runtime"
+    run_clean install -d -m 0755 -o root -g root "$runtime" || die "cannot create $runtime"
+    run_clean cp -a "$release/." "$runtime/" || die "could not copy the release into root-owned storage"
+    # `.git` in a worktree is a POINTER back into the service user's repository. It is not runtime
+    # content and root has no business carrying it into a tree it vouches for.
+    run_clean rm -rf "$runtime/.git"
+    run_clean chown -R root:root "$runtime" || die "could not take ownership of the runtime copy"
+    # Strip every group/other write bit. This is the property, not a tidy-up.
+    run_clean chmod -R go-w "$runtime" || die "could not lock the runtime copy"
+
+    ( cd "$runtime" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0r sha256sum ) \
+        > "$manifest" || die "could not record the runtime manifest"
+    run_clean chown root:root "$manifest" && run_clean chmod 0644 "$manifest" \
+        || die "could not secure the runtime manifest"
+}
+
+# Ownership alone is not enough, and finding that out is what this function exists for.
+#
+# Copying the release into root-owned storage closes the window AFTER the copy — but the copy
+# happens after `stage`, so a substitution in that gap is faithfully copied and then faithfully
+# executed. "Root owns it" would then mean "root owns the attacker's bytes".
+#
+# So root authenticates the tree ITSELF, against the commit, using its own git invocation with
+# the repository's configuration neutralised. Not the unprivileged step's verdict — root's own.
+#
+# Residual, stated plainly: the object database lives in the service user's checkout, so an
+# adversary who can rewrite git objects *and* the tree consistently still passes. Closing that
+# needs commit signatures verified against a root-held key, and it is the next anchor increment.
+# What this closes is the post-`stage` substitution window, which is what was open.
+git_ro() {
+    env -i PATH="$PATH" HOME=/root LANG=C.UTF-8 \
+        GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_TERMINAL_PROMPT=0 \
+        git -c core.fsmonitor= -c core.hooksPath=/dev/null -c core.pager=cat "$@"
+}
+
+verify_against_commit() {
+    local sha="$1" runtime="$2" expected actual line mode kind oid path
+    expected="$(mktemp)" || die "cannot stage the expected manifest"
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        mode="${line%% *}"; line="${line#* }"
+        kind="${line%% *}"; line="${line#* }"
+        oid="${line%%$'\t'*}"; path="${line#*$'\t'}"
+        [ "$kind" = "blob" ] || { rm -f "$expected"; die "unsupported $kind entry in commit $sha: $path"; }
+        printf '%s  ./%s\n' \
+            "$(git_ro -C "$TC_APP_DIR" cat-file blob "$oid" | sha256sum | cut -d' ' -f1)" "$path" \
+            >> "$expected"
+    done < <(git_ro -C "$TC_APP_DIR" ls-tree -r "$sha" 2>/dev/null)
+
+    [ -s "$expected" ] || { rm -f "$expected"; die "could not read the tree of commit $sha from the object store"; }
+    actual="$(mktemp)"
+    ( cd "$runtime" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0r sha256sum ) > "$actual"
+    LC_ALL=C sort -o "$expected" "$expected"
+    LC_ALL=C sort -o "$actual" "$actual"
+    if ! cmp -s "$expected" "$actual"; then
+        local diffs
+        diffs="$(diff "$expected" "$actual" | grep -E '^[<>]' | head -5 | tr '\n' ';')"
+        rm -f "$expected" "$actual"
+        die "the runtime tree does not match commit $sha — content was substituted after the release was staged; refusing to run it ($diffs)"
+    fi
+    rm -f "$expected" "$actual"
+}
+
+verify_runtime() {
+    local sha="$1" runtime="$TC_RUNTIME_DIR/$sha" manifest="$TC_RUNTIME_DIR/$sha.manifest" actual
+    _assert_root_owned_and_locked "$TC_RUNTIME_DIR"
+    _assert_root_owned_and_locked "$runtime"
+    _assert_root_owned_and_locked "$manifest"
+    actual="$(cd "$runtime" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0r sha256sum)"
+    [ "$actual" = "$(cat "$manifest")" ] \
+        || die "the root-owned runtime tree no longer matches its manifest — refusing to start it"
+    # Nothing inside may be writable by anyone but root, or "immutable to the service user" is a
+    # claim rather than a fact. One find, checked as a whole.
+    local loose
+    loose="$(find "$runtime" \( -perm -g+w -o -perm -o+w \) -print -quit)"
+    [ -z "$loose" ] && return 0
+    die "the runtime tree contains group/other-writable content ($loose)"
+}
+
+# The interpreter is part of what the SHA has to cover: a venv the service user can write is a
+# way to change what executes without touching a single application file.
+resolve_interpreter() {
+    local sha="$1" candidate real
+    candidate="${TC_VENV:+$TC_VENV/bin/python}"
+    [ -n "$candidate" ] || candidate="$TC_RUNTIME_DIR/$sha/orchestrator/.venv/bin/python"
+    [ -e "$candidate" ] || die "no interpreter at $candidate"
+    real="$(readlink -f "$candidate")" || die "cannot resolve the interpreter at $candidate"
+    # Three checks, because each one alone has a hole:
+    #   * the DIRECTORY holding the entry point — a writable directory means the entry can be
+    #     replaced or re-pointed regardless of what it currently is;
+    #   * the RESOLVED binary — otherwise a fine-looking symlink to a swapped interpreter passes;
+    #   * the entry point's OWNER — but not its mode, because a symlink's mode is always 0777 on
+    #     Linux and carries no meaning. Checking it would refuse every venv ever made while
+    #     proving nothing; permission to replace a symlink comes from its directory.
+    _assert_root_owned_and_locked "$(dirname "$candidate")"
+    _assert_root_owned_and_locked "$real"
+    local owner
+    owner="$(_owner_of "$candidate")"
+    [ "$owner" = "root:root" ] || die "the interpreter entry point is not root-owned: $candidate (owned by ${owner:-unknown})"
+    printf '%s\n' "$candidate"
+}
+
 verb_apply() {
     local sha="$1" release snapshot
     valid_sha "$sha" || die "apply takes an exact 40-character lowercase hex SHA and nothing else"
@@ -246,13 +382,20 @@ verb_apply() {
     snapshot="$TC_SNAPSHOT_DIR/$sha"
     run_clean install -d -m 0755 -o root -g root "$TC_SNAPSHOT_DIR" || die "cannot create $TC_SNAPSHOT_DIR"
     run_clean install -d -m 0755 -o root -g root "$snapshot" || die "cannot create $snapshot"
-    [ -f "$TC_UNIT_PATH" ] && run_clean cp -a "$TC_UNIT_PATH" "$snapshot/unit.prev"
-    [ -f "$TC_INSPECTOR_DEST" ] && run_clean cp -a "$TC_INSPECTOR_DEST" "$snapshot/inspector.prev"
-    [ -f "$TC_SUDOERS_FILE" ] && run_clean cp -a "$TC_SUDOERS_FILE" "$snapshot/sudoers.prev"
+    # Review blocker 2. Copying a file "if it exists" records CONTENT but silently loses ABSENCE,
+    # and rollback then cannot tell "restore these bytes" from "there was nothing here". On a
+    # first deployment that left the newly installed unit, inspector and sudoers drop-in in place
+    # and called it restoration. The state file makes absence a recorded fact.
+    : > "$snapshot/state"
+    _snapshot_artifact unit "$TC_UNIT_PATH" "$snapshot"
+    _snapshot_artifact inspector "$TC_INSPECTOR_DEST" "$snapshot"
+    _snapshot_artifact sudoers "$TC_SUDOERS_FILE" "$snapshot"
+    run_clean chmod 0644 "$snapshot/state"
     printf '%s\n' "$sha" > "$TC_SNAPSHOT_DIR/previous"
     run_clean chmod 0644 "$TC_SNAPSHOT_DIR/previous"
     phase "snapshot" ok
     note "root-owned snapshot at $snapshot"
+    note "prior state: $(tr '\n' ' ' < "$snapshot/state")"
 
     # From ROOT'S copy. Never from the release — that is the laundering this exists to stop.
     run_clean install -m 0755 -o root -g root "$PREFIX/wp-integrity-scan.sh" "$TC_INSPECTOR_DEST" \
@@ -263,9 +406,31 @@ verb_apply() {
     write_sudoers "$snapshot" || return "$EXIT_REFUSED"
     phase "install-sudoers" ok
 
-    write_unit "$release" || return "$EXIT_REFUSED"
+    # Blocker 1. The complete runtime, into storage the service user cannot write.
+    materialize_runtime "$sha" "$release"
+    phase "materialize-runtime" ok
+    note "$TC_RUNTIME_DIR/$sha is root-owned, go-w stripped, manifest recorded"
+
+    # Root's OWN comparison against the commit. Ownership makes the bytes immutable from here;
+    # this is what makes them the right bytes.
+    verify_against_commit "$sha" "$TC_RUNTIME_DIR/$sha"
+    phase "authenticate-runtime" ok
+    note "every file matches commit $sha as read from the object store by root"
+
+    # Immediately before the unit is written and the service consumes it. The tree is root-owned
+    # by now, so this cannot fail for benign reasons — which is exactly why it is worth doing.
+    verify_runtime "$sha"
+    phase "verify-runtime" ok
+    note "$(wc -l < "$TC_RUNTIME_DIR/$sha.manifest") files match the root-owned runtime manifest"
+
+    local interpreter
+    interpreter="$(resolve_interpreter "$sha")" || return "$EXIT_REFUSED"
+    phase "verify-interpreter" ok
+    note "$interpreter is root-owned and not writable by the service user"
+
+    write_unit "$sha" "$interpreter" || return "$EXIT_REFUSED"
     phase "write-unit" ok
-    note "$TC_UNIT_PATH pins $sha"
+    note "$TC_UNIT_PATH runs $TC_RUNTIME_DIR/$sha — root-owned, not the release tree"
 
     if [ ! -d /run/systemd/system ]; then
         phase "daemon-reload" unavailable
@@ -311,7 +476,10 @@ SUDOERS
 }
 
 write_unit() {
-    local release="$1" staged="$TC_SNAPSHOT_DIR/unit.next"
+    # WorkingDirectory and ExecStart point at the ROOT-OWNED runtime copy, never at the release
+    # tree. That single substitution is what closes blocker 1: the service consumes bytes the
+    # service user cannot reach, so there is no window to redirect it in.
+    local sha="$1" interpreter="$2" staged="$TC_SNAPSHOT_DIR/unit.next"
     cat > "$staged" <<UNIT
 [Unit]
 Description=TC Operations Console ($TC_SERVICE)
@@ -319,12 +487,12 @@ After=network.target
 
 [Service]
 User=$TC_SERVICE_USER
-WorkingDirectory=$release/orchestrator
+WorkingDirectory=$TC_RUNTIME_DIR/$sha/orchestrator
 Environment=TC_CONSOLE_PORT=$TC_CONSOLE_PORT
-Environment=TC_BUILD_COMMIT=$(basename "$release")
+Environment=TC_BUILD_COMMIT=$sha
 ${TC_STORE_DB:+Environment=TC_DB_PATH=$TC_STORE_DB}
 ${TC_CONSOLE_ENV_FILE:+EnvironmentFile=-$TC_CONSOLE_ENV_FILE}
-ExecStart=${TC_VENV:-$release/orchestrator/.venv}/bin/python -m tc_growth.cli console $TC_CONSOLE_PORT
+ExecStart=$interpreter -m tc_growth.cli console $TC_CONSOLE_PORT
 Restart=on-failure
 
 [Install]
@@ -332,6 +500,72 @@ WantedBy=multi-user.target
 UNIT
     run_clean install -m 0644 -o root -g root "$staged" "$TC_UNIT_PATH" \
         || die "could not install the unit file"
+}
+
+_snapshot_artifact() {
+    local name="$1" path="$2" snapshot="$3"
+    if [ -e "$path" ]; then
+        run_clean cp -a "$path" "$snapshot/$name.prev" || die "could not snapshot $name"
+        printf '%s=present\n' "$name" >> "$snapshot/state"
+    else
+        printf '%s=absent\n' "$name" >> "$snapshot/state"
+    fi
+}
+
+_prior_state() {
+    local name="$1" snapshot="$2" line
+    line="$(grep -m1 "^$name=" "$snapshot/state" 2>/dev/null)" || return 1
+    printf '%s\n' "${line#*=}"
+}
+
+#: Set by _restore_artifact so the terminal report can distinguish full from partial.
+ROLLBACK_RESTORED=0
+ROLLBACK_REMOVED=0
+ROLLBACK_FAILED=0
+
+_restore_artifact() {
+    # Restores prior BYTES when the artifact existed, and prior ABSENCE when it did not. Each
+    # artifact reports its own result: "rollback ok" that quietly skipped a removal is the
+    # partial-restoration-reported-as-success defect.
+    local name="$1" path="$2" mode="$3" snapshot="$4" state
+    state="$(_prior_state "$name" "$snapshot")" || {
+        phase "rollback-$name" unknown
+        note "the snapshot records no prior state for $name — refusing to guess"
+        ROLLBACK_FAILED=$((ROLLBACK_FAILED + 1))
+        return 0
+    }
+    case "$state" in
+        present)
+            if [ ! -f "$snapshot/$name.prev" ]; then
+                phase "rollback-$name" failed
+                note "prior state was 'present' but $snapshot/$name.prev is missing"
+                ROLLBACK_FAILED=$((ROLLBACK_FAILED + 1))
+                return 0
+            fi
+            if run_clean install -m "$mode" -o root -g root "$snapshot/$name.prev" "$path"; then
+                phase "rollback-$name" restored
+                ROLLBACK_RESTORED=$((ROLLBACK_RESTORED + 1))
+            else
+                phase "rollback-$name" failed
+                ROLLBACK_FAILED=$((ROLLBACK_FAILED + 1))
+            fi ;;
+        absent)
+            if [ ! -e "$path" ]; then
+                phase "rollback-$name" already-absent
+                ROLLBACK_REMOVED=$((ROLLBACK_REMOVED + 1))
+            elif run_clean rm -f "$path"; then
+                phase "rollback-$name" removed
+                note "$path did not exist before apply; rollback removed it"
+                ROLLBACK_REMOVED=$((ROLLBACK_REMOVED + 1))
+            else
+                phase "rollback-$name" failed
+                ROLLBACK_FAILED=$((ROLLBACK_FAILED + 1))
+            fi ;;
+        *)
+            phase "rollback-$name" unknown
+            note "unreadable prior state '$state'"
+            ROLLBACK_FAILED=$((ROLLBACK_FAILED + 1)) ;;
+    esac
 }
 
 verb_rollback() {
@@ -344,14 +578,43 @@ verb_rollback() {
     valid_sha "$previous" || die "the rollback pointer is not a SHA: refusing to act on it"
     snapshot="$TC_SNAPSHOT_DIR/$previous"
     _assert_root_owned_and_locked "$snapshot"
+    [ -f "$snapshot/state" ] || die "the snapshot records no prior state; refusing to roll back blind"
     phase "verify-machinery" ok
     phase "select-snapshot" ok
     note "restoring from $snapshot (selected by root-written pointer, not by the caller)"
 
-    [ -f "$snapshot/unit.prev" ] && run_clean install -m 0644 -o root -g root "$snapshot/unit.prev" "$TC_UNIT_PATH"
-    [ -f "$snapshot/inspector.prev" ] && run_clean install -m 0755 -o root -g root "$snapshot/inspector.prev" "$TC_INSPECTOR_DEST"
-    [ -f "$snapshot/sudoers.prev" ] && run_clean install -m 0440 -o root -g root "$snapshot/sudoers.prev" "$TC_SUDOERS_FILE"
-    phase "restore-files" ok
+    _restore_artifact unit "$TC_UNIT_PATH" 0644 "$snapshot"
+    _restore_artifact inspector "$TC_INSPECTOR_DEST" 0755 "$snapshot"
+    _restore_artifact sudoers "$TC_SUDOERS_FILE" 0440 "$snapshot"
+
+    # Sudoers is validated AFTER the fact, whichever way it went: a restored file must parse, and
+    # a removed one must leave the directory parsing. A broken drop-in locks the operator out.
+    if command -v visudo >/dev/null; then
+        if [ -f "$TC_SUDOERS_FILE" ]; then
+            if run_clean visudo -c -f "$TC_SUDOERS_FILE" >/dev/null; then
+                phase "validate-sudoers" ok
+            else
+                phase "validate-sudoers" failed
+                note "the restored sudoers drop-in does not parse — inspect $TC_SUDOERS_FILE"
+                ROLLBACK_FAILED=$((ROLLBACK_FAILED + 1))
+            fi
+        else
+            phase "validate-sudoers" not-present
+            note "nothing to validate: the drop-in was removed because it did not exist before apply"
+        fi
+    else
+        phase "validate-sudoers" unavailable
+        note "visudo is not installed here, so the result was NOT syntax-validated"
+    fi
+
+    if [ "$ROLLBACK_FAILED" -gt 0 ]; then
+        phase "rollback" partial
+        note "restored=$ROLLBACK_RESTORED removed=$ROLLBACK_REMOVED failed=$ROLLBACK_FAILED"
+        note "this is NOT a completed rollback; the artifacts above say which parts stand."
+        return "$EXIT_REFUSED"
+    fi
+    phase "rollback" complete
+    note "restored=$ROLLBACK_RESTORED removed=$ROLLBACK_REMOVED failed=0"
 
     if [ ! -d /run/systemd/system ]; then
         phase "daemon-reload" unavailable

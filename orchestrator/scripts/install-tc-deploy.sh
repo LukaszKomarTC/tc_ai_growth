@@ -29,13 +29,14 @@ say() { printf '%s\n' "$*"; }
 
 PREFIX=""; APP_DIR=""; RELEASES_DIR=""; SERVICE=""; SERVICE_USER=""; PORT=""
 UNIT_PATH=""; INSPECTOR_DEST=""; SUDOERS_FILE=""; SNAPSHOT_DIR=""; UNIT_PREFIX=""
-STORE_DB=""; VENV=""; CONSOLE_ENV_FILE=""; SOURCE_DIR=""
+STORE_DB=""; VENV=""; CONSOLE_ENV_FILE=""; SOURCE_DIR=""; RUNTIME_DIR=""
 
 usage() {
     cat <<'USAGE'
 Usage: install-tc-deploy.sh --prefix DIR --app-dir DIR --releases-dir DIR \
          --service NAME --service-user NAME --port N --unit-path FILE \
          --inspector-dest FILE --sudoers-file FILE --snapshot-dir DIR --unit-prefix NAME \
+         --runtime-dir DIR \
          [--store-db FILE] [--venv DIR] [--console-env-file FILE] [--source DIR]
 
 Installs the single privileged deployment entry point for ONE target. Run as root.
@@ -56,6 +57,7 @@ while [ $# -gt 0 ]; do
         --sudoers-file) SUDOERS_FILE="${2-}"; shift 2 ;;
         --snapshot-dir) SNAPSHOT_DIR="${2-}"; shift 2 ;;
         --unit-prefix) UNIT_PREFIX="${2-}"; shift 2 ;;
+        --runtime-dir) RUNTIME_DIR="${2-}"; shift 2 ;;
         --store-db) STORE_DB="${2-}"; shift 2 ;;
         --venv) VENV="${2-}"; shift 2 ;;
         --console-env-file) CONSOLE_ENV_FILE="${2-}"; shift 2 ;;
@@ -68,7 +70,7 @@ done
 [ "$(id -u)" -eq 0 ] || die "run as root: this installs root-owned machinery"
 
 for required in PREFIX APP_DIR RELEASES_DIR SERVICE SERVICE_USER PORT UNIT_PATH \
-                INSPECTOR_DEST SUDOERS_FILE SNAPSHOT_DIR UNIT_PREFIX; do
+                INSPECTOR_DEST SUDOERS_FILE SNAPSHOT_DIR UNIT_PREFIX RUNTIME_DIR; do
     [ -n "${!required}" ] || { usage >&2; die "missing --${required,,}" ; }
 done
 
@@ -79,7 +81,7 @@ SOURCE_DIR="${SOURCE_DIR:-$(cd "$(dirname "$0")" && pwd)}"
 
 # Absolute, normalised paths only. A relative or `..`-bearing prefix would make every later
 # ownership claim depend on the caller's working directory.
-for path_var in PREFIX APP_DIR RELEASES_DIR UNIT_PATH INSPECTOR_DEST SUDOERS_FILE SNAPSHOT_DIR; do
+for path_var in PREFIX APP_DIR RELEASES_DIR UNIT_PATH INSPECTOR_DEST SUDOERS_FILE SNAPSHOT_DIR RUNTIME_DIR; do
     value="${!path_var}"
     case "$value" in
         /*) ;;
@@ -100,6 +102,11 @@ case "$UNIT_PREFIX" in *[!a-zA-Z0-9._-]*) die "--unit-prefix must be a plain nam
 case "$PREFIX/" in
     "$APP_DIR"/*|"$RELEASES_DIR"/*)
         die "--prefix is inside a service-user-writable tree ($PREFIX); install it elsewhere" ;;
+esac
+# The runtime tree is what the service actually executes, so it carries the same requirement.
+case "$RUNTIME_DIR/" in
+    "$APP_DIR"/*|"$RELEASES_DIR"/*)
+        die "--runtime-dir is inside a service-user-writable tree ($RUNTIME_DIR); the whole point is that the service user cannot reach what runs" ;;
 esac
 
 say "installing the privileged deployment entry point"
@@ -132,6 +139,7 @@ TC_UNIT_PREFIX=$UNIT_PREFIX
 TC_STORE_DB=$STORE_DB
 TC_VENV=$VENV
 TC_CONSOLE_ENV_FILE=$CONSOLE_ENV_FILE
+TC_RUNTIME_DIR=$RUNTIME_DIR
 CONF
 chown root:root "$PREFIX/target.conf" && chmod 0644 "$PREFIX/target.conf" \
     || die "cannot secure target.conf"

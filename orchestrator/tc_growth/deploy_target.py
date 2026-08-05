@@ -152,6 +152,10 @@ class Target:
     #: `allowed_paths` — root's own program cannot live in the tree the service user can write, or
     #: every digest check below it is theatre. `__post_init__` enforces that rather than trusting it.
     privileged_prefix: str = "/usr/local/lib/tc-deploy"
+    #: Where root materialises the immutable runtime copy the service actually executes (review
+    #: blocker 1). Like the prefix, it must sit outside every service-user-writable tree — that is
+    #: the entire property, so it is enforced rather than assumed.
+    runtime_dir: str = "/usr/local/lib/tc-deploy/runtime"
     #: Fixed host locations the privileged program mutates. Named on the target so a disposable run
     #: cannot touch production's, and so they are never arguments a caller supplies.
     unit_path: str = "/etc/systemd/system/tc-console.service"
@@ -174,7 +178,8 @@ class Target:
         if not _NAME_RE.match(self.name or ""):
             raise DeployRefused(f"unusable target name: {self.name!r}")
         for field_name in ("app_dir", "releases_dir", "backup_dir", "db_path", "venv",
-                           "privileged_prefix", "unit_path", "inspector_dest", "sudoers_file",
+                           "privileged_prefix", "runtime_dir", "unit_path", "inspector_dest",
+                           "sudoers_file",
                            "snapshot_dir", "console_env_file"):
             value = getattr(self, field_name)
             if not value or not os.path.isabs(value) or value != os.path.normpath(value):
@@ -184,12 +189,13 @@ class Target:
         # drifts inside the writable tree would make root's manifest, digest and mode checks
         # decorative — and it would do so silently.
         for writable in (self.app_dir, self.releases_dir):
-            if self.privileged_prefix == writable or \
-                    self.privileged_prefix.startswith(writable + "/"):
-                raise DeployRefused(
-                    f"the privileged prefix {self.privileged_prefix!r} sits inside the "
-                    f"service-user-writable tree {writable!r}; root's machinery must live outside "
-                    "every path the deployment can write")
+            for field_name in ("privileged_prefix", "runtime_dir"):
+                value = getattr(self, field_name)
+                if value == writable or value.startswith(writable + "/"):
+                    raise DeployRefused(
+                        f"the target's {field_name} {value!r} sits inside the "
+                        f"service-user-writable tree {writable!r}; root's machinery and the bytes "
+                        "the service executes must live outside every path the deployment can write")
         for field_name in ("service", "unit_prefix", "service_user"):
             if not _NAME_RE.match(getattr(self, field_name) or ""):
                 raise DeployRefused(
