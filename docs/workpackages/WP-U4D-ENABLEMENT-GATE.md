@@ -81,9 +81,10 @@ Nothing else. The helper, its installer and the sudoers surface are withdrawn.
 **Tracked in PR #80.** This section is the durable scope; the PR description carries the same
 criteria.
 
-**Status: increment 1 of 2 is implemented and executed. The privileged program is NOT written.**
-Stated with that precision because the whole reason #79 was reduced is that descriptions here ran
-ahead of code.
+**Status: increments 1–3 are implemented and executed off-host; the six systemd-bound phases have
+never run.** The exit structure below says exactly what closes this work package and what does
+not. Stated with that precision because the whole reason #79 was reduced is that descriptions
+here ran ahead of code.
 
 #### Increment 1 — the target seam and the disposable harness (implemented, executed)
 
@@ -236,6 +237,76 @@ checkout; apply and rollback use only root-owned code and root-controlled state;
 unit is created through the same single entry point; an end-to-end **disposable run** proves
 apply, restart survival, evidence completion and rollback; forged environment, modified release
 content, writable state and unsafe permissions all fail closed.
+
+### The exit structure — two acceptances (DECIDED, owner + reviewer, PR #80 thread, 2026-08-05)
+
+The review loop between builder and reviewer has no natural terminus — either side can always
+find one more improvement. Safety-critical engineering exits on **agreed acceptance criteria**,
+not on "review until nobody has another idea", so the exit is fixed here, in advance of the run,
+where a post-run finding cannot quietly extend it.
+
+The owner's product requirement is also recorded so it cannot be argued away again: **the owner
+operates deployments from the Operations Console, not over SSH.** A one-command SSH workflow is a
+reasonable engineering milestone and is *not* the requested product. U4d is "owner-operated
+deployment", and the finish line does not move to wherever the engine happens to stop.
+
+#### Acceptance A — the engine (closes PR #80)
+
+The owner runs, on the VPS, inside `script(1)`:
+
+```bash
+cd /opt/tc_ai_growth/app/orchestrator
+sudo python -m tc_growth.cli deploy-vps-acceptance /srv/tc-u4d-acceptance/run1
+```
+
+Frozen criteria — all of them, and only them:
+
+1. The command exits `0` and its report lists **zero deferred phases**: `transient-unit`,
+   `daemon-reload`, `restart-service`, `health-check`, `failure-injection` and
+   `rollback-service-action` all **executed**.
+2. The injected failure (committed content, not an editable file) fails the deployment, and
+   rollback's per-artifact verdict is `complete`, with the service action taken from recorded
+   prior state.
+3. Evidence for the run is durable, redacted, and **read by eye** — including `systemctl show`
+   output, the realistic leak source that cannot be produced off-host.
+4. The report's production-untouched check is green: production paths, service, store, port and
+   sudoers unchanged.
+5. The run identifiers, the exact head SHA, and the full report are posted on PR #80.
+
+On green, **PR #80 merges as the engine increment** — explicitly *not* as "U4d complete".
+A finding made after Acceptance A passes goes to Acceptance B or to the parked-residuals list
+below; the one exception, deliberately narrow, is a defect showing the privileged boundary itself
+unsafe, which reopens A.
+
+#### Acceptance B — the owner experience (WP-U4d.2, successor PR)
+
+Only after A: the Operations Console launches the **same** bounded disposable acceptance chain
+through the **same** reviewed privileged entry point. The Console is another *caller* of the
+engine — never a second implementation path, never a place where paths, units, ports, users or
+command fragments originate. The reviewer's ten criteria (PR #80 thread, head `272e05b` review)
+are the acceptance bar, headline items:
+
+- a registered **Run deployment acceptance** operation with preview, CSRF/session protection and
+  explicit owner approval; the browser selects only the closed operation, supplying no values;
+- progress streamed in the Console, every phase written to durable Evidence;
+- the operation survives the Console restart it causes and reconnects to durable run state;
+- the final verdict distinguishes `PASS`, `FAILED SAFELY` and `BLOCKED`, and never reports
+  success while a required phase is deferred;
+- the complete owner acceptance runs with **no SSH, no terminal, no pasted instructions**.
+
+A one-time host installation of the root-owned machinery remains a separate, explicitly governed
+setup event; it never becomes the recurring workflow.
+
+#### Held throughout both acceptances
+
+`deploy_release` stays `enabled=False` and server-refused. Enablement is a third, separate owner
+decision after B — a green acceptance is evidence for that decision, not the decision itself.
+
+#### Parked residuals (documented, not scheduled)
+
+- Commit-signature verification against a root-held key — the object-store authenticity anchor.
+  Root's comparison defeats post-`stage` substitution and replace refs; a consistent rewrite of
+  objects *and* tree still passes.
 
 ---
 

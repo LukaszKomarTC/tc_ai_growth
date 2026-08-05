@@ -87,5 +87,9 @@ residual — see `docs/workpackages/WP-U4D-ENABLEMENT-GATE.md`.
 
 ## After the run
 
-Send back the report and, if you used `script`, the transcript. Merge and enablement remain owner
-decisions; a green acceptance run is evidence for that decision, not the decision itself.
+Send back the report and, if you used `script`, the transcript. This run is **Acceptance A** of
+the two-acceptance exit structure in `docs/workpackages/WP-U4D-ENABLEMENT-GATE.md`: its criteria
+are frozen there in advance, a green run merges PR #80 as the *engine* increment, and the
+Console-driven owner experience (Acceptance B, WP-U4d.2) follows as a successor. Merge and
+enablement remain owner decisions; a green acceptance run is evidence for those decisions, not
+the decisions themselves.
