@@ -960,3 +960,79 @@ def record_deploy_step(conn: sqlite3.Connection, run_id: int, *, seq: int, name:
 def list_deploy_steps(conn: sqlite3.Connection, run_id: int) -> list[dict]:
     return [dict(r) for r in conn.execute(
         "SELECT * FROM deploy_steps WHERE run_id = ? ORDER BY seq", (run_id,))]
+
+
+# --------------------------------------------------------------------- WP-U4d.2 acceptance runs
+
+ACCEPTANCE_VERDICTS = ("PASS", "FAILED SAFELY", "BLOCKED")
+
+
+def begin_acceptance_run(conn: sqlite3.Connection, *, requested_by: str, root: str) -> int | None:
+    """Create the run row, or return None if a live (non-terminal) acceptance already exists.
+
+    The INSERT ... WHERE NOT EXISTS is the concurrency control: two racing requests resolve in
+    the database, not in application code, so at most one acceptance is ever live — the run
+    mutates real host state and two of them interleaving would corrupt each other's evidence."""
+    cur = conn.execute(
+        "INSERT INTO acceptance_runs (requested_at, requested_by, root, status) "
+        "SELECT ?, ?, ?, 'requested' "
+        "WHERE NOT EXISTS (SELECT 1 FROM acceptance_runs WHERE status != 'done')",
+        (_now(), requested_by, root))
+    conn.commit()
+    return int(cur.lastrowid) if cur.rowcount == 1 else None
+
+
+def set_acceptance_root(conn: sqlite3.Connection, run_id: int, root: str) -> bool:
+    """Stamp the server-derived run directory. The root is derived FROM the row id, so it can
+    only be known after the insert; this is the second half of that one creation, allowed only
+    while the row is still 'requested' and still carries the 'pending' placeholder."""
+    cur = conn.execute(
+        "UPDATE acceptance_runs SET root=? WHERE id=? AND status='requested' AND root='pending'",
+        (root, run_id))
+    conn.commit()
+    return cur.rowcount == 1
+
+
+def get_acceptance_run(conn: sqlite3.Connection, run_id: int) -> dict | None:
+    row = conn.execute("SELECT * FROM acceptance_runs WHERE id = ?", (run_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def list_acceptance_runs(conn: sqlite3.Connection, *, limit: int = 20) -> list[dict]:
+    return [dict(r) for r in conn.execute(
+        "SELECT * FROM acceptance_runs ORDER BY id DESC LIMIT ?", (limit,))]
+
+
+def claim_acceptance_run(conn: sqlite3.Connection, run_id: int) -> bool:
+    """requested -> running, exactly once — same shape as start_deploy_run."""
+    cur = conn.execute(
+        "UPDATE acceptance_runs SET status='running', started_at=? "
+        "WHERE id=? AND status='requested'", (_now(), run_id))
+    conn.commit()
+    return cur.rowcount == 1
+
+
+def finish_acceptance_run(conn: sqlite3.Connection, run_id: int, *, verdict: str,
+                          summary: str) -> None:
+    if verdict not in ACCEPTANCE_VERDICTS:
+        raise ValueError(f"not an acceptance verdict: {verdict}")
+    conn.execute(
+        "UPDATE acceptance_runs SET status='done', finished_at=?, verdict=?, summary=? "
+        "WHERE id=?", (_now(), verdict, summary, run_id))
+    conn.commit()
+
+
+def record_acceptance_phase(conn: sqlite3.Connection, run_id: int, *, seq: int, name: str,
+                            status: str, detail: str | None = None) -> int:
+    if status not in ("ok", "deferred", "failed", "refused"):
+        raise ValueError(f"not an acceptance phase status: {status}")
+    cur = conn.execute(
+        "INSERT INTO acceptance_phases (run_id, seq, at, name, status, detail) "
+        "VALUES (?, ?, ?, ?, ?, ?)", (run_id, int(seq), _now(), name, status, detail))
+    conn.commit()
+    return int(cur.lastrowid)
+
+
+def list_acceptance_phases(conn: sqlite3.Connection, run_id: int) -> list[dict]:
+    return [dict(r) for r in conn.execute(
+        "SELECT * FROM acceptance_phases WHERE run_id = ? ORDER BY seq", (run_id,))]

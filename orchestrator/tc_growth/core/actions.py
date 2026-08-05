@@ -198,6 +198,53 @@ OPERATIONS: tuple[Operation, ...] = (
         # here to be reviewed, not offered to be clicked. #77 requires the proof before first use.
         enabled=False,
     ),
+    Operation(
+        id="deploy_acceptance",
+        name="Run deployment acceptance (WP-U4d.2)",
+        category=Category.PLATFORM,
+        min_phase=Phase.CONTROLLED_EXECUTION,
+        environments=("staging", "production"),
+        approval=Approval.ALWAYS_ASK,
+        command="acceptance-run",
+        # NO arguments at all. The run directory is derived server-side from the fixed safe
+        # parent; every path, service, unit, port and user comes from the engine's own
+        # resolution, which refuses production by value. There is no request shape that can
+        # point this operation anywhere.
+        allowed_args=(),
+        result_policy=((0, "success"), (1, "failure")),
+        timeout_s=3600.0,
+        target_surface="platform",
+        preconditions=("the root-owned privileged machinery is installed on the host (the "
+                       "one-time governed setup event)",
+                       "no other acceptance run is live (the store enforces at most one)",
+                       "a booted service manager — without one the run ends BLOCKED, never PASS"),
+        enforced_by=(_GATE,
+                     "tc_growth.deploy_acceptance.assert_nothing_production — every resolved "
+                     "value refused if it is production's, before a single mutation",
+                     "tc_growth.acceptance_run — the run directory is derived from the fixed "
+                     "safe parent; the browser supplies no values; the one escalation is the "
+                     "root-owned program's fixed verb surface",
+                     "store triggers trg_acceptance_phases_no_update/_no_delete and "
+                     "trg_acceptance_runs_terminal — phases are append-only and a finished "
+                     "run's verdict cannot be rewritten",
+                     "the verdict set is closed (PASS / FAILED SAFELY / BLOCKED) and a deferred "
+                     "phase is never represented as success"),
+        rollback_description="the run operates only on a disposable tree under "
+                             "/srv/tc-u4d-acceptance and tears it down itself; rollback of the "
+                             "disposable deployment is one of the phases under test, and "
+                             "production paths, service, store and sudoers are never touched",
+        verification_description="every phase is written to acceptance_phases as append-only "
+                                 "evidence by processes that outlive the Console; the run ends "
+                                 "in an explicit closed verdict where anything unproven — a "
+                                 "refused launch, absent machinery, a deferred phase — is "
+                                 "BLOCKED, and FAILED SAFELY requires the rollback and "
+                                 "production-state phases to have recorded ok",
+        # DISABLED like every unproven platform-write capability: the entry exists to be
+        # reviewed, not yet to be clicked. Enabling it is a deliberate reviewed flip that is
+        # part of the one-time governed host setup for the acceptance (WP-U4d.2 increment 3),
+        # after the privileged verb it launches exists and is granted (increment 2).
+        enabled=False,
+    ),
 )
 
 

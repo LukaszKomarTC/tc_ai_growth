@@ -69,9 +69,12 @@ def test_foundation_lists_only_accepted_operations():
                                                          "redeliver_latest_report"}
     assert [op.id for op in OPERATIONS if op.category is Category.EXECUTION] == []
     assert all(op.min_phase is Phase.READ_ONLY for op in OPERATIONS if op.enabled)
-    # Anything present but NOT enabled is a reviewable definition, not authority. U4d's
-    # deploy_release is the only such entry and stays disabled until its staging proof.
-    assert {op.id for op in OPERATIONS if not op.enabled} == {"deploy_release"}
+    # Anything present but NOT enabled is a reviewable definition, not authority. Extended
+    # DELIBERATELY per increment: U4d's deploy_release stays disabled until its staging proof;
+    # U4d.2's deploy_acceptance stays disabled until the privileged verb it launches exists and
+    # the enabling flip is reviewed as part of the governed host setup.
+    assert {op.id for op in OPERATIONS if not op.enabled} == {"deploy_release",
+                                                              "deploy_acceptance"}
 
 
 def test_duplicate_ids_rejected():

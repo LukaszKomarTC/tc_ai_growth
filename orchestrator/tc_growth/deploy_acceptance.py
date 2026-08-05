@@ -59,6 +59,41 @@ class AcceptanceRefused(RuntimeError):
     """The run refused to start. Distinct from a deployment failure: nothing has been mutated."""
 
 
+#: The complete phase vocabulary, in execution order. The Console-driven acceptance (WP-U4d.2)
+#: reads these same names for its durable evidence and its verdict — a second list would be a
+#: second implementation path, drifting the moment either changed.
+PHASE_ORDER = (
+    "preflight-refuses-production",
+    "ownership-split",
+    "install-and-self-check",
+    "bootstrap",
+    "target-bound-plan",
+    "transient-unit",
+    "apply-file-phases",
+    "daemon-reload",
+    "restart-service",
+    "health-check",
+    "import-origin",
+    "failure-injection",
+    "rollback-file-semantics",
+    "rollback-service-action",
+    "evidence-dump",
+    "teardown-and-production-check",
+)
+
+#: The phases that need a booted service manager. Without one they are recorded `deferred`,
+#: and a deferred phase is never success — the verdict logic in `acceptance_run` degrades it
+#: to BLOCKED.
+SYSTEMD_PHASES = (
+    "transient-unit",
+    "daemon-reload",
+    "restart-service",
+    "health-check",
+    "failure-injection",
+    "rollback-service-action",
+)
+
+
 def assert_nothing_production(target: deploy_target.Target) -> list[str]:
     """Fail closed before any mutation if the run would touch production.
 
@@ -267,8 +302,14 @@ def systemd_is_booted() -> bool:
     return Path("/run/systemd/system").is_dir()
 
 
-def run(root: Path, *, keep: bool = False) -> dict:
-    """The whole acceptance, as one call. Returns a structured report; raises only on refusal."""
+def run(root: Path, *, keep: bool = False, progress=None) -> dict:
+    """The whole acceptance, as one call. Returns a structured report; raises only on refusal.
+
+    `progress`, when given, is called as `progress(name, status, detail)` the moment each phase
+    lands — status is `ok` or `deferred`, names come from PHASE_ORDER. It exists because a
+    mid-run exception discards the report dict: a durable consumer (the Console-driven
+    acceptance) must receive each phase as it happens, not hope the dict survives to the end.
+    """
     if os.geteuid() != 0:
         raise AcceptanceRefused("this acceptance run installs root-owned machinery; run it as root")
 
@@ -294,9 +335,16 @@ def run(root: Path, *, keep: bool = False) -> dict:
 
     report: dict = {"service_account": account, "systemd_booted": booted,
                     "executed": [], "deferred": [], "steps": {}}
+
+    def mark(name: str, *, needs_systemd: bool = False, detail: str = "") -> None:
+        deferred = needs_systemd and not booted
+        (report["deferred"] if deferred else report["executed"]).append(name)
+        if progress is not None:
+            progress(name, "deferred" if deferred else "ok", detail)
+
     report["steps"]["preflight"] = {"checked": checked, "root": str(root.resolve()),
                                     "resolved_before_any_mutation": True}
-    report["executed"].append("preflight-refuses-production")
+    mark("preflight-refuses-production")
 
     # ---------------------------------------------------------------- MUTATION BEGINS HERE
     ensure_service_account(account)
@@ -312,7 +360,7 @@ def run(root: Path, *, keep: bool = False) -> dict:
         raise AcceptanceRefused("the materialised target differs from the approved one")
 
     report["steps"]["ownership"] = apply_ownership_split(target, account)
-    report["executed"].append("ownership-split")
+    mark("ownership-split")
 
     # 3. Install the privileged machinery for this target.
     deploy_target.open_cli_target_gate()
@@ -322,13 +370,15 @@ def run(root: Path, *, keep: bool = False) -> dict:
     finally:
         deploy_target.close_cli_target_gate()
     report["steps"]["ownership_after_install"] = verify_ownership_split(target, account)
-    report["executed"].append("install-and-self-check")
+    # install_privileged raises on a non-zero installer exit, so reaching here means the
+    # installed program passed its own self-check.
+    mark("install-and-self-check", detail="installer ran the installed program's self-check")
 
     # 4. Bootstrap the trusted runner runtime — the fresh-host path.
     git_as(account, Path(target.app_dir), "worktree", "add", "--detach",
            target.release_dir(disposable.target_sha), disposable.target_sha)
     report["steps"]["bootstrap"] = _verb(target, "bootstrap", disposable.target_sha)
-    report["executed"].append("bootstrap")
+    mark("bootstrap", detail=f"exit={report['steps']['bootstrap']['exit']}")
 
     # 5. A target-bound plan and run row — never a production plan.
     store = SqliteStore(target.db_path)
@@ -341,19 +391,20 @@ def run(root: Path, *, keep: bool = False) -> dict:
         store.close()
     report["steps"]["plan"] = {"run_id": run_id, "plan_target": plan["target"],
                                "repository": plan["repository"], "service": plan["service"]}
-    report["executed"].append("target-bound-plan")
+    mark("target-bound-plan", detail=f"run #{run_id} on {plan['target']}")
 
     # 6. The transient path.
     report["steps"]["start_run"] = _verb(target, "start-run", str(run_id))
-    (report["executed"] if booted else report["deferred"]).append("transient-unit")
+    mark("transient-unit", needs_systemd=True,
+         detail=f"exit={report['steps']['start_run']['exit']}")
 
     # 7. apply, and the import origin under the exact service command.
     report["steps"]["apply"] = _verb(target, "apply", disposable.target_sha)
-    report["executed"].append("apply-file-phases")
+    mark("apply-file-phases", detail=f"exit={report['steps']['apply']['exit']}")
     for phase in ("daemon-reload", "restart-service", "health-check"):
-        (report["executed"] if booted else report["deferred"]).append(phase)
+        mark(phase, needs_systemd=True)
     report["steps"]["import_origin"] = _import_origin(target, disposable.target_sha)
-    report["executed"].append("import-origin")
+    mark("import-origin")
 
     # 8. A real failure, injected into committed content so unit regeneration cannot remove it.
     failing = commit_failing_release(disposable, account)
@@ -361,7 +412,8 @@ def run(root: Path, *, keep: bool = False) -> dict:
            target.release_dir(failing), failing)
     report["steps"]["failing_release"] = {"sha": failing,
                                           "result": _verb(target, "apply", failing)}
-    (report["executed"] if booted else report["deferred"]).append("failure-injection")
+    mark("failure-injection", needs_systemd=True,
+         detail=f"exit={report['steps']['failing_release']['result']['exit']}")
 
     # 9. Rollback, and the per-artifact prior state.
     report["steps"]["rollback"] = _verb(target, "rollback")
@@ -370,12 +422,12 @@ def run(root: Path, *, keep: bool = False) -> dict:
             ("unit", target.unit_path), ("inspector", target.inspector_dest),
             ("sudoers", target.sudoers_file),
             ("current", os.path.join(target.snapshot_dir, "current")))}
-    report["executed"].append("rollback-file-semantics")
-    (report["executed"] if booted else report["deferred"]).append("rollback-service-action")
+    mark("rollback-file-semantics", detail=f"exit={report['steps']['rollback']['exit']}")
+    mark("rollback-service-action", needs_systemd=True)
 
     # 10. Evidence, in full, for the by-eye read.
     report["steps"]["evidence"] = _evidence(target)
-    report["executed"].append("evidence-dump")
+    mark("evidence-dump")
     # Re-read the split at the END, when the runtime and snapshot trees actually exist. Reporting
     # them as "absent" from a check taken before they were created would understate the run.
     report["steps"]["ownership_final"] = verify_ownership_split(target, account)
@@ -385,7 +437,9 @@ def run(root: Path, *, keep: bool = False) -> dict:
     if not keep:
         deploy_harness.teardown(disposable)
         report["steps"]["teardown"] = {"removed": str(root), "exists": Path(root).exists()}
-    report["executed"].append("teardown-and-production-check")
+    # production_untouched RECORDS the observed state rather than judging it (a real production
+    # install legitimately exists on the VPS); the by-eye read and the report carry the verdict.
+    mark("teardown-and-production-check", detail="production state recorded for the by-eye read")
     deploy_target._reset_for_tests()
     return report
 
