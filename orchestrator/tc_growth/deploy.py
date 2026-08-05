@@ -125,8 +125,10 @@ STEPS: tuple[Step, ...] = (
          "Fetches origin/main and refuses unless the exact SHA is an ancestor of it. A commit "
          "that is not on the reviewed line cannot be deployed."),
     Step("backup", "Back up the evidence store and VERIFY the copy", True,
-         "sqlite .backup of the shared store, then the copy is reopened and its table counts "
-         "compared with the original. An unverified copy is treated as no backup at all."),
+         "sqlite .backup of the shared store, then the copy is proven two ways: SQLite's own "
+         "PRAGMA integrity_check, and a full content digest of every row in every table compared "
+         "against the source. Equal row counts are NOT accepted as proof. A copy that cannot be "
+         "proven faithful is treated as no backup at all and stops the deployment."),
     Step("converge", "Fast-forward the app checkout to the target commit", False,
          "git merge --ff-only to the exact SHA, as the tcgrowth user. Reversible only by "
          "deploying the previous SHA — recorded as irreversible so it is never a surprise."),
@@ -163,8 +165,10 @@ def build_plan(sha: str, *, current_sha: str | None = None) -> dict:
         "irreversible_steps": list(IRREVERSIBLE),
         "stop_on_failure": True,
         "rollback": "scripts/deploy-console.sh --rollback restores the previous unit, inspector "
-                    "and sudoers state. The store is recovered from the verified backup taken in "
-                    "step 2. A converged checkout is returned by deploying the previous SHA.",
+                    "and sudoers state. The store is recovered from the step-2 backup, which is "
+                    "proven by SQLite integrity_check AND a full row-content digest match — not "
+                    "by row counts. A converged checkout is returned by deploying the previous "
+                    "SHA.",
     }
     return plan
 
@@ -209,27 +213,93 @@ def ex_preflight(sha: str, ctx: dict) -> StepResult:
     return StepResult(True, f"target {sha[:12]} is on {REMOTE_REF}", out)
 
 
+def _table_names(conn) -> list[str]:
+    return sorted(r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"))
+
+
+def content_digest(path: str) -> tuple[str, int, int]:
+    """A deterministic digest of every row in every table (review #78 blocker 2).
+
+    Equal row COUNTS prove almost nothing — two databases can agree on counts and disagree on
+    every value. This hashes the full content: each row is serialised with its table name and
+    column names, the serialised rows are sorted (so row order and rowid allocation cannot
+    change the result), and the whole thing is hashed. Returns (digest, tables, rows).
+    """
+    import sqlite3
+    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    try:
+        h = hashlib.sha256()
+        tables = _table_names(conn)
+        total = 0
+        for table in tables:
+            cur = conn.execute(f"SELECT * FROM {table}")
+            cols = [d[0] for d in cur.description]
+            rows = sorted(json.dumps([table, cols, list(r)], sort_keys=True, ensure_ascii=False,
+                                     separators=(",", ":"), default=str)
+                          for r in cur.fetchall())
+            total += len(rows)
+            h.update(f"\x00table:{table}\x00".encode("utf-8"))
+            for row in rows:
+                h.update(row.encode("utf-8"))
+                h.update(b"\x00")
+        return h.hexdigest(), len(tables), total
+    finally:
+        conn.close()
+
+
+def verify_backup(src: str, dst: str) -> tuple[bool, str]:
+    """Is `dst` a recovery copy of `src`? Two independent checks, both required.
+
+    1. SQLite's own `PRAGMA integrity_check` — the copy must be a structurally sound database,
+       not merely a file of the right size.
+    2. A full content digest of both — the copy must contain the same rows, not the same count
+       of rows.
+
+    Anything less would let the plan promise a recovery path it cannot deliver.
+    """
+    import sqlite3
+    try:
+        conn = sqlite3.connect(f"file:{dst}?mode=ro", uri=True)
+        try:
+            integrity = [r[0] for r in conn.execute("PRAGMA integrity_check")]
+        finally:
+            conn.close()
+    except sqlite3.DatabaseError as exc:
+        return False, f"the backup is not a readable SQLite database: {exc}"
+    if integrity != ["ok"]:
+        return False, "the backup failed SQLite integrity_check: " + "; ".join(integrity[:5])
+
+    src_digest, tables, rows = content_digest(src)
+    dst_digest, dst_tables, dst_rows = content_digest(dst)
+    if src_digest != dst_digest:
+        return False, (f"the backup's CONTENT differs from the original "
+                       f"(source {tables} tables/{rows} rows, copy {dst_tables}/{dst_rows}) — "
+                       "equal counts would not have been enough to notice this")
+    return True, (f"integrity_check ok and content digest {src_digest[:12]} matches across "
+                  f"{tables} tables / {rows} rows")
+
+
 def ex_backup(sha: str, ctx: dict) -> StepResult:
-    """Back up, then VERIFY. Criterion: backup verification happens before anything migrates."""
+    """Back up, then VERIFY — integrity plus full content, never just counts (#78 blocker 2).
+
+    Retried once: the store is live, so a write landing between the copy and the digest is a
+    real possibility. If the second attempt still disagrees we refuse rather than guess, because
+    a backup we cannot prove faithful is not a recovery path.
+    """
     import sqlite3
     src = ctx["db_path"]
     dst = f"{src}.pre-{sha[:12]}.bak"
-    with sqlite3.connect(src) as s, sqlite3.connect(dst) as d:
-        s.backup(d)
-    def counts(path: str) -> dict:
-        c = sqlite3.connect(path)
-        names = [r[0] for r in c.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")]
-        return {n: c.execute(f"SELECT count(*) FROM {n}").fetchone()[0] for n in names}
-    before, after = counts(src), counts(dst)
-    if before != after:
-        differing = {k: (before.get(k), after.get(k)) for k in set(before) | set(after)
-                     if before.get(k) != after.get(k)}
-        return StepResult(False, "backup copy does NOT match the original — treating this as no "
-                                 "backup and stopping before any migration", json.dumps(differing))
-    ctx["backup_path"] = dst
-    return StepResult(True, f"verified backup: {len(before)} tables, "
-                            f"{sum(before.values())} rows, counts identical", dst)
+    last = "not attempted"
+    for attempt in (1, 2):
+        with sqlite3.connect(src) as s, sqlite3.connect(dst) as d:
+            s.backup(d)
+        ok, last = verify_backup(src, dst)
+        if ok:
+            ctx["backup_path"] = dst
+            return StepResult(True, f"verified backup: {last}", dst)
+    return StepResult(False, "backup could NOT be verified — treating this as no backup and "
+                             f"stopping before anything irreversible runs: {last}", dst)
 
 
 def ex_converge(sha: str, ctx: dict) -> StepResult:
@@ -323,7 +393,11 @@ def execute(store, run_id: int, *, context: dict | None = None, executors: dict 
     marks the run `failed` and no later step is attempted, so a deployment can never limp past
     a failed migration or a red suite.
     """
-    ctx = dict(context or default_context())
+    # NOT `context or default_context()`: an empty dict is falsy, so that form silently ran the
+    # PRODUCTION context whenever a caller passed `{}`. And not a copy either — the context is a
+    # scratchpad the steps hand forward (the backup path reaches the recovery text through it),
+    # so the caller must see what the steps recorded.
+    ctx = context if context is not None else default_context()
     ex = dict(executors or EXECUTORS)
     run = store.get_deploy_run(run_id)
     if run is None:
@@ -332,7 +406,15 @@ def execute(store, run_id: int, *, context: dict | None = None, executors: dict 
         raise DeployRefused(f"deploy run {run_id} is {run['status']}, not planned — refusing to "
                             "re-run; a deployment is authorized once")
     sha = validate_sha(run["sha"])
-    store.start_deploy_run(run_id, pid=os.getpid())
+    # The atomic planned -> running claim IS the mutual exclusion (review #78 blocker 1). Reading
+    # `planned` above is necessary but NOT sufficient: two detached runners can both pass that
+    # read. The LOSER must stop here — before any step is recorded and before any executor runs —
+    # so it can neither duplicate the migration/release/restart nor overwrite the winner's
+    # terminal result.
+    if not store.start_deploy_run(run_id, pid=os.getpid()):
+        raise DeployRefused(
+            f"deploy run {run_id} was already claimed by another runner — refusing to execute it "
+            "a second time")
 
     seq = 0
     for step in steps:
