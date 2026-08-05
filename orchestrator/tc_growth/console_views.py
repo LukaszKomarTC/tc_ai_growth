@@ -698,8 +698,10 @@ def deploy_plan_body(run: dict, plan: dict, plan_text: str, *, csrf: str,
     irreversible = plan.get("irreversible_steps") or []
     warn = ("<div class='sev-warn'><b>These steps cannot be undone:</b> "
             + _e(", ".join(irreversible)) +
-            ". The evidence store is backed up and the copy VERIFIED before any of them run; "
-            "if the backup cannot be verified the deployment stops.</div>")
+            ". Before any of them run, the evidence store is copied and the copy is proven two "
+            "ways — SQLite's own integrity check, and a digest of every row in every table "
+            "compared against the original. Matching row counts are not accepted as proof. "
+            "If the copy cannot be proven faithful, the deployment stops.</div>")
     start = ""
     if offered and run["status"] == "planned":
         start = (

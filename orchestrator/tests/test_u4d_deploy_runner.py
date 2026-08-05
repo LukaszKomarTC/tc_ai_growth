@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import os
-import signal
 import sqlite3
 import subprocess
 import sys
@@ -428,3 +427,180 @@ def test_v6_store_migrates_to_v7_leaving_every_existing_record_intact(tmp_path, 
         conn.close()
     finally:
         s.close()
+
+
+# --- review #78 blocker 1: the CLAIM is the mutual exclusion, not the earlier read ------------
+
+def test_two_genuinely_concurrent_executes_produce_exactly_one_deployment(tmp_path, monkeypatch):
+    """Real threads, released together by a barrier, each with its OWN store connection — the
+    shape two detached runners actually have. Exactly one may run the executors."""
+    import threading
+
+    monkeypatch.setenv("TC_DB_PATH", str(tmp_path / "store.db"))
+    setup = open_store()
+    run_id, _ = _plan(setup)
+    setup.close()
+
+    barrier = threading.Barrier(2)
+    lock = threading.Lock()
+    ran: list[str] = []
+    outcomes: list[object] = []
+
+    def executor(sha, ctx):
+        with lock:
+            ran.append(ctx["who"])
+        time.sleep(0.05)
+        return deploy.StepResult(True, "ok")
+
+    def runner(who):
+        store = open_store()
+        table = {st.name: executor for st in deploy.STEPS}
+        barrier.wait()
+        try:
+            outcomes.append(deploy.execute(store, run_id, context={"who": who}, executors=table))
+        except deploy.DeployRefused as exc:
+            outcomes.append(exc)
+        finally:
+            store.close()
+
+    threads = [threading.Thread(target=runner, args=(w,)) for w in ("A", "B")]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+
+    winners = [o for o in outcomes if o == "succeeded"]
+    losers = [o for o in outcomes if isinstance(o, deploy.DeployRefused)]
+    assert len(winners) == 1, f"expected exactly one winner, got {outcomes}"
+    assert len(losers) == 1, f"the loser must be refused, got {outcomes}"
+    assert "already claimed" in str(losers[0])
+
+    # The loser ran NO executor: every recorded step belongs to the same runner.
+    assert len(set(ran)) == 1, f"both runners executed steps: {ran}"
+    assert len(ran) == len(deploy.STEPS)
+
+
+def test_the_loser_records_no_step_and_cannot_touch_the_winners_evidence(store):
+    """It must stop before the first step is written — not merely before the first executor."""
+    run_id, _ = _plan(store)
+    assert store.start_deploy_run(run_id, pid=4242) is True   # the "winner" claims it first
+    before = store.list_deploy_steps(run_id)
+    with pytest.raises(deploy.DeployRefused) as exc:
+        deploy.execute(store, run_id, context={}, executors=_executors())
+    # Either refusal is correct here: the sequential case trips the `not planned` read, the
+    # genuinely concurrent case (above) trips the atomic claim. What must hold in BOTH is that
+    # the loser wrote nothing and changed nothing.
+    assert "not planned" in str(exc.value) or "already claimed" in str(exc.value)
+    assert store.list_deploy_steps(run_id) == before == []
+    run = store.get_deploy_run(run_id)
+    assert run["status"] == "running" and run["runner_pid"] == 4242
+    assert run["finished_at"] is None
+
+
+def test_double_authorization_cannot_duplicate_migration_release_or_restart(store):
+    """Authorize twice, run twice: the second attempt performs no irreversible step at all."""
+    run_id, _ = _plan(store)
+    first, second = {}, {}
+    assert deploy.execute(store, run_id, context=first, executors=_executors()) == "succeeded"
+    with pytest.raises(deploy.DeployRefused):
+        deploy.execute(store, run_id, context=second, executors=_executors())
+    for irreversible in deploy.IRREVERSIBLE:
+        assert first["order"].count(irreversible) == 1
+        assert irreversible not in second.get("order", [])
+
+
+# --- review #78 blocker 2: the backup proof must match the promise ---------------------------
+
+def test_a_healthy_copy_passes_integrity_and_content_verification(store, tmp_path):
+    db = os.environ["TC_DB_PATH"]
+    store.log_run(kind="weekly-report", status="ok", summary="evidence that must survive")
+    ctx = {"db_path": db}
+    result = deploy.ex_backup(SHA, ctx)
+    assert result.ok, result.summary
+    assert "integrity_check ok" in result.summary and "content digest" in result.summary
+    ok, why = deploy.verify_backup(db, ctx["backup_path"])
+    assert ok, why
+
+
+def test_a_backup_with_identical_counts_but_changed_content_is_REJECTED(store, tmp_path):
+    """The exact case row counts cannot see: same tables, same number of rows, different values."""
+    db = os.environ["TC_DB_PATH"]
+    store.log_run(kind="weekly-report", status="ok", summary="the original text")
+    ctx = {"db_path": db}
+    assert deploy.ex_backup(SHA, ctx).ok
+    dst = ctx["backup_path"]
+
+    conn = sqlite3.connect(dst)
+    conn.execute("UPDATE runs SET summary = 'tampered — same row, different content'")
+    conn.commit()
+    counts_src = sqlite3.connect(db).execute("SELECT count(*) FROM runs").fetchone()[0]
+    counts_dst = conn.execute("SELECT count(*) FROM runs").fetchone()[0]
+    conn.close()
+    assert counts_src == counts_dst, "the tamper must keep counts equal, or it proves nothing"
+
+    ok, why = deploy.verify_backup(db, dst)
+    assert not ok
+    assert "CONTENT differs" in why
+
+
+def test_a_structurally_broken_backup_is_REJECTED(tmp_path, store):
+    db = os.environ["TC_DB_PATH"]
+    broken = tmp_path / "broken.bak"
+    broken.write_bytes(b"SQLite format 3\x00" + b"\x00" * 200)
+    ok, why = deploy.verify_backup(db, str(broken))
+    assert not ok
+    assert "integrity_check" in why or "not a readable SQLite database" in why
+
+
+def test_a_missing_table_in_the_copy_is_REJECTED(tmp_path, store):
+    db = os.environ["TC_DB_PATH"]
+    ctx = {"db_path": db}
+    assert deploy.ex_backup(SHA, ctx).ok
+    conn = sqlite3.connect(ctx["backup_path"])
+    conn.execute("DROP TABLE deploy_steps")
+    conn.commit()
+    conn.close()
+    ok, why = deploy.verify_backup(db, ctx["backup_path"])
+    assert not ok
+
+
+def test_the_content_digest_ignores_row_order_but_not_row_values(tmp_path):
+    """Determinism check: the digest must not depend on insertion order, or every backup would
+    look tampered; it must depend on values, or nothing is proven."""
+    a, b = tmp_path / "a.db", tmp_path / "b.db"
+    for path, rows in ((a, ["x", "y"]), (b, ["y", "x"])):
+        conn = sqlite3.connect(path)
+        conn.execute("CREATE TABLE t (v TEXT)")
+        conn.executemany("INSERT INTO t VALUES (?)", [(r,) for r in rows])
+        conn.commit()
+        conn.close()
+    assert deploy.content_digest(str(a))[0] == deploy.content_digest(str(b))[0]
+
+    conn = sqlite3.connect(b)
+    conn.execute("UPDATE t SET v = 'z' WHERE v = 'x'")
+    conn.commit()
+    conn.close()
+    assert deploy.content_digest(str(a))[0] != deploy.content_digest(str(b))[0]
+
+
+def test_an_unverifiable_backup_stops_before_anything_irreversible_end_to_end(store, monkeypatch):
+    """The real executor, with verification forced to fail: no irreversible step may run."""
+    monkeypatch.setattr(deploy, "verify_backup", lambda src, dst: (False, "forced failure"))
+    run_id, _ = _plan(store)
+    ctx = {"db_path": os.environ["TC_DB_PATH"]}
+    table = _executors(backup=deploy.ex_backup)
+    assert deploy.execute(store, run_id, context=ctx, executors=table) == "failed"
+    for irreversible in deploy.IRREVERSIBLE:
+        assert irreversible not in ctx.get("order", [])
+    assert "could NOT be verified" in store.get_deploy_run(run_id)["outcome"]
+
+
+def test_the_plan_states_exactly_what_the_backup_proof_guarantees():
+    """Criterion 7: the owner-facing text must not call count equality a verified recovery copy."""
+    plan = deploy.build_plan(SHA)
+    backup_step = [s for s in plan["steps"] if s["name"] == "backup"][0]
+    assert "integrity_check" in backup_step["detail"]
+    assert "content digest" in backup_step["detail"]
+    assert "Equal row counts are NOT accepted as proof" in backup_step["detail"]
+    assert "row-content digest match" in plan["rollback"]
+    assert "not\n" not in plan["rollback"]
