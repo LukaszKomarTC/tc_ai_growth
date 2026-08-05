@@ -29,7 +29,6 @@ import json
 import os
 import re
 import shlex
-import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -196,33 +195,18 @@ def _run(argv: list[str], *, timeout: float = 900.0, cwd: str | None = None) -> 
     return proc.returncode, redact((proc.stdout or "") + (proc.stderr or ""))
 
 
-SERVICE_USER = "tcgrowth"
-
-#: The ONE root-privileged action in the entire runner. Everything else happens as the service
-#: user, which the runner already is. See docs/workpackages/WP-U4D-ENABLEMENT-GATE.md.
-DEPLOY_WRAPPER = "/usr/local/bin/tc-deploy-release.sh"
-
-
-def assert_not_root() -> None:
-    """Refuse to run as root (WP-U4d enablement review).
-
-    The runner is a child of the Console, which runs as `tcgrowth`. If it ever finds itself
-    running as root, something about the deployment surface is not what this code believes, and
-    every allowlist below was written for the unprivileged case. Refusing is the honest response
-    to that, and it is cheap.
-    """
-    if hasattr(os, "geteuid") and os.geteuid() == 0:
-        raise DeployRefused(
-            "the deployment runner must not run as root — it runs as the unprivileged service "
-            f"user and escalates only through {DEPLOY_WRAPPER}")
+def _as_tcgrowth(argv: list[str]) -> list[str]:
+    """Every git command in the checkout runs as tcgrowth, never as root (standing rule D5)."""
+    return ["sudo", "-u", "tcgrowth", *argv]
 
 
 def ex_preflight(sha: str, ctx: dict) -> StepResult:
     _assert_allowed_path(APP_DIR)
-    code, out = _run(["git", "-C", APP_DIR, "fetch", "origin", "main"])
+    code, out = _run(_as_tcgrowth(["git", "-C", APP_DIR, "fetch", "origin", "main"]))
     if code != 0:
         return StepResult(False, "could not fetch origin/main", out)
-    code, out = _run(["git", "-C", APP_DIR, "merge-base", "--is-ancestor", sha, REMOTE_REF])
+    code, out = _run(_as_tcgrowth(
+        ["git", "-C", APP_DIR, "merge-base", "--is-ancestor", sha, REMOTE_REF]))
     if code != 0:
         return StepResult(False, f"{sha[:12]} is not an ancestor of {REMOTE_REF} — refusing to "
                                  "deploy a commit that is not on the reviewed line", out)
@@ -319,7 +303,7 @@ def ex_backup(sha: str, ctx: dict) -> StepResult:
 
 
 def ex_converge(sha: str, ctx: dict) -> StepResult:
-    code, out = _run(["git", "-C", APP_DIR, "merge", "--ff-only", sha])
+    code, out = _run(_as_tcgrowth(["git", "-C", APP_DIR, "merge", "--ff-only", sha]))
     if code != 0:
         return StepResult(False, "fast-forward to the target failed", out)
     return StepResult(True, f"app checkout converged to {sha[:12]}", out)
@@ -335,7 +319,7 @@ def ex_suite(sha: str, ctx: dict) -> StepResult:
 
 
 def ex_migrate(sha: str, ctx: dict) -> StepResult:
-    code, out = _run([ctx["venv_python"], "-m", "tc_growth.cli", "db-init"],
+    code, out = _run(_as_tcgrowth([ctx["venv_python"], "-m", "tc_growth.cli", "db-init"]),
                      cwd=f"{APP_DIR}/orchestrator")
     if code != 0:
         return StepResult(False, "store migration failed", out)
@@ -343,32 +327,24 @@ def ex_migrate(sha: str, ctx: dict) -> StepResult:
 
 
 def ex_release(sha: str, ctx: dict) -> StepResult:
-    # The guard sits HERE, beside the one escalation it protects, rather than at the entry to
-    # execute(): the property being defended is "the privileged step runs as the unprivileged
-    # service user and escalates only through the wrapper", which is a statement about this
-    # step. Gating the whole run on it would also refuse deployments whose executors never
-    # escalate at all.
-    assert_not_root()
     rel = _assert_allowed_path(release_dir(sha))
     if not os.path.isdir(rel):
-        code, out = _run(["git", "-C", APP_DIR, "worktree", "add", "--detach", rel, sha])
+        code, out = _run(_as_tcgrowth(
+            ["git", "-C", APP_DIR, "worktree", "add", "--detach", rel, sha]))
         if code != 0:
             return StepResult(False, "could not create the release worktree", out)
-    # Both files belong to the service user we already are — no privilege needed to stage it.
-    try:
-        shutil.copyfile(f"{APP_DIR}/orchestrator/.env", f"{rel}/orchestrator/.env")
-        os.chmod(f"{rel}/orchestrator/.env", 0o600)
-    except OSError as exc:
-        return StepResult(False, "could not stage the release environment file",
-                          redact(f"{type(exc).__name__}: {exc}"))
-    # THE one escalation: a fixed root-owned wrapper taking a single validated SHA. Not
-    # `sudo <script>` from inside the release worktree — that would make a tree this runner can
-    # write into the thing root executes.
-    # Fixed verb + validated SHA. The wrapper re-validates both and ignores everything we
-    # export — the environment below reaches nothing privileged (PR #79 review round 2).
-    code, out = _run(["sudo", "-n", DEPLOY_WRAPPER, "apply", sha], timeout=900.0)
+    code, out = _run(["sudo", "install", "-m", "600", "-o", "tcgrowth", "-g", "tcgrowth",
+                      f"{APP_DIR}/orchestrator/.env", f"{rel}/orchestrator/.env"])
     if code != 0:
-        return StepResult(False, "the release step failed — rollback is available",
+        return StepResult(False, "could not stage the release environment file", out)
+    env = dict(os.environ, TC_VENV=ctx["venv"], TC_STORE_DB=ctx["db_path"])
+    proc = subprocess.run(["sudo", "TC_VENV=" + ctx["venv"], "TC_STORE_DB=" + ctx["db_path"],
+                           "./scripts/deploy-console.sh", "--apply"],
+                          cwd=f"{rel}/orchestrator", capture_output=True, text=True,
+                          timeout=900.0, env=env)
+    out = redact((proc.stdout or "") + (proc.stderr or ""))
+    if proc.returncode != 0:
+        return StepResult(False, "deploy-console.sh --apply failed — rollback is available",
                           "\n".join(out.strip().splitlines()[-25:]))
     return StepResult(True, f"Console released from {sha[:12]}",
                       "\n".join(out.strip().splitlines()[-25:]))

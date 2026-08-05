@@ -3,195 +3,65 @@
 *U4d is merged and **disabled**. This document is the work between "merged" and "usable": the
 seven post-merge criteria from issue #77 / PR #78, and the two host decisions that gate the rest.*
 
-**Status:** criteria 2 and 3 answered here for review. Criteria 1, 4, 5, 6 are execution work that
-follows the decision on 3. Criterion 7 holds throughout — `deploy_release` stays `enabled=False`
-and the Console keeps refusing the POST, not merely hiding the control.
+**Status:** criterion 3 is DECIDED. **Criterion 2 is NOT satisfied** — five review rounds, five
+defects, work withdrawn to a successor PR rather than merged behind a description that claims
+otherwise. Criteria 1, 4, 5, 6 follow it. Criterion 7 holds throughout — `deploy_release` stays
+`enabled=False` and the Console keeps refusing the POST, not merely hiding the control.
 
 ---
 
-## Criterion 2 — the fixed host privilege surface
+## Criterion 2 — NOT SATISFIED. Withdrawn from PR #79, deferred to a successor PR.
 
-### What I got wrong in the merged code
+**Status: open.** Five review rounds produced five defects, all mine, and the fifth showed the
+boundary was still wrong. The work is withdrawn rather than merged behind a description that
+claims otherwise.
 
-The merged runner escalated far more than it needed to. It wrapped git, `install` and the deploy
-script in `sudo`:
+### The five defects, in order
 
-```
-sudo -u tcgrowth git -C /opt/tc_ai_growth/app fetch origin main
-sudo -u tcgrowth git ... merge --ff-only <sha>
-sudo -u tcgrowth <venv>/bin/python -m tc_growth.cli db-init
-sudo install -m 600 -o tcgrowth -g tcgrowth .../.env .../release/.env
-sudo TC_VENV=... TC_STORE_DB=... ./scripts/deploy-console.sh --apply
-```
+1. **Over-escalation** (merged in #78). The runner wrapped git, `python -m tc_growth.cli` and the
+   deploy script in `sudo`. Every `sudo -u tcgrowth` was a **no-op** — `tc-console.service` sets
+   `User=tcgrowth` and the runner is its detached child — but the sudoers rule they required is a
+   general command path, which #77 forbids.
+2. **The fix relocated the defect.** The wrapper still `exec`'d `deploy-console.sh` from the
+   release worktree, which `tcgrowth` owns. `git rev-parse HEAD == <sha>` proves which commit was
+   *checked out*, not that the files still match it — and `git status` cannot be the witness
+   either, because the worktree's `.git` is writable by the same account. **Any check whose
+   inputs the adversary owns is not a check.**
+3. **The trust anchor was referenced but never written.** `/usr/local/lib/tc-deploy/deploy-console.sh`
+   appeared in the code, the docs and the PR description as the thing making the boundary safe,
+   and existed in none of them.
+4. **The permission guard accepted what it claimed to reject.** `"root:root "[0-7][0-57][0-57]` —
+   `[0-57]` is the set `{0,1,2,3,4,5,7}`, so `0777`, `0775`, `0757`, `0733` and `0702` all passed.
+   *This is the one part that is now fixed and proven.*
+5. **The boundary ended one process too early.** The installed helper is the existing
+   `deploy-console.sh`, which reads `TC_APP_DIR` (line 47) — a variable the wrapper never set, so
+   the apply path **dies in preflight** (line 138) and was non-functional. Worse, when it does
+   run it executes `$VENV/bin/python -m tc_growth.cli` (line 154) and installs
+   `$APP_DIR/scripts/wp-integrity-scan.sh` into `/usr/local/bin` (line 262) — root running Python
+   from, and laundering a script out of, the service-user-writable tree.
 
-**Every `sudo -u tcgrowth` there is a no-op.** `tc-console.service` sets `User=tcgrowth`, and the
-runner is a detached child of the Console, so it already *is* `tcgrowth`. The calls changed
-nothing about who ran the command — but they would have required a sudoers rule permitting
-`tcgrowth` to run `git` and `python` as `tcgrowth`. Written the obvious way, that rule is close to
-arbitrary command execution: `python -m <anything>` is a general command path, which is precisely
-what #77 forbids.
+### The honest cause
 
-The last line is worse. `sudo ... ./scripts/deploy-console.sh --apply` executes a script **from
-the release worktree** — a directory the unprivileged runner creates and can write. Root
-executing a file that the unprivileged caller controls is the standard shape of a privilege
-escalation, and no sudoers rule can fix it, because the rule would have to name a path under
-`/opt/tc_ai_growth/releases/<sha>/`.
+**I never executed this path.** Every claim across four rounds came from reading code I had
+written and reasoning about it. That is how a path that dies in preflight passed my own review and
+four PR descriptions calling it working. The recurring shape: *the explanation of a security
+property shipped before the property existed, and the tests were written to check the
+explanation.*
 
-I did not notice this while writing it. The review criterion "the host privilege surface exposes
-no general command path" is what made me look.
+### What survives, and where it lives
 
-### What it is now
+`orchestrator/scripts/lib/permission-guard.sh` — the numeric write-bit predicate, alone, with
+tests that build real directories at each mode and run the actual shell function against them.
+Nothing else. The helper, its installer and the sudoers surface are withdrawn.
 
-Everything the runner does happens **unprivileged, as the service user it already is**: fetching,
-the ancestry check, the fast-forward, the test suite, `db-init`, the worktree creation, and
-copying `.env` into the release (both files belong to `tcgrowth`; the copy needs no privilege).
+### What the successor PR must do
 
-Exactly **one** action escalates:
-
-```
-sudo -n /usr/local/bin/tc-deploy-release.sh apply <40-hex-sha>
-```
-
-`test_the_runner_escalates_exactly_once_and_only_through_the_wrapper` parses the module's AST and
-fails if a second `sudo` argv list ever appears, or if this one gains an argument.
-
-### The privileged program (`orchestrator/scripts/tc-deploy-release.sh`, installed root-owned 0755)
-
-- **Two fixed verbs and nothing else**: `apply <40-hex-sha>` and `rollback`. An unknown verb, a
-  missing SHA, an extra argument, or a SHA passed to `rollback` are all refused.
-- Validates the SHA **itself**. Root-owned code does not trust its caller: anything that can reach
-  `sudo` can pass any string, so this program — not the runner — decides what is meaningful.
-- Refuses a SHA with **no existing release worktree**. It never creates one, so it cannot be
-  talked into materialising an arbitrary tree.
-- Checks that the worktree's `HEAD` equals the requested SHA — a cheap sanity check that the
-  caller staged what it claims, **explicitly not** a content-integrity or clean-worktree
-  guarantee (see the blocker below).
-- **Ignores the caller's environment.** Every path, user and service name is an internal
-  constant; the child starts via `env -i` with a constructed minimal environment, so exported
-  `TC_*` values are noise rather than authority.
-- `rollback` takes **no argument at all** — nothing to choose, so nothing to get wrong — restores
-  from the root-owned snapshot directory, and never discovers a script through systemd state.
-
-### The blocker found in review, and what actually fixes it
-
-The first version of this wrapper still failed criterion 2, and the reviewer was right about why.
-
-It `exec`'d `deploy-console.sh` **from the release worktree**. That worktree is created by, and
-writable by, `tcgrowth`. I had reasoned that checking `git rev-parse HEAD == <sha>` made the
-content trustworthy. It does not: **HEAD proves which commit was checked out, not that the files
-still match it.** `tcgrowth` can edit the script after checkout and leave HEAD untouched.
-
-Nor can git be made the witness. The obvious patch — also require `git status --porcelain` to be
-empty — fails for the same reason one level down: the worktree's `.git` is writable by the same
-account, so any verification computed from it can be forged by whoever we are trying to detect.
-**Any check whose inputs the adversary owns is not a check.**
-
-The rollback branch had the identical defect in a different costume: it read `WorkingDirectory`
-from `systemctl show` and exec'd a script from that path — using systemd state to *select
-executable code* that lives in a writable directory.
-
-**The fix is structural, not another check.** The privileged machinery lives outside the
-repository, root-owned:
-
-```
-/usr/local/lib/tc-deploy/deploy-console.sh    root:root 0755
-```
-
-The wrapper executes only that, on both branches, and verifies ownership and mode **at every
-invocation** rather than trusting the install. The release worktree is *data* to the privileged
-step — the deploy script reads it to publish the unit's `WorkingDirectory`, and the Console later
-runs that code **unprivileged as `tcgrowth`**, which is the normal accepted arrangement. What must
-never happen is root executing it.
-
-**The consequence, stated rather than hidden:** a change to the deployment machinery itself is no
-longer picked up by running a deployment. Updating `/usr/local/lib/tc-deploy/` is a deliberate host
-action with its own review. That asymmetry is correct — *the thing that performs deployments must
-not be silently replaceable by a deployment.*
-
-### Round 2: the trust anchor was referenced but not written
-
-The structural fix above pointed root at `/usr/local/lib/tc-deploy/deploy-console.sh` — and **no
-such file existed in the repository**. I described a trust anchor without building one, which
-moved the most security-sensitive code outside the review boundary. A root-owned file can still
-be unsafe: it can execute release content, trust its environment, accept arbitrary paths, or keep
-rollback state somewhere the service user can rewrite. None of that was reviewable, because none
-of it was written.
-
-**Now in-repo and auditable:**
-
-- `orchestrator/scripts/tc-deploy-release.sh` — the single privileged program. Fixed verbs
-  (`apply <40-hex-sha>` / `rollback`), every path and name an **internal constant**, the SHA
-  re-validated here rather than accepted, and the child started via `env -i` with a constructed
-  minimal environment. **Caller-supplied `TC_*` values are ignored entirely** — they are not
-  authority, they are noise.
-- `orchestrator/scripts/install-tc-deploy.sh` — the deterministic host install. Refuses unsafe
-  parent directories (a root-owned file inside a writable directory can be replaced wholesale),
-  installs `root:root 0755`, writes a root-owned `MANIFEST.sha256`, and **verifies what actually
-  landed** rather than assuming the copy worked.
-- The privileged program checks, at **every invocation**: `$ROOT_LIB`, the helper and the
-  manifest are `root:root` and not group/other writable, and the helper still matches its
-  recorded digest. A swapped helper is caught before it runs; the manifest is root-owned, so the
-  service user can neither swap the helper nor rewrite the digest that would betray the swap.
-- Rollback restores from `/var/backups/tc-console`, root-owned and ownership-checked, and takes
-  no argument at all.
-
-### Round 3: the permission guard accepted writable paths
-
-The ownership check was written as a glob:
-
-```sh
-"root:root "[0-7][0-57][0-57]
-```
-
-`[0-57]` is not "0 through 5, or 7". It is the character set `{0,1,2,3,4,5,7}` — which includes
-**2, 3 and 7, every one of them carrying a write bit**. So `0777`, `0775`, `0757`, `0733` and
-`0702` all passed a check whose own error message said *"not group/other writable"*. A writable
-`$ROOT_LIB` lets the service user replace the helper or the manifest wholesale, which defeats the
-entire trust anchor.
-
-**A shell character range cannot express "no write bit".** The fix is a numeric mask:
-
-```sh
-mode_has_write_bits() {
-    local mode="$1"
-    [ -n "$mode" ] || return 0                  # unreadable mode => unsafe
-    case "$mode" in *[!0-7]*) return 0 ;; esac  # not octal => unsafe
-    (( 8#$mode & 8#22 ))                        # g+w | o+w
-}
-```
-
-One predicate, **byte-identical in the privileged program and the installer**, with a test that
-fails if the two copies drift. Every guarded path — `$ROOT_LIB`, the helper, the manifest, the
-backup directory, and each install parent — goes through it.
-
-**Why source-string assertions were not enough**, and this is the lesson worth keeping: my earlier
-tests asserted that the guard *existed* and that it *mentioned* ownership. The broken glob passed
-all of them, because it looked correct. The new tests build real directories at `0777`, `0775`,
-`0757`, `0733`, `0722`, `0702`, `0707`, `0770`, `0666`, `0622`, `0606`, `0660` and run **the actual
-extracted shell function** against them, plus `0755`, `0750`, `0700`, `0644`, `0640`, `0600`,
-`0555`, `0500` on the accept side, plus malformed and empty modes on the fail-closed side. *A
-security check must be executed against the thing it is meant to reject, not read.*
-
-### The sudoers rule
-
-```
-tcgrowth ALL=(root) NOPASSWD: /usr/local/bin/tc-deploy-release.sh
-```
-
-**A known limitation, stated rather than hidden:** sudoers cannot express "the verb `apply` plus one argument matching
-`^[0-9a-f]{40}$`". Written bare as above, sudo permits the script with *no* arguments; written
-with a glob it permits one *arbitrary* argument. Either way the argument check is the wrapper's
-job, which is why the wrapper validates before it uses. This is the same shape as the existing
-integrity-scan rule (`… /usr/local/bin/wp-integrity-scan.sh ""` — one fixed root-owned script,
-argument surface controlled by the script), so it does not introduce a new *kind* of trust, only a
-second instance of an accepted one.
-
-### What this surface cannot do
-
-No interactive shell. No arbitrary command. No path, service or repository outside the compiled-in
-allowlists. No `.env` reading (the runner copies the file; it never parses or logs it). No
-firewall, SSH, cron or backup-policy reach. No WordPress path of any kind — the runner never
-imports the connector.
+Review the **complete privileged chain as one unit**: root performs only narrow fixed host
+mutations; no root process imports Python or executes scripts from a `tcgrowth`-writable
+checkout; apply and rollback use only root-owned code and root-controlled state; the transient
+unit is created through the same single entry point; an end-to-end **disposable run** proves
+apply, restart survival, evidence completion and rollback; forged environment, modified release
+content, writable state and unsafe permissions all fail closed.
 
 ---
 
