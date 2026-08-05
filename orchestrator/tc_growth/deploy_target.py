@@ -14,7 +14,7 @@ rather than promised in prose:
 all while the gate is closed. `PRODUCTION` is built once, during import of this module, under a
 private bootstrap flag that is cleared before the module finishes loading. So there is no way to
 end up with a second target — well-formed or malicious — without something having opened the gate
-first, and `tc_growth.cli` is the only caller that opens it.
+first.
 
 **A process that serves the Console can never open the gate.** `note_http_boundary()` latches the
 moment the Console binds a socket or handles a request, and the latch both closes the gate and
@@ -23,10 +23,21 @@ into resolving a different target no matter what a request contains — not beca
 happens to pass one today, but because the machinery that would accept one is dead in that
 process.
 
+Two claims of very different strength, and they must not be run together
+------------------------------------------------------------------------
+`tc_growth.cli` being the only caller of `open_cli_target_gate()` is a **convention**. This is an
+ordinary public function; Python has no capability binding that could make it callable from one
+module and not another, so "CLI-only" names the only caller that exists today — it is not caller
+identity, and a test can only assert it of the code as written.
+
+The latch is the **enforced** half. It holds against any caller, in any module, written at any
+time, because it is a property of the process rather than of who is asking.
+
 What this does **not** claim: it is not a defence against code execution inside the Console
-process. Anything that can run arbitrary Python there can already do worse than change a path.
-The boundary being proven is the request boundary — form fields, query strings, headers, cookies —
-and PR #80's harness proves it by driving a real Console, not by reading this docstring.
+process. Anything that can run arbitrary Python there can already do worse than change a path, and
+could in principle call the gate before the first bind. The boundary being proven is the *request*
+boundary — form fields, query strings, headers, cookies — and PR #80's harness proves that by
+driving a real Console, not by reading this docstring.
 """
 
 from __future__ import annotations
@@ -81,11 +92,13 @@ def note_http_boundary() -> None:
 
 
 def open_cli_target_gate() -> None:
-    """Permit non-production targets in THIS process. Called only by `tc_growth.cli`.
+    """Permit non-production targets in THIS process. Called by `tc_growth.cli` and nothing else.
 
-    Refuses in a process that has ever bound or served the Console. That refusal is the property
-    PR #80's seam test exercises against a real Console server, rather than asserting that no
-    handler calls this function.
+    That "and nothing else" is a convention about the code as written, not an enforced property —
+    see the module docstring. What IS enforced is the refusal below: a process that has ever bound
+    or served the Console cannot open this gate, whoever calls it. That refusal is what PR #80's
+    seam test exercises against a real Console server, rather than asserting that no handler calls
+    this function.
     """
     global _CLI_GATE_OPEN
     if _HTTP_LATCHED:

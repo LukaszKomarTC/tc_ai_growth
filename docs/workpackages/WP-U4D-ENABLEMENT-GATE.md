@@ -95,6 +95,14 @@ so the Console cannot select a target — proven by driving a **real Console in 
 with target-injection attempts across form fields, query strings, headers and cookies, with a
 control step showing the same process could open the gate *before* it served anything.
 
+**Two claims of different strength, kept apart on purpose.** That `tc_growth.cli` is the only
+caller of `open_cli_target_gate()` is a **convention**: it is an ordinary public function and
+Python has no capability binding that would make it callable from one module only, so "CLI-only"
+names the only caller that exists today. The **latch** is the enforced half — it holds against any
+caller in any module, because it is a property of the process rather than of who is asking. None of
+this defends against arbitrary code execution inside the Console process; the boundary being proven
+is the *request* boundary.
+
 `tc_growth/deploy_harness.py` builds a genuine throwaway target — its own git repository and
 remote, store, backup directory, service and unit names, evidence namespace — and runs the
 **production executors** against it as real subprocesses. A new `stage` step hashes every file in
