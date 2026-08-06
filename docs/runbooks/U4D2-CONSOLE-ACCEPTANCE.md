@@ -8,10 +8,13 @@ The correction from the previous review is applied here: **the acceptance verifi
 terminal work.** The runner performs the adversarial and integration checks itself — the forgery
 battery against a disposable record, the receipt binding, the store-ownership check, the
 Console-restart reconnection — and records each as durable evidence. The owner approves once in
-the browser and reads one verdict. What still needs a terminal is only the **one-time governed
-setup**.
+the browser and reads one verdict.
 
-## 0. One-time governed setup (terminal, once, by the owner)
+The **owner's** part is browser-only (§1). Section 0 below is **administration** — a controlled
+deployment action performed once by the technical maintainer, not a diagnostic exercise handed to
+the owner.
+
+## 0. One-time governed setup (technical maintainer, terminal, once)
 
 1. **A root-owned `current` runtime must exist.** `start-acceptance` runs the acceptance harness
    as root *from root-owned code*; it refuses (every launch shows `BLOCKED`) until the production
