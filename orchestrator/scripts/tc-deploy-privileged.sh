@@ -555,6 +555,33 @@ SUDOERS
         || die "could not install the sudoers drop-in"
 }
 
+write_acceptance_sudoers() {
+    # WP-U4d.2: the acceptance-ONLY sudo capability, installed at bootstrap so the Console can
+    # launch the DISPOSABLE acceptance without a production deploy. It grants the fixed root-owned
+    # entry point EXACTLY ONE verb — `start-acceptance` with a numeric run id — and nothing else:
+    # never apply/rollback/start-run, never systemd-run, a shell, Python or arbitrary arguments.
+    #
+    # It is a SEPARATE drop-in from the integrity-scan grant (which it leaves untouched) and from
+    # the future production-deploy grant that `write_sudoers` installs. Generated from internal
+    # constants only — $SELF (this program's own verified path) and $TC_SERVICE_USER — so no
+    # checkout path, environment value or request can influence the executable path or the verb.
+    local drop="${TC_SUDOERS_FILE}-acceptance" staged="$TC_SNAPSHOT_DIR/acceptance-sudoers.next"
+    cat > "$staged" <<SUDOERS
+# Managed by tc-deploy (bootstrap): acceptance-only sudo capability. Do not edit by hand.
+$TC_SERVICE_USER ALL=(root) NOPASSWD: $SELF start-acceptance [0-9]*
+SUDOERS
+    chmod 0440 "$staged"
+    if command -v visudo >/dev/null; then
+        run_clean visudo -c -f "$staged" >/dev/null \
+            || die "the acceptance sudoers drop-in does not validate"
+    else
+        note "visudo is not installed; the acceptance drop-in was NOT syntax-validated"
+    fi
+    run_clean install -m 0440 -o root -g root "$staged" "$drop" \
+        || die "could not install the acceptance sudoers drop-in"
+    note "acceptance sudo capability granted at $drop (start-acceptance, numeric id only)"
+}
+
 write_unit() {
     # WorkingDirectory and ExecStart point at the ROOT-OWNED runtime copy, never at the release
     # tree. That single substitution is what closes blocker 1: the service consumes bytes the
@@ -748,13 +775,16 @@ verb_bootstrap() {
     # burden this work package exists to remove.
     #
     # So the trusted runner runtime is established ONCE, by the owner, during host setup — the
-    # same act that installs this program. It materialises and authenticates a runtime and sets
-    # `current`, and it touches NOTHING else: no unit, no inspector, no sudoers, no restart. It is
-    # not a deployment and must not be able to become one.
+    # same act that installs this program. It materialises and authenticates a runtime, sets
+    # `current`, and installs ONE narrow sudo capability: the acceptance-only grant
+    # (`start-acceptance <numeric id>` on this fixed entry point, nothing else). It writes NO
+    # unit, NO inspector, does NOT restart the service, and does NOT grant the production-deploy
+    # surface (apply/rollback/start-run) — so it is still not a deployment and cannot become one.
+    # The acceptance grant exists because the DISPOSABLE proof must be launchable without first
+    # running a production deploy; least privilege keeps it to exactly the one verb it needs.
     #
-    # It is deliberately not in the sudoers surface. The service user can never reach it; only a
-    # human already running as root can, which is what makes it a setup step rather than a second
-    # way to deploy.
+    # bootstrap ITSELF is deliberately not in any sudoers surface. The service user can never
+    # reach it; only a human already running as root can, which is what makes it a setup step.
     local sha="$1" release
     valid_sha "$sha" || die "bootstrap takes an exact 40-character lowercase hex SHA"
     release="$TC_RELEASES_DIR/$sha"
@@ -774,12 +804,18 @@ refuses to replace one. Deploy through apply instead."
     phase "authenticate-runtime" ok
     verify_runtime "$sha"
     phase "verify-runtime" ok
+    # Written before `current` so a partial failure re-runs cleanly (bootstrap refuses once
+    # `current` exists). Machinery was verified at startup, so the grant never routes sudo to
+    # unverified code.
+    write_acceptance_sudoers
+    phase "grant-acceptance-sudo" ok
     printf '%s\n' "$sha" > "$TC_SNAPSHOT_DIR/current"
     run_clean chmod 0644 "$TC_SNAPSHOT_DIR/current"
     phase "bootstrap" ok
     note "the trusted runner runtime is $TC_RUNTIME_DIR/$sha"
-    note "no unit, inspector, sudoers or service state was touched — this is not a deployment."
-    note "start-run can now launch the deployment runner from immutable code."
+    note "no unit, inspector or service state was touched, and the production-deploy sudo surface"
+    note "was NOT granted — this is not a deployment. Only the acceptance-only sudo capability was"
+    note "installed (start-acceptance, numeric id), so the disposable acceptance is launchable."
     return 0
 }
 

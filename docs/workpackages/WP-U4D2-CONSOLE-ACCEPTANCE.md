@@ -119,6 +119,24 @@ so the installed head is an exact CI-green SHA. It is principled, not a blanket 
   accordingly (production-writing ops stay disabled; a disposable-only, dedicated-surface op may be
   enabled), each re-pinned by tests.
 
+## The acceptance sudo grant (defect found during on-host prep; reviewer-approved fix)
+
+On-host prep exposed that the Console's `sudo -n start-acceptance` was ungranted on any host that
+had not run a full production `apply` — `write_sudoers` is only called by `apply`. Requiring a
+production deploy to launch a *disposable* proof is circular, and granting the whole deploy sudo
+surface would be worse. Fixed (reviewer-authorised, least privilege): **`bootstrap` installs a
+separate acceptance-only drop-in** granting `tcgrowth` exactly `start-acceptance <numeric id>` on
+the fixed root-owned entry — never `apply`/`rollback`/`start-run`/`systemd-run`/a shell/Python.
+Generated from internal constants, `visudo`-validated, `0440` root:root, separate from the
+integrity-scan grant (left untouched) and from the future deploy grant.
+
+Proven with a **real sudo hop** (unprivileged user → `sudo -n` → root entry), the gap the
+direct-as-root tests missed: sudo permits only the `start-acceptance` verb on the exact entry and
+denies `apply`/`rollback`/`start-run`, a missing id, a non-digit id and an alternate path. sudo's
+trailing wildcard permits extra trailing args and digit-then-junk ids — the **program** refuses
+those (strict argc + numeric check), pinned separately. bootstrap's documentation is updated from
+"no sudoers" to this exact least-privilege behaviour.
+
 ## Held throughout
 
 `deploy_release` stays `enabled=False` and server-refused. PR #80 stays draft until Acceptance A

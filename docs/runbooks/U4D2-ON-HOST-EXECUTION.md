@@ -78,6 +78,17 @@ sudo /usr/local/lib/tc-deploy/tc-deploy-privileged.sh bootstrap $SHA
 sudo cat /var/backups/tc-console/current    # should print $SHA
 ```
 
+`bootstrap` now also installs the **acceptance-only** sudo capability — the fix for the defect the
+first prep run exposed (the Console's `sudo -n start-acceptance` was ungranted until a full
+production `apply`). It is a separate least-privilege drop-in granting `tcgrowth` exactly
+`start-acceptance <numeric id>` on the fixed entry point — never `apply`/`rollback`/`start-run`.
+Confirm it, and confirm your existing integrity-scan grant is untouched:
+
+```bash
+sudo cat /etc/sudoers.d/tc-console-scan-acceptance   # start-acceptance [0-9]* only
+sudo cat /etc/sudoers.d/tc-console-scan              # your original inspector grant, unchanged
+```
+
 ### A4. Enablement is already committed in this head — nothing to edit
 
 The review of `76a9fd3` required enablement to be a **committed, reviewed diff**, not a manual live

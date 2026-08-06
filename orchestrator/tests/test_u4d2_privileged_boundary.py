@@ -1008,3 +1008,101 @@ def test_an_untraversable_acceptance_root_is_refused_not_loosened(tmp_path):
         deploy_acceptance.assert_acceptance_root(private / "run")
     assert "will NOT loosen directories outside its own tree" in str(exc.value)
     assert private.stat().st_mode == before
+
+
+# --- WP-U4d.2: bootstrap grants an acceptance-ONLY sudo capability (review of the on-host defect)
+
+def test_bootstrap_installs_only_the_acceptance_sudo_grant(fresh):
+    """The on-host prep found the Console's `sudo -n start-acceptance` was ungranted on a host
+    that had not run a production `apply` (write_sudoers is only called by apply). bootstrap now
+    installs a SEPARATE, least-privilege drop-in: start-acceptance with a numeric id, nothing
+    else — never apply/rollback/start-run, and it does not write the deploy grant file."""
+    staged_release(fresh)
+    assert run_verb(fresh, "bootstrap", fresh.target_sha).returncode == 0
+
+    drop = Path(f"{fresh.target.sudoers_file}-acceptance")
+    assert drop.exists(), "bootstrap did not install the acceptance sudo drop-in"
+    st = drop.stat()
+    assert st.st_uid == 0 and st.st_gid == 0, "the acceptance drop-in is not root-owned"
+    assert stat.S_IMODE(st.st_mode) == 0o440, oct(st.st_mode)
+
+    body = drop.read_text()
+    grant = [ln for ln in body.splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
+    assert len(grant) == 1, grant
+    line = grant[0]
+    assert line.startswith(f"{fresh.target.service_user} ALL=(root) NOPASSWD:"), line
+    assert line.endswith(f"{fresh.target.privileged_entry} start-acceptance [0-9]*"), line
+    # The GRANT itself (not the comment header) must name no other verb.
+    for forbidden in (" apply ", " rollback", "start-run", "systemd-run", "self-check",
+                      " bootstrap"):
+        assert forbidden not in line, f"the acceptance grant must not mention {forbidden!r}"
+
+    # The production-deploy / inspector grant is a SEPARATE file, untouched by bootstrap — it is
+    # only written by a real `apply`, so on a freshly-bootstrapped host it does not exist yet.
+    assert not Path(fresh.target.sudoers_file).exists(), \
+        "bootstrap wrote the deploy grant file; it must only write the acceptance drop-in"
+
+
+def test_the_program_strictly_validates_the_start_acceptance_id(fresh):
+    """sudo's `[0-9]*` is a coarse filter: its trailing wildcard PERMITS extra trailing args and
+    a digit-then-junk id (proven in the real-sudo test below). The PROGRAM is the strict
+    enforcer — it refuses a missing, non-numeric, digit-prefixed-junk or extra-argument id. These
+    invoke the real program directly (as the sudo hop would, once past sudo)."""
+    staged_release(fresh)
+    assert run_verb(fresh, "bootstrap", fresh.target_sha).returncode == 0
+    # missing / non-numeric / digit-then-junk / extra argument all refuse (non-zero, no launch)
+    for argv in (("start-acceptance",),
+                 ("start-acceptance", "abc"),
+                 ("start-acceptance", "7x"),
+                 ("start-acceptance", "7; id"),
+                 ("start-acceptance", "7", "8")):
+        proc = run_verb(fresh, *argv)
+        assert proc.returncode != 0, f"the program accepted a bad id: {argv}"
+
+
+@pytest.mark.skipif(shutil.which("sudo") is None or shutil.which("setpriv") is None,
+                    reason="the real sudo-hop test needs sudo and setpriv")
+def test_the_real_sudo_hop_permits_only_start_acceptance(tmp_path):
+    """Control 6: the previously untested hop — unprivileged user -> `sudo -n` -> root entry —
+    exercised with REAL sudo. A stub stands in for the entry so this isolates the sudoers ROUTE
+    from the program's internals (those are covered above); the drop-in uses the exact line
+    format write_acceptance_sudoers emits. sudo permits ONLY the start-acceptance verb on the
+    exact entry path; apply/rollback/start-run, a missing id, a non-digit id and an alternate
+    executable path are denied by sudo itself. (Extra trailing args and digit-then-junk ids are
+    permitted by sudo's trailing wildcard and refused by the program — see the test above.)"""
+    import pwd
+
+    stub = tmp_path / "entry.sh"
+    stub.write_text('#!/bin/bash\necho "ran: $*"\n')
+    stub.chmod(0o755); os.chown(stub, 0, 0)
+    other = tmp_path / "other.sh"
+    other.write_text('#!/bin/bash\necho other\n')
+    other.chmod(0o755); os.chown(other, 0, 0)
+
+    caller = "nobody"
+    pw = pwd.getpwnam(caller)
+    dropin = Path("/etc/sudoers.d/tc-u4d2-suhop")
+    # The SAME one-line format the generator emits, with the stub as the fixed entry path.
+    dropin.write_text(f"{caller} ALL=(root) NOPASSWD: {stub} start-acceptance [0-9]*\n")
+    os.chown(dropin, 0, 0); dropin.chmod(0o440)
+    assert subprocess.run(["visudo", "-c", "-f", str(dropin)],
+                          capture_output=True).returncode == 0
+
+    def as_caller(*argv):
+        return subprocess.run(
+            ["setpriv", "--reuid", str(pw.pw_uid), "--regid", str(pw.pw_gid), "--clear-groups",
+             "sudo", "-n", *argv], capture_output=True, text=True, timeout=60)
+    try:
+        ok = as_caller(str(stub), "start-acceptance", "7")
+        assert ok.returncode == 0 and "ran: start-acceptance 7" in ok.stdout, \
+            f"sudo denied the legitimate hop: rc={ok.returncode} err={ok.stderr}"
+        for denied in ([str(stub), "apply", "0" * 40],
+                       [str(stub), "rollback"],
+                       [str(stub), "start-run", "7"],
+                       [str(stub), "start-acceptance"],         # missing id
+                       [str(stub), "start-acceptance", "abc"],  # non-digit id
+                       [str(other), "start-acceptance", "7"]):  # alternate executable path
+            r = as_caller(*denied)
+            assert r.returncode != 0, f"sudo PERMITTED a case it must deny: {denied}"
+    finally:
+        dropin.unlink(missing_ok=True)
