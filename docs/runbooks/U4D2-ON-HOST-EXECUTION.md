@@ -9,7 +9,7 @@ that Section A touches production paths (`/usr/local/lib/tc-deploy`, `/usr/local
 can be removed), but it is a real change to production infrastructure — run it as a controlled
 deployment.*
 
-Record before starting: **#80 engine head `386f332`**, **#81 surface head `0bd5b63`**.
+Record before starting: **#80 engine head `386f332`**, **#81 surface head `7ad6b0f`**.
 
 ---
 
@@ -22,7 +22,7 @@ production checkout to the surface head and restart:
 
 ```bash
 sudo -u tcgrowth git -C /opt/tc_ai_growth/app fetch origin feature/u4d2-console-acceptance
-sudo -u tcgrowth git -C /opt/tc_ai_growth/app checkout 0bd5b63
+sudo -u tcgrowth git -C /opt/tc_ai_growth/app checkout 7ad6b0f
 sudo -u tcgrowth /opt/tc_ai_growth/app/orchestrator/.venv/bin/pip \
     install --no-deps -r /opt/tc_ai_growth/app/orchestrator/requirements.txt
 sudo systemctl restart tc-console
@@ -108,7 +108,7 @@ deployed like any other change, then `sudo systemctl restart tc-console`. **`dep
 
 ## What to bring back
 
-- the recorded heads (#80 `386f332`, #81 `0bd5b63`) and the acceptance run id;
+- the recorded heads (#80 `386f332`, #81 `7ad6b0f`) and the acceptance run id;
 - the owner-visible final verdict, and — if not `PASS` — the exact failed phase;
 - the self-check phases' statuses (all `ok` for a `PASS`);
 - the receipt fields as shown (`engine_head`, `target`, `verdict`);
