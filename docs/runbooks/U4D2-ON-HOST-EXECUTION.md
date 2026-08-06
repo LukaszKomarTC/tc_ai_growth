@@ -78,22 +78,55 @@ sudo /usr/local/lib/tc-deploy/tc-deploy-privileged.sh bootstrap $SHA
 sudo cat /var/backups/tc-console/current    # should print $SHA
 ```
 
-### A4. Enable the acceptance operation (reviewed code change + deploy)
+### A4. Install the reviewed enablement head (mechanism pending owner decision)
 
-`deploy_acceptance` ships `enabled=False`; the registry is code, so enabling it is a reviewed edit
-to `tc_growth/core/actions.py` (`enabled=True` on the `deploy_acceptance` Operation) that is
-deployed like any other change, then `sudo systemctl restart tc-console`. **`deploy_release` stays
-`enabled=False`** — this enables the acceptance only, not production deployment.
+`deploy_acceptance` ships `enabled=False`, and the review of `76a9fd3` blocked enabling it by a
+manual live edit: the enablement must exist as a **committed, reviewed diff** so the installed
+head is an exact, CI-green SHA and the runtime/receipt SHA is unambiguous. **`deploy_release`
+stays `enabled=False`** throughout — this enables the acceptance operation only, never production
+deployment.
 
-> If you prefer not to edit committed code, this is the point to decide the enablement mechanism
-> with the reviewer. The acceptance cannot be launched from the browser until the operation is
-> enabled at both layers.
+> **Pending.** Enabling a `CONTROLLED_EXECUTION` operation is a change to two foundational
+> registry invariants ("only read-only operations are enabled"; "platform-write operations stay
+> disabled until proven") and exposes the operation on the generic `/operations` page, which must
+> be reconciled so there is no second, id-less invocation path. The exact enablement commit and
+> the head it lands on are an **owner-authorized decision** (the reviewer marks enablement so);
+> until it is made, install `A1`'s head with the operation disabled and do not run Section B — the
+> acceptance is intentionally unreachable.
+
+---
+
+### A5. Provide the owner a ready browser endpoint
+
+Establishing and troubleshooting the loopback SSH tunnel (or an equivalent maintainer-managed
+reverse proxy / port-forward) is **maintainer administration, not an owner step**. Before handing
+off, confirm the tunnel is up and give the owner a working URL and a valid session, so the owner
+never opens a terminal. If the endpoint is not reachable, **stop here** — do not tell the owner to
+run the acceptance against an unavailable Console; report it and fix the access first.
+
+### Reversibility and pre/post state (record before A2)
+
+Capture the pre-state so the install is provably reversible, and the post-state after A2–A4:
+
+```bash
+for f in /opt/tc_ai_growth/app /usr/local/lib/tc-deploy /usr/local/bin/wp-integrity-scan.sh \
+         /etc/sudoers.d/tc-console-scan /var/backups/tc-console/current; do
+  echo "== $f =="; sudo stat -c '%n %U:%G %a' "$f" 2>/dev/null || echo "absent"; done
+sudo systemctl is-active tc-console
+git -C /opt/tc_ai_growth/app rev-parse HEAD
+```
+
+To reverse: `rollback` restores the unit/inspector/sudoers from root-owned snapshots; the checkout
+returns to its recorded HEAD; the prefix, inspector and drop-in can be removed. If any step in
+Section A fails, stop and roll back — never improvise a fix on the live host, and do not proceed to
+the acceptance (an unproven install must surface as `BLOCKED`, never as a partial success).
 
 ---
 
 ## Section B — owner (browser only)
 
-1. Open the Console over the SSH tunnel and sign in.
+1. Open the **Console URL the maintainer gave you** (the maintainer owns the tunnel/endpoint;
+   you do not create or diagnose it) and sign in.
 2. **Acceptance** tab → **Run deployment acceptance** → read the preview → **Yes — run the
    acceptance**. That click is the only input.
 3. Watch the run page. The runner streams the engine phases and then its own self-checks —
