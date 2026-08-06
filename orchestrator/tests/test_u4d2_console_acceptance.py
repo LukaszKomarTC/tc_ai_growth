@@ -18,6 +18,7 @@ import urllib.parse
 import urllib.request
 from http.cookiejar import CookieJar
 from http.server import ThreadingHTTPServer
+from pathlib import Path
 
 import pytest
 
@@ -526,22 +527,23 @@ def test_a_running_run_shows_no_verdict_yet(tmp_path):
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="root-ownership anchor can only be built as root")
-def test_the_ownership_anchor_rejects_a_non_root_receipt(tmp_path):
+def test_the_ownership_anchor_rejects_a_non_root_receipt(root_base):
     """On a real host the receipt must be OWNED BY ROOT — a file the service account could have
     written is no attestation. Build a root-owned receipt (accepted), then chown it away from
     root (rejected)."""
     import pwd
     phases = _all_ok_phases()
     run = {"id": 5, "status": "done"}
-    d = acceptance_run.write_receipt_as_root(
+    d = str(root_base / "r")
+    acceptance_run.write_receipt_as_root(
         5, target="t", engine_head="a" * 40, phases=phases, verdict_value="PASS",
-        completed_at="t", receipts_dir=str(tmp_path / "r")).parent
-    assert acceptance_run.trusted_verdict(run, phases, receipts_dir=str(d)) == "PASS"
+        completed_at="t", receipts_dir=d)
+    assert acceptance_run.trusted_verdict(run, phases, receipts_dir=d) == "PASS"
     non_root = next((pwd.getpwnam(n).pw_uid for n in ("nobody", "daemon", "bin")
                      if _uid_exists(n)), None)
     assert non_root is not None
-    os.chown(acceptance_run.receipt_path(5, receipts_dir=str(d)), non_root, non_root)
-    assert acceptance_run.trusted_verdict(run, phases, receipts_dir=str(d)) == "BLOCKED"
+    os.chown(acceptance_run.receipt_path(5, receipts_dir=d), non_root, non_root)
+    assert acceptance_run.trusted_verdict(run, phases, receipts_dir=d) == "BLOCKED"
 
 
 def _uid_exists(name):
@@ -553,6 +555,20 @@ def _uid_exists(name):
         return False
 
 
+@pytest.fixture()
+def root_base():
+    """A root-owned, non-world-writable base for receipt tests. pytest's tmp_path lives under
+    /tmp (1777), which write_receipt_as_root's ancestor check correctly refuses, so the write
+    tests need a base whose whole chain to / is root-owned. /root is root:root 0700."""
+    import shutil
+    import tempfile
+    base = tempfile.mkdtemp(prefix="tc-u4d2-receipts-", dir="/root")
+    try:
+        yield Path(base)
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
+
+
 def test_write_receipt_as_root_refuses_when_not_root(tmp_path, monkeypatch):
     if os.geteuid() == 0:
         monkeypatch.setattr(acceptance_run.os, "geteuid", lambda: 1000)
@@ -560,6 +576,52 @@ def test_write_receipt_as_root_refuses_when_not_root(tmp_path, monkeypatch):
         acceptance_run.write_receipt_as_root(
             5, target="t", engine_head="a" * 40, phases=_all_ok_phases(),
             verdict_value="PASS", completed_at="t", receipts_dir=str(tmp_path / "r"))
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="building root-owned trees requires root")
+def test_receipt_creation_refuses_a_symlinked_path(root_base):
+    """CRITERION 5: root must not be tricked into writing the receipt through a planted symlink.
+    Pre-create the receipt path as a symlink to an outside file; the O_NOFOLLOW write refuses,
+    and the outside target is left untouched."""
+    d = root_base / "receipts"
+    d.mkdir()
+    outside = root_base / "outside.txt"
+    outside.write_text("original")
+    os.symlink(outside, acceptance_run.receipt_path(5, receipts_dir=str(d)))
+    with pytest.raises(OSError):
+        acceptance_run.write_receipt_as_root(
+            5, target="t", engine_head="a" * 40, phases=_all_ok_phases(),
+            verdict_value="PASS", completed_at="t", receipts_dir=str(d))
+    assert outside.read_text() == "original", "root wrote through the symlink"
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="building root-owned trees requires root")
+def test_receipt_creation_refuses_a_non_root_ancestor(root_base):
+    """CRITERION 5: an ancestor the service account could control is refused, not written under."""
+    import pwd
+    non_root = next((pwd.getpwnam(n).pw_uid for n in ("nobody", "daemon", "bin")
+                     if _uid_exists(n)), None)
+    assert non_root is not None
+    parent = root_base / "attacker"
+    parent.mkdir()
+    os.chown(parent, non_root, non_root)         # an ancestor the attacker owns
+    with pytest.raises(deploy_acceptance.AcceptanceRefused, match="not root-owned"):
+        acceptance_run.write_receipt_as_root(
+            5, target="t", engine_head="a" * 40, phases=_all_ok_phases(),
+            verdict_value="PASS", completed_at="t", receipts_dir=str(parent / "receipts"))
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="building root-owned trees requires root")
+def test_receipt_creation_refuses_a_symlinked_receipts_dir(root_base):
+    """CRITERION 5: the receipts directory itself being a symlink is refused."""
+    real = root_base / "real"
+    real.mkdir()
+    link = root_base / "receipts"
+    os.symlink(real, link)
+    with pytest.raises(deploy_acceptance.AcceptanceRefused, match="symlink"):
+        acceptance_run.write_receipt_as_root(
+            5, target="t", engine_head="a" * 40, phases=_all_ok_phases(),
+            verdict_value="PASS", completed_at="t", receipts_dir=str(link))
 
 
 def test_a_successful_launch_leaves_no_positive_verdict_for_the_launcher_to_forge(env, monkeypatch):
@@ -588,13 +650,13 @@ def test_a_successful_launch_leaves_no_positive_verdict_for_the_launcher_to_forg
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="execute_as_root seals a root-owned receipt")
-def test_execute_as_root_streams_phases_and_seals_a_matching_receipt(env, tmp_path, monkeypatch):
+def test_execute_as_root_streams_phases_and_seals_a_matching_receipt(env, root_base, monkeypatch):
     """The root wiring, without the multi-minute full engine: stub deploy_acceptance.run to
     emit a couple of phases through the progress hook and return a report, then prove
     execute_as_root recorded those phases, sealed a root-owned receipt, and that the Console
     then shows the attested verdict computed from the durable rows."""
     _enable(env)
-    monkeypatch.setattr(acceptance_run, "RECEIPTS_DIR", str(tmp_path / "receipts"))
+    receipts = str(root_base / "receipts")
 
     def fake_run(root, *, keep=False, progress=None):
         for name in deploy_acceptance.PHASE_ORDER:
@@ -605,16 +667,15 @@ def test_execute_as_root_streams_phases_and_seals_a_matching_receipt(env, tmp_pa
     monkeypatch.setattr(deploy_acceptance, "run", fake_run)
     store = _store(env)
     try:
-        run_id = store.begin_acceptance_run(requested_by="owner", root=str(tmp_path / "run"))
+        run_id = store.begin_acceptance_run(requested_by="owner", root=str(root_base / "run"))
         store.claim_acceptance_run(run_id)
-        outcome = acceptance_run.execute_as_root(store, run_id, receipts_dir=str(tmp_path / "receipts"))
+        outcome = acceptance_run.execute_as_root(store, run_id, receipts_dir=receipts)
         assert outcome == "PASS"
         run = store.get_acceptance_run(run_id)
         assert run["status"] == "done"
         phases = store.list_acceptance_phases(run_id)
         names = [p["name"] for p in phases]
         assert names == list(deploy_acceptance.PHASE_ORDER)
-        assert acceptance_run.trusted_verdict(
-            run, phases, receipts_dir=str(tmp_path / "receipts")) == "PASS"
+        assert acceptance_run.trusted_verdict(run, phases, receipts_dir=receipts) == "PASS"
     finally:
         store.close()

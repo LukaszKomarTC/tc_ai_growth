@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -215,22 +216,64 @@ def trusted_verdict(run: dict, phases: list[dict], *, receipts_dir: str = RECEIP
     return attested
 
 
+def _assert_safe_root_dir_chain(directory: Path) -> None:
+    """Every EXISTING component from the root of the filesystem down to `directory` must be
+    root-owned, not writable by group/other, and not a symlink.
+
+    Without this, an unprivileged actor who controlled an ancestor of the receipts directory
+    could redirect where root writes the attestation — a root process following an unprivileged
+    symlink is the classic privileged-write defect. Verified before creation, so a poisoned
+    ancestor is refused rather than followed.
+    """
+    components, p = [], directory
+    while True:
+        components.append(p)
+        if p == p.parent:
+            break
+        p = p.parent
+    for comp in reversed(components):           # filesystem root downward
+        try:
+            st = comp.lstat()
+        except OSError:
+            continue                            # does not exist yet — root will create it safely
+        if stat.S_ISLNK(st.st_mode):
+            raise deploy_acceptance.AcceptanceRefused(
+                f"{comp} is a symlink; refusing to write a root receipt through it")
+        if st.st_uid != 0:
+            raise deploy_acceptance.AcceptanceRefused(
+                f"{comp} is not root-owned; refusing to write a root receipt beneath it")
+        if st.st_mode & 0o022:
+            raise deploy_acceptance.AcceptanceRefused(
+                f"{comp} is writable by group/other; refusing to write a root receipt beneath it")
+
+
 def write_receipt_as_root(run_id: int, *, target: str, engine_head: str, phases: list[dict],
                           verdict_value: str, completed_at: str,
                           receipts_dir: str = RECEIPTS_DIR) -> Path:
     """Seal the attestation. MUST run as root: the file's root ownership is the anchor, so a
-    non-root writer would produce a receipt the verification correctly rejects."""
+    non-root writer would produce a receipt the verification correctly rejects.
+
+    The write itself is symlink-safe: the ancestor chain is verified root-owned first, and the
+    file is opened O_NOFOLLOW so root cannot be tricked into writing through a planted symlink
+    (increment-3 criterion 5)."""
     if os.geteuid() != 0:
         raise deploy_acceptance.AcceptanceRefused(
             "an acceptance receipt may only be sealed by root — its root ownership is the anchor")
     directory = Path(receipts_dir)
+    _assert_safe_root_dir_chain(directory)
     directory.mkdir(parents=True, exist_ok=True)
     os.chown(directory, 0, 0)
     os.chmod(directory, 0o755)
+    _assert_safe_root_dir_chain(directory)      # re-check: nothing swapped in during creation
     path = receipt_path(run_id, receipts_dir=receipts_dir)
     text = render_receipt(run_id=run_id, target=target, engine_head=engine_head, phases=phases,
                           verdict_value=verdict_value, completed_at=completed_at)
-    path.write_text(text)
+    # O_NOFOLLOW: if `path` is a symlink, this raises rather than writing through it.
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644)
+    try:
+        os.write(fd, text.encode("utf-8"))
+    finally:
+        os.close(fd)
     os.chown(path, 0, 0)
     os.chmod(path, 0o644)
     return path
