@@ -1106,3 +1106,27 @@ def test_the_real_sudo_hop_permits_only_start_acceptance(tmp_path):
             assert r.returncode != 0, f"sudo PERMITTED a case it must deny: {denied}"
     finally:
         dropin.unlink(missing_ok=True)
+
+
+def test_bootstrap_fails_closed_when_visudo_rejects_the_grant(fresh):
+    """Review of f929d52: at the sudoers boundary a failing (or absent) validator must stop the
+    install, not warn and proceed — a malformed rule can break sudo on the host. Shadow `visudo`
+    with a stub that rejects everything (its dir is first on the program's fixed PATH); bootstrap
+    must die with NO acceptance drop-in and NO `current` pointer written."""
+    staged_release(fresh)
+    stub = Path("/usr/local/sbin/visudo")
+    had_stub = stub.exists()
+    assert not had_stub, "/usr/local/sbin/visudo already exists; refusing to clobber it"
+    stub.write_text("#!/bin/bash\nexit 1\n")
+    stub.chmod(0o755)
+    os.chown(stub, 0, 0)
+    try:
+        proc = run_verb(fresh, "bootstrap", fresh.target_sha)
+        assert proc.returncode == 2, (proc.returncode, proc.stderr)
+        assert "does not validate" in proc.stderr or "unvalidated" in proc.stderr, proc.stderr
+        assert not Path(f"{fresh.target.sudoers_file}-acceptance").exists(), \
+            "an unvalidated acceptance drop-in was installed"
+        assert not Path(fresh.target.snapshot_dir, "current").exists(), \
+            "the current pointer was written despite a failed sudoers validation"
+    finally:
+        stub.unlink()

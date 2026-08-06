@@ -546,11 +546,11 @@ $TC_SERVICE_USER ALL=(root) NOPASSWD: $SELF start-acceptance [0-9]*
 $TC_SERVICE_USER ALL=(root) NOPASSWD: $TC_INSPECTOR_DEST ""
 SUDOERS
     chmod 0440 "$staged"
-    if command -v visudo >/dev/null; then
-        run_clean visudo -c -f "$staged" >/dev/null || die "the generated sudoers drop-in does not validate"
-    else
-        note "visudo is not installed; the drop-in was NOT syntax-validated"
-    fi
+    # Fail CLOSED at the sudoers boundary (same rule as the acceptance grant): an absent or
+    # unhappy validator stops us before the drop-in is installed. A malformed rule can break sudo.
+    command -v visudo >/dev/null \
+        || die "visudo is required to validate a sudoers drop-in and is not installed; refusing to install an unvalidated rule"
+    run_clean visudo -c -f "$staged" >/dev/null || die "the generated sudoers drop-in does not validate"
     run_clean install -m 0440 -o root -g root "$staged" "$TC_SUDOERS_FILE" \
         || die "could not install the sudoers drop-in"
 }
@@ -571,12 +571,13 @@ write_acceptance_sudoers() {
 $TC_SERVICE_USER ALL=(root) NOPASSWD: $SELF start-acceptance [0-9]*
 SUDOERS
     chmod 0440 "$staged"
-    if command -v visudo >/dev/null; then
-        run_clean visudo -c -f "$staged" >/dev/null \
-            || die "the acceptance sudoers drop-in does not validate"
-    else
-        note "visudo is not installed; the acceptance drop-in was NOT syntax-validated"
-    fi
+    # Fail CLOSED at the sudoers boundary: a malformed rule can break sudo on the host, so an
+    # ABSENT or UNHAPPY validator must stop us BEFORE the drop-in is installed and (in bootstrap)
+    # before `current` is written. A warning is not sufficient here.
+    command -v visudo >/dev/null \
+        || die "visudo is required to validate a sudoers drop-in and is not installed; refusing to install an unvalidated rule"
+    run_clean visudo -c -f "$staged" >/dev/null \
+        || die "the acceptance sudoers drop-in does not validate; refusing to install it"
     run_clean install -m 0440 -o root -g root "$staged" "$drop" \
         || die "could not install the acceptance sudoers drop-in"
     note "acceptance sudo capability granted at $drop (start-acceptance, numeric id only)"
