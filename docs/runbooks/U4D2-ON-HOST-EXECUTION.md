@@ -9,7 +9,9 @@ that Section A touches production paths (`/usr/local/lib/tc-deploy`, `/usr/local
 can be removed), but it is a real change to production infrastructure — run it as a controlled
 deployment.*
 
-Record before starting: **#80 engine head `386f332`**, **#81 surface head `7ad6b0f`**.
+Record before starting: **#80 engine head `386f332`**, and the exact **#81 surface head recorded
+in the PR #81 body** (install that reviewed SHA, not a stale literal — the head advances as review
+findings are addressed).
 
 ---
 
@@ -18,24 +20,45 @@ Record before starting: **#80 engine head `386f332`**, **#81 surface head `7ad6b
 ### A1. Put the #81 branch on the host
 
 The console must run the #81 code (which contains #80). As a controlled deployment, update the
-production checkout to the surface head and restart:
+production checkout to the reviewed surface head and restart. The Console runs from an **editable**
+install in its own venv, so the checkout is the running code — there is nothing to reinstall, and
+the Console venv is **not touched** here:
 
 ```bash
+REVIEWED=<the #81 head SHA from the PR body>
 sudo -u tcgrowth git -C /opt/tc_ai_growth/app fetch origin feature/u4d2-console-acceptance
-sudo -u tcgrowth git -C /opt/tc_ai_growth/app checkout 7ad6b0f
-sudo -u tcgrowth /opt/tc_ai_growth/app/orchestrator/.venv/bin/pip \
-    install --no-deps -r /opt/tc_ai_growth/app/orchestrator/requirements.txt
+sudo -u tcgrowth git -C /opt/tc_ai_growth/app checkout "$REVIEWED"
 sudo systemctl restart tc-console
 ```
 
-### A2. Install the root-owned privileged machinery (production values)
+### A2. Provision a dedicated root-owned deploy venv (the supported path)
 
-`--source` defaults to `scripts/`, which carries `tc-deploy-privileged.sh`,
-`lib/permission-guard.sh` and `wp-integrity-scan.sh`. The installer runs the installed program's
-`self-check` and fails if it does not verify.
+**Why a separate venv — the on-host A2 discovery.** The privileged program refuses any interpreter
+whose venv the service user can write, or whose imports resolve back into a service-user-writable
+tree (`resolve_interpreter` → `assert_no_import_path_into_mutable_trees`). The Console's own venv is
+service-user-owned and **editable** (`pip install -e`): its `__editable__*` finder points `tc_growth`
+back at the checkout, so a root-owned interpreter would still import mutable code. The installer
+**correctly refuses** it — that refusal is the boundary working, not an error. The Console venv is
+the long-running application runtime and must stay exactly as it is; do **not** chown it and do
+**not** overwrite it with `--provision-venv`.
+
+The deploy/acceptance interpreter is therefore a **dedicated, root-owned, non-editable venv**,
+distinct from the Console venv. `--provision-venv` creates and locks one; then install the
+orchestrator into it **non-editably as root** (`pip install .` — never `-e`), so no import-redirecting
+finder is written. (The shape difference — non-editable clean vs editable redirecting — is pinned by
+`tests/test_u4d2_deploy_venv_shape.py`, which CI runs.)
 
 ```bash
 cd /opt/tc_ai_growth/app/orchestrator
+DEPLOY_VENV=/usr/local/lib/tc-deploy/deploy-venv     # root-owned; NOT the Console venv
+```
+
+`--source` defaults to `scripts/`, which carries `tc-deploy-privileged.sh`,
+`lib/permission-guard.sh` and `wp-integrity-scan.sh`. `--provision-venv` creates the root-owned
+venv at `--venv` and locks it (`chown root:root`, `go-w`); the installer runs the installed
+program's `self-check` and fails if it does not verify.
+
+```bash
 sudo bash scripts/install-tc-deploy.sh \
   --prefix           /usr/local/lib/tc-deploy \
   --app-dir          /opt/tc_ai_growth/app \
@@ -54,13 +77,36 @@ sudo bash scripts/install-tc-deploy.sh \
   --evidence-namespace production \
   --remote-ref       origin/main \
   --store-db         /opt/tc_ai_growth/app/orchestrator/data/tc_growth.db \
-  --venv             /opt/tc_ai_growth/app/orchestrator/.venv \
+  --venv             "$DEPLOY_VENV" \
+  --provision-venv \
   --console-env-file /etc/tc-console.env
 ```
 
-Confirm the sudoers grant includes the acceptance verb:
+Then populate the locked deploy venv **as root, non-editably** (the application is also imported
+from the authenticated runtime working directory, but installing it here keeps the interpreter
+self-contained and writes no redirecting finder):
 
 ```bash
+sudo "$DEPLOY_VENV/bin/pip" install "/opt/tc_ai_growth/app/orchestrator"   # non-editable — never -e
+# confirm the boundary the guard checks: no .pth/__editable__ finder resolves into a writable tree
+sudo "$DEPLOY_VENV/bin/python" - <<'PY'
+import site, glob, os, pathlib
+mutable = ("/opt/tc_ai_growth/app", "/opt/tc_ai_growth/releases")
+bad = []
+for s in set(site.getsitepackages()):
+    for f in glob.glob(os.path.join(s, "*.pth")) + glob.glob(os.path.join(s, "__editable__*")):
+        t = pathlib.Path(f).read_text(errors="ignore")
+        if any(m in t for m in mutable):
+            bad.append(f)
+print("import-redirecting finders:", bad or "none (good)")
+PY
+sudo chown -R root:root "$DEPLOY_VENV" && sudo chmod -R go-w "$DEPLOY_VENV"   # re-lock after install
+```
+
+Confirm the Console venv was left untouched, and the sudoers grant includes the acceptance verb:
+
+```bash
+stat -c '%n %U:%G' /opt/tc_ai_growth/app/orchestrator/.venv/bin/python   # still tcgrowth-owned
 sudo grep start-acceptance /etc/sudoers.d/tc-console-scan
 ```
 
