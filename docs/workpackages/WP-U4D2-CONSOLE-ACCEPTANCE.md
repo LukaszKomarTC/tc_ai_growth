@@ -104,7 +104,22 @@ it cannot manufacture a trusted positive verdict however freely it writes the st
    the sealed receipt reads `PASS`. Off-host, `start-acceptance` refuses for want of a `current`
    runtime and every launch is `BLOCKED`. See `docs/runbooks/U4D2-CONSOLE-ACCEPTANCE.md`.
 
+## Enablement (owner-authorized, committed — review of head `76a9fd3`)
+
+`deploy_acceptance` is `enabled=True` as a committed, reviewed diff rather than a manual host edit,
+so the installed head is an exact CI-green SHA. It is principled, not a blanket loosening:
+
+- **`production_write`** distinguishes the production deployer (`deploy_release`) from the
+  disposable acceptance. `validate_registry` refuses to enable any `production_write` operation
+  (#77), so `deploy_release` stays `enabled=False` and server-refused and cannot be enabled by this
+  change. A test pins the distinction.
+- **`self_service=False`** keeps `deploy_acceptance` off the generic `/operations` page and refuses
+  a crafted `/api/execute` naming it, so the only way to invoke it is its dedicated `/acceptance`
+  surface — no second, argument-less path. The two foundational registry invariants are refined
+  accordingly (production-writing ops stay disabled; a disposable-only, dedicated-surface op may be
+  enabled), each re-pinned by tests.
+
 ## Held throughout
 
 `deploy_release` stays `enabled=False` and server-refused. PR #80 stays draft until Acceptance A
-is green. Merge and enablement remain owner-authorized.
+is green. Merge and production enablement (`deploy_release`) remain owner-authorized.

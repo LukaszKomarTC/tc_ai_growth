@@ -81,10 +81,19 @@ def _csrf(env) -> str:
 
 
 def _enable(env):
-    """Flip deploy_acceptance to enabled for this test only — the same rebuilt-tuple pattern
-    the deploy tests use, because Operation is frozen and there is no setter."""
+    """deploy_acceptance is enabled by default now; this stays as an explicit, idempotent
+    guarantee for tests that depend on the enabled state (rebuilt-tuple pattern, since Operation
+    is frozen)."""
     rebuilt = tuple(
         Operation(**{**op.__dict__, "enabled": True}) if op.id == "deploy_acceptance" else op
+        for op in OPERATIONS)
+    env.monkeypatch.setattr(actions, "OPERATIONS", rebuilt)
+
+
+def _disable(env):
+    """Flip deploy_acceptance back to disabled, for the tests that assert the disabled surface."""
+    rebuilt = tuple(
+        Operation(**{**op.__dict__, "enabled": False}) if op.id == "deploy_acceptance" else op
         for op in OPERATIONS)
     env.monkeypatch.setattr(actions, "OPERATIONS", rebuilt)
 
@@ -95,7 +104,25 @@ def _store(env) -> SqliteStore:
 
 # --- the operation is registered, and refused at BOTH layers while disabled -----------------
 
+def test_the_acceptance_is_enabled_by_default_but_never_on_the_generic_operations_surface(env):
+    """Enabled (review of 76a9fd3), but with its own /acceptance surface it must NOT appear on
+    /operations, and a crafted /api/execute POST naming it must be refused — no second,
+    argument-less invocation path."""
+    import json as _json
+    listing = _json.loads(_get(env, "/api/operations"))
+    assert "deploy_acceptance" not in {o["id"] for o in listing["operations"]}
+    assert "deploy_acceptance" not in _get(env, "/operations")
+    stream = _post(env, "/api/execute", csrf=_csrf(env), op="deploy_acceptance")
+    assert "not runnable from the operations surface" in stream
+    store = _store(env)
+    try:
+        assert store.list_acceptance_runs() == []
+    finally:
+        store.close()
+
+
 def test_the_page_renders_but_offers_no_control_while_disabled(env):
+    _disable(env)
     page = _get(env, "/acceptance")
     assert "Acceptance history" in page
     assert "not enabled yet" in page
@@ -105,6 +132,7 @@ def test_the_page_renders_but_offers_no_control_while_disabled(env):
 def test_launching_is_refused_at_the_server_while_disabled(env):
     """Absent from the HTML is not the property — the POST itself must be refused. And it is
     refused BEFORE anything is written: no run row, no spawned process."""
+    _disable(env)
     spawned = []
     env.monkeypatch.setattr(acceptance_run, "spawn_detached",
                             lambda run_id, **kw: spawned.append(run_id))

@@ -78,21 +78,30 @@ sudo /usr/local/lib/tc-deploy/tc-deploy-privileged.sh bootstrap $SHA
 sudo cat /var/backups/tc-console/current    # should print $SHA
 ```
 
-### A4. Install the reviewed enablement head (mechanism pending owner decision)
+### A4. Enablement is already committed in this head — nothing to edit
 
-`deploy_acceptance` ships `enabled=False`, and the review of `76a9fd3` blocked enabling it by a
-manual live edit: the enablement must exist as a **committed, reviewed diff** so the installed
-head is an exact, CI-green SHA and the runtime/receipt SHA is unambiguous. **`deploy_release`
-stays `enabled=False`** throughout — this enables the acceptance operation only, never production
-deployment.
+The review of `76a9fd3` required enablement to be a **committed, reviewed diff**, not a manual live
+edit. It is: `deploy_acceptance` ships **`enabled=True`** in the #81 head you installed at A1, so
+there is no file to change and the runtime/receipt SHA is unambiguous. The enablement is
+principled, not a blanket loosening:
 
-> **Pending.** Enabling a `CONTROLLED_EXECUTION` operation is a change to two foundational
-> registry invariants ("only read-only operations are enabled"; "platform-write operations stay
-> disabled until proven") and exposes the operation on the generic `/operations` page, which must
-> be reconciled so there is no second, id-less invocation path. The exact enablement commit and
-> the head it lands on are an **owner-authorized decision** (the reviewer marks enablement so);
-> until it is made, install `A1`'s head with the operation disabled and do not run Section B — the
-> acceptance is intentionally unreachable.
+- a `production_write` marker distinguishes the production deployer from the disposable acceptance;
+  `validate_registry` refuses to let any `production_write` operation be enabled (#77), so
+  **`deploy_release` stays `enabled=False` and server-refused** and this change cannot enable it;
+- a `self_service=False` marker keeps `deploy_acceptance` off the generic `/operations` page and
+  refuses a crafted `/api/execute` naming it — the operation is reachable only through its
+  dedicated `/acceptance` surface, so there is no second, argument-less invocation path.
+
+Both are pinned by tests (`test_action_registry.py`, `test_u4d2_console_acceptance.py`). Confirm on
+the host after A1:
+
+```bash
+sudo -u tcgrowth /opt/tc_ai_growth/app/orchestrator/.venv/bin/python - <<'PY'
+from tc_growth.core.actions import get_operation
+print("acceptance enabled:", get_operation("deploy_acceptance").enabled)
+print("release enabled:", get_operation("deploy_release").enabled)
+PY
+```
 
 ---
 

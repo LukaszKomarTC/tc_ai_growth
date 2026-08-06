@@ -394,7 +394,10 @@ def _operations_body() -> str:
     ex = _executor()
     rows = []
     for op in OPERATIONS:
-        if not op.enabled:
+        # Off the generic operations surface: disabled ops, and ops with their OWN dedicated
+        # surface (deploy → /deploy, acceptance → /acceptance). The latter must never be
+        # runnable through the generic executor, which would invoke them with no arguments.
+        if not op.enabled or not op.self_service:
             continue
         prev = ex.preview(op.id)
         badge = "<span class='badge write'>writes</span>" if prev.writes else "<span class='badge'>read-only</span>"
@@ -580,7 +583,8 @@ class _Handler(BaseHTTPRequestHandler):
 
         if path == "/api/operations":
             self._json(200, {"operations": [
-                {"id": op.id, "name": op.name} for op in OPERATIONS if op.enabled]})
+                {"id": op.id, "name": op.name}
+                for op in OPERATIONS if op.enabled and op.self_service]})
             return
         if path == "/api/preview":
             op_id = parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "").get("op", [""])[0]
@@ -1215,6 +1219,19 @@ class _Handler(BaseHTTPRequestHandler):
                 self.wfile.flush()
 
         stop_pulse = _start_keepalive(self.wfile, wlock)
+
+        # A dedicated-surface operation (deploy_release, deploy_acceptance) must never run through
+        # the generic executor — it would be invoked with no run id. It is absent from the
+        # operations listing, but a crafted /api/execute POST could still name it, so refuse here.
+        op = next((o for o in OPERATIONS if o.id == op_id), None)
+        if op is None or not op.self_service:
+            frame({"type": "result", "execution_status": "blocked", "outcome": "blocked",
+                   "severity": "attention",
+                   "block_reason": "this operation is not runnable from the operations surface; "
+                                   "use its dedicated page"})
+            stop_pulse.set()
+            self.close_connection = True
+            return
 
         def emit(ev: StepEvent) -> None:
             # F3: step detail can carry scanner output including server paths — reduce them the

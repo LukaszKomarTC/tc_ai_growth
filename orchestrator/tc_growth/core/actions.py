@@ -79,6 +79,15 @@ class Operation:
     enforced_by: tuple[str, ...] = ()  # code layers that actually refuse a bad call
     rollback_description: str = ""     # prose — NOT machine-enforced (see module docstring)
     verification_description: str = "" # prose — NOT machine-enforced
+    # Writes PRODUCTION (e.g. deploy_release). Such an operation must stay `enabled=False` until it
+    # has been proven on a real host (#77) — validate_registry refuses to let one be enabled. A
+    # disposable-only operation that provably never touches production leaves this False.
+    production_write: bool = False
+    # Appears on the generic /operations page and runs through the generic Execution Service. An
+    # operation with its OWN dedicated Console surface (deploy_release → /deploy,
+    # deploy_acceptance → /acceptance) sets this False, so enabling it cannot create a second,
+    # argument-less invocation path through /api/execute.
+    self_service: bool = True
     enabled: bool = True
 
 
@@ -196,6 +205,10 @@ OPERATIONS: tuple[Operation, ...] = (
         # KillMode=process on tc-console.service) and the staging/disposable proof has run. The
         # registry describes CURRENT AUTHORITY: a capability that has not been proven is present
         # here to be reviewed, not offered to be clicked. #77 requires the proof before first use.
+        # It writes PRODUCTION, so validate_registry refuses to let it be enabled while unproven,
+        # and it has its own /deploy surface so it never rides the generic operations page.
+        production_write=True,
+        self_service=False,
         enabled=False,
     ),
     Operation(
@@ -239,11 +252,16 @@ OPERATIONS: tuple[Operation, ...] = (
                                  "refused launch, absent machinery, a deferred phase — is "
                                  "BLOCKED, and FAILED SAFELY requires the rollback and "
                                  "production-state phases to have recorded ok",
-        # DISABLED like every unproven platform-write capability: the entry exists to be
-        # reviewed, not yet to be clicked. Enabling it is a deliberate reviewed flip that is
-        # part of the one-time governed host setup for the acceptance (WP-U4d.2 increment 3),
-        # after the privileged verb it launches exists and is granted (increment 2).
-        enabled=False,
+        # ENABLED (WP-U4d.2, review of head 76a9fd3): the acceptance is a disposable-only,
+        # self-attesting operation — it provably never touches production (production_write=False;
+        # deploy_acceptance.assert_nothing_production refuses every production value), and it is
+        # the mechanism by which the deployment boundary is proven. It has its own /acceptance
+        # surface, so self_service=False keeps it off the generic operations page: there is no
+        # second, argument-less way to invoke it. `deploy_release` stays disabled and server-
+        # refused — enabling the acceptance does not enable production deployment.
+        production_write=False,
+        self_service=False,
+        enabled=True,
     ),
 )
 
@@ -289,6 +307,12 @@ def validate_registry(ops: tuple[Operation, ...] = OPERATIONS) -> None:
         if op.target_surface == "platform" and op.category is not Category.PLATFORM:
             raise RegistryError(f"{op.id}: only PLATFORM-category operations may declare "
                                 "target_surface='platform'")
+        # #77: a production-writing operation must not be offered until it has been proven on a
+        # real host. This is the machine-enforced half of the "staging proof before first use"
+        # rule — a disposable-only acceptance operation (production_write=False) is exempt.
+        if op.production_write and op.enabled:
+            raise RegistryError(f"{op.id}: a production-writing operation must stay disabled until "
+                                "it is proven on a real host (#77)")
         if op.min_phase > Phase.READ_ONLY:
             if not op.rollback_description:
                 raise RegistryError(f"{op.id}: write-capable operations require a "

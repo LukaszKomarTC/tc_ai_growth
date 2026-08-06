@@ -53,9 +53,14 @@ def test_write_operations_target_staging_only_and_document_rollback():
             else:
                 assert op.target_surface == "platform", op.id
                 assert op.category is Category.PLATFORM, op.id
-                assert not op.enabled, (
-                    f"{op.id}: a platform-write operation must not be enabled before its "
-                    "acceptance — see #77 (staging proof required before first production use)")
+                # The "staging proof before first production use" rule (#77) binds PRODUCTION-
+                # writing operations: they must not be enabled until proven. A disposable-only
+                # operation that provably never touches production (deploy_acceptance) is the
+                # mechanism of that proof and may be enabled.
+                if op.production_write:
+                    assert not op.enabled, (
+                        f"{op.id}: a production-writing operation must not be enabled before its "
+                        "acceptance — see #77")
 
 
 def test_foundation_lists_only_accepted_operations():
@@ -65,16 +70,33 @@ def test_foundation_lists_only_accepted_operations():
     their own capability + acceptance). Set extended DELIBERATELY per increment:
     U3b adds redeliver_latest_report (read-only re-send of a stored immutable artifact; accepted
     as part of the U3b in-browser acceptance, like SMTP/scan rode the MVP acceptance)."""
-    assert {op.id for op in OPERATIONS if op.enabled} == {"smtp_test", "run_integrity_scan",
-                                                         "redeliver_latest_report"}
+    assert {op.id for op in OPERATIONS if op.enabled} == {
+        "smtp_test", "run_integrity_scan", "redeliver_latest_report", "deploy_acceptance"}
     assert [op.id for op in OPERATIONS if op.category is Category.EXECUTION] == []
-    assert all(op.min_phase is Phase.READ_ONLY for op in OPERATIONS if op.enabled)
-    # Anything present but NOT enabled is a reviewable definition, not authority. Extended
-    # DELIBERATELY per increment: U4d's deploy_release stays disabled until its staging proof;
-    # U4d.2's deploy_acceptance stays disabled until the privileged verb it launches exists and
-    # the enabling flip is reviewed as part of the governed host setup.
-    assert {op.id for op in OPERATIONS if not op.enabled} == {"deploy_release",
-                                                              "deploy_acceptance"}
+    # The only enabled operation that is not read-only is deploy_acceptance — a disposable-only,
+    # self-attesting op with its own dedicated surface (never on the generic operations page).
+    for op in OPERATIONS:
+        if op.enabled and op.min_phase is not Phase.READ_ONLY:
+            assert op.id == "deploy_acceptance", op.id
+            assert not op.production_write and not op.self_service, op.id
+    # Anything present but NOT enabled is a reviewable definition, not authority. U4d's
+    # deploy_release (production-writing) stays disabled until its on-host acceptance proof.
+    assert {op.id for op in OPERATIONS if not op.enabled} == {"deploy_release"}
+
+
+def test_the_two_platform_operations_are_distinguished_and_release_stays_disabled():
+    """Criterion 2 of the head-76a9fd3 review: the distinction between the production deployer and
+    the disposable acceptance is pinned, and enabling a production-writing op is refused."""
+    rel = get_operation("deploy_release")
+    acc = get_operation("deploy_acceptance")
+    assert rel.production_write and not rel.enabled and not rel.self_service
+    assert not acc.production_write and acc.enabled and not acc.self_service
+    # validate_registry machine-enforces "a production-writing op must stay disabled".
+    tampered = tuple(
+        Operation(**{**op.__dict__, "enabled": True}) if op.id == "deploy_release" else op
+        for op in OPERATIONS)
+    with pytest.raises(RegistryError, match="production-writing"):
+        validate_registry(tampered)
 
 
 def test_duplicate_ids_rejected():
