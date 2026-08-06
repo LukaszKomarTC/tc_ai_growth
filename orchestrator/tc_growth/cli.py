@@ -619,9 +619,18 @@ def cmd_acceptance_root(run_id_raw: str) -> int:
     except ValueError:
         print("acceptance-root takes the numeric id of an acceptance run")
         return 2
+    # These references are ROOT-derived (set by the start-acceptance verb from `current` and
+    # target.conf), never caller input. Absent (e.g. run by hand), the receipt-binding check
+    # defers and the store-ownership write is not exercised — the honest degradation.
+    import os as _os
+    resolved_head = _os.environ.get("TC_ACCEPTANCE_RUNTIME_SHA") or None
+    account = _os.environ.get("TC_ACCEPTANCE_SERVICE_USER") or None
+    resolved_target = acceptance_run.DISPOSABLE_ACCEPTANCE_NAMESPACE if resolved_head else None
     store = open_store()
     try:
-        outcome = acceptance_run.execute_as_root(store, run_id)
+        outcome = acceptance_run.execute_as_root(
+            store, run_id, resolved_head=resolved_head, resolved_target=resolved_target,
+            account=account)
     except deploy_acceptance.AcceptanceRefused as exc:
         print(f"refused: {exc}")
         return 2

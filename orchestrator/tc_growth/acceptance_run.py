@@ -60,12 +60,33 @@ SAFETY_PHASES = ("rollback-file-semantics", "teardown-and-production-check")
 #: it is written by the unprivileged side after root has already sealed the receipt.
 LAUNCH_PHASE = "launch"
 
+#: The self-checks the ROOT runner performs automatically and records as durable evidence, so
+#: the owner approves once in the browser and never inspects a file, restarts a service, or
+#: edits the store by hand (review of head `90ae12f`). Each is a phase like any engine phase and
+#: must be `ok` for a positive verdict; a failed check is a trust/integration failure and is
+#: `BLOCKED`, never `FAILED SAFELY`.
+CHECK_ATTESTATION = "check-attestation-resistance"          # forged rows/receipts -> BLOCKED, on a scratch store
+CHECK_RECEIPT_BINDING = "check-receipt-binds-runtime-and-target"
+CHECK_STORE_OWNERSHIP = "check-store-ownership-preserved"
+CHECK_RESTART_RECONNECT = "check-console-restart-reconnect"  # systemd-bound
+CHECK_ORDER = (CHECK_ATTESTATION, CHECK_RECEIPT_BINDING, CHECK_STORE_OWNERSHIP,
+               CHECK_RESTART_RECONNECT)
+
+#: The full digested vocabulary: engine phases then self-checks. The launch phase is the only
+#: recorded phase outside it (written by the unprivileged side after the receipt is sealed).
+ALL_PHASES = tuple(deploy_acceptance.PHASE_ORDER) + CHECK_ORDER
+
 #: A fixed, root-owned location OUTSIDE any disposable tree (the disposable root is torn down at
 #: the end of a run, so the attestation cannot live inside it). Root creates it; `tcgrowth` may
 #: read it but cannot write it, and that is the whole anchor.
 RECEIPTS_DIR = "/var/lib/tc-console-acceptance/receipts"
 
 _RECEIPT_MAGIC = "TC_ACCEPTANCE_RECEIPT_V1"
+
+#: The fixed evidence namespace the disposable acceptance target carries (deploy_harness builds
+#: it with name="vpsprobe"). Used as the independent reference the receipt-binding check confirms
+#: the sealed target against.
+DISPOSABLE_ACCEPTANCE_NAMESPACE = "disposable/vpsprobe"
 
 
 def derive_run_root(run_id: int) -> str:
@@ -76,7 +97,8 @@ def derive_run_root(run_id: int) -> str:
 # --------------------------------------------------------------------------- the phase digest
 
 def phase_digest(phases: list[dict]) -> str:
-    """A stable digest over the ENGINE phases only, keyed by the fixed PHASE_ORDER.
+    """A stable digest over every digested phase (engine phases and self-checks), keyed by the
+    fixed ALL_PHASES order.
 
     Excludes the launch phase and ignores seq, so root (which seals the receipt before the
     launcher writes the launch row) and the Console (which digests every durable row afterward)
@@ -85,10 +107,9 @@ def phase_digest(phases: list[dict]) -> str:
     """
     final: dict[str, str] = {}
     for p in phases:
-        if p["name"] in deploy_acceptance.PHASE_ORDER:
+        if p["name"] in ALL_PHASES:
             final[p["name"]] = p["status"]
-    canonical = "\n".join(f"{name}={final[name]}"
-                          for name in deploy_acceptance.PHASE_ORDER if name in final)
+    canonical = "\n".join(f"{name}={final[name]}" for name in ALL_PHASES if name in final)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
@@ -97,11 +118,20 @@ def verdict(phases: list[dict]) -> str:
 
     This is NOT the trusted verdict — it says what the rows claim, not who wrote them.
     `trusted_verdict` gates a positive result of this on a matching root receipt.
+
+    A positive verdict requires BOTH the engine phases and every self-check to be `ok`: the
+    self-checks are the runner proving, on the host, that forged evidence would not be believed
+    and that the run left the store usable. A failed self-check is a trust/integration failure,
+    which is `BLOCKED` — never `FAILED SAFELY` (that is only for a genuine deployment failure the
+    rollback handled).
     """
     engine = {p["name"]: p["status"] for p in phases if p["name"] in deploy_acceptance.PHASE_ORDER}
+    checks = {p["name"]: p["status"] for p in phases if p["name"] in CHECK_ORDER}
     if not engine:
         return VERDICT_BLOCKED
-    if any(status == "deferred" for status in engine.values()):
+    if any(s == "deferred" for s in list(engine.values()) + list(checks.values())):
+        return VERDICT_BLOCKED
+    if not all(checks.get(name) == "ok" for name in CHECK_ORDER):
         return VERDICT_BLOCKED
     failed = [name for name, status in engine.items() if status in ("failed", "refused")]
     if failed:
@@ -333,15 +363,188 @@ def execute(store, run_id: int) -> str:
     return "blocked"
 
 
+# --------------------------------------------------------------------------- the self-checks
+#
+# The runner performs these itself and records each as durable evidence, so the owner approves
+# once in the browser and never inspects a file, restarts a service, or edits the store by hand
+# (review of head `90ae12f`). Each returns (status, detail) where status is "ok" | "failed" |
+# "deferred". A failed check is a trust/integration failure and makes the whole verdict BLOCKED.
+
+def verify_attestation_resistance(*, scratch_dir: Path) -> tuple[str, str]:
+    """Prove, on THIS host at run time, that forged evidence is not believed — against a
+    DISPOSABLE record and receipts directory, never the live store (criterion 5). Root-only,
+    because the positive control needs a genuinely root-owned receipt.
+
+    Each case constructs phases (and maybe a receipt) and asserts the trusted verdict. The owner
+    never edits a store to check this; the runner does, here, and records the tally.
+    """
+    if os.geteuid() != 0:
+        return "deferred", "attestation self-check needs root to build the root-owned control"
+    scratch_dir.mkdir(parents=True, exist_ok=True)
+    os.chown(scratch_dir, 0, 0)
+    os.chmod(scratch_dir, 0o755)
+
+    import pwd
+    green = [{"seq": i, "name": n, "status": "ok"} for i, n in enumerate(ALL_PHASES)]
+    done = {"id": 4242, "status": "done"}
+    base = dict(target="disposable/vpsprobe", engine_head="a" * 40, verdict_value="PASS",
+                completed_at="t")
+    cases: list[tuple[str, str, bool]] = []   # (label, actual, passed)
+
+    def fresh_dir(label: str) -> Path:
+        rdir = scratch_dir / label
+        rdir.mkdir(parents=True, exist_ok=True)
+        os.chown(rdir, 0, 0)
+        os.chmod(rdir, 0o755)
+        return rdir
+
+    def record_case(label: str, phases, rdir: Path, expect: str) -> None:
+        actual = trusted_verdict(done, phases, receipts_dir=str(rdir)) or "None"
+        cases.append((label, actual, actual == expect))
+
+    # Positive control: a matching root-owned receipt yields PASS.
+    rdir = fresh_dir("matching")
+    write_receipt_as_root(4242, phases=green, receipts_dir=str(rdir), **base)
+    record_case("matching-receipt-passes", green, rdir, VERDICT_PASS)
+
+    # Forged rows, no receipt at all.
+    record_case("forged-rows-no-receipt", green, fresh_dir("no-receipt"), VERDICT_BLOCKED)
+
+    # Receipt claims PASS but the rows show a failed phase.
+    bad_rows = [dict(p) for p in green]
+    bad_rows[3]["status"] = "failed"
+    rdir = fresh_dir("verdict-disagree")
+    write_receipt_as_root(4242, phases=bad_rows, receipts_dir=str(rdir), **base)
+    record_case("receipt-verdict-rows-disagree", bad_rows, rdir, VERDICT_BLOCKED)
+
+    # Receipt sealed over `green`, but substituted rows are presented (digest mismatch).
+    other = [dict(p) for p in green]
+    other[2]["status"] = "deferred"
+    rdir = fresh_dir("digest-mismatch")
+    write_receipt_as_root(4242, phases=green, receipts_dir=str(rdir), **base)
+    record_case("receipt-digest-mismatch", other, rdir, VERDICT_BLOCKED)
+
+    # Receipt whose content names another run id.
+    rdir = fresh_dir("wrong-run")
+    (rdir / "4242.receipt").write_text(render_receipt(
+        run_id=7, phases=green, **base))
+    os.chown(rdir / "4242.receipt", 0, 0)
+    os.chmod(rdir / "4242.receipt", 0o644)
+    record_case("receipt-wrong-run-id", green, rdir, VERDICT_BLOCKED)
+
+    # A receipt the service account could have written (chowned away from root).
+    non_root = next((pwd.getpwnam(n).pw_uid for n in ("nobody", "daemon", "bin")
+                     if _uid_present(n)), None)
+    if non_root is not None:
+        rdir = fresh_dir("non-root")
+        write_receipt_as_root(4242, phases=green, receipts_dir=str(rdir), **base)
+        os.chown(rdir / "4242.receipt", non_root, non_root)
+        record_case("non-root-receipt-rejected", green, rdir, VERDICT_BLOCKED)
+
+    failures = [label for label, _, ok in cases if not ok]
+    summary = "; ".join(f"{label}->{actual}" for label, actual, _ in cases)
+    if failures:
+        return "failed", f"attestation resistance FAILED for {failures}: {summary}"
+    return "ok", f"{len(cases)} cases, all as expected: {summary}"
+
+
+def _uid_present(name: str) -> bool:
+    import pwd
+    try:
+        pwd.getpwnam(name)
+        return True
+    except KeyError:
+        return False
+
+
+def verify_receipt_binding(report: dict, *, resolved_head: str | None,
+                           resolved_target: str | None) -> tuple[str, str]:
+    """Root records that the receipt will bind an independently-resolved runtime head and a
+    disposable (never production) target, so the owner does not compare files by hand
+    (criterion 4). `resolved_head` is the SHA of the root-owned runtime root actually executed
+    from — resolved by the privileged verb, not taken from the run. Deferred when no independent
+    reference is available (off-host), so it can never masquerade as proven.
+    """
+    if resolved_head is None or resolved_target is None:
+        return "deferred", ("no independent runtime/config reference on this host; the run "
+                            f"records target_sha={report.get('target_sha', '')} for the on-host "
+                            "cross-check")
+    problems = []
+    if not deploy.SHA_RE.match(resolved_head):
+        problems.append(f"the resolved runtime head is not a 40-hex SHA: {resolved_head!r}")
+    if not resolved_target.startswith("disposable/"):
+        problems.append(f"the resolved target is not disposable: {resolved_target!r}")
+    for marker in deploy_acceptance.PRODUCTION_MARKERS:
+        if marker in resolved_target:
+            problems.append(f"the resolved target names production: {resolved_target!r}")
+    if problems:
+        return "failed", "; ".join(problems)
+    return "ok", (f"the receipt binds runtime head {resolved_head} and disposable target "
+                  f"{resolved_target}, both resolved independently by root")
+
+
+def verify_store_ownership(store_path: str, *, account: str | None = None) -> tuple[str, str]:
+    """After the run, no db/WAL/journal artifact may be left root-owned (that would lock the
+    service account out), and — when a service account exists — it must be able to reopen and
+    write the store (criterion 6)."""
+    p = Path(store_path)
+    artifacts = [p] + [p.with_name(p.name + suffix) for suffix in ("-wal", "-journal", "-shm")]
+    root_owned = []
+    for a in artifacts:
+        try:
+            if a.exists() and a.stat().st_uid == 0:
+                root_owned.append(a.name)
+        except OSError:
+            continue
+    if root_owned:
+        return "failed", f"root-owned store artifacts would lock out the service account: {root_owned}"
+    if account is None or os.geteuid() != 0:
+        return "ok", "no root-owned db/WAL/journal artifacts (service-account write not exercised here)"
+    import pwd
+    try:
+        pw = pwd.getpwnam(account)
+    except KeyError:
+        return "ok", f"no root-owned artifacts; account {account} not present to exercise a write"
+    probe = subprocess.run(
+        ["setpriv", "--reuid", str(pw.pw_uid), "--regid", str(pw.pw_gid), "--clear-groups",
+         sys.executable, "-c",
+         "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); "
+         "c.execute('CREATE TABLE IF NOT EXISTS _u4d2_probe(x)'); "
+         "c.execute('DROP TABLE _u4d2_probe'); c.commit(); print('ok')", store_path],
+        capture_output=True, text=True, timeout=60)
+    if probe.returncode != 0:
+        return "failed", f"the service account could not write the store: {probe.stderr.strip()}"
+    return "ok", f"no root-owned artifacts and {account} reopened and wrote the store"
+
+
+def verify_restart_reconnect(store, run_id: int) -> tuple[str, str]:
+    """The runner restarts the Console and confirms the run record survives (criterion 3).
+    systemd-bound: deferred where it is not booted, so it never claims an unproven reconnection."""
+    if not deploy_acceptance.systemd_is_booted():
+        return "deferred", "systemd is not booted; the live Console-restart reconnection is on-host"
+    before = store.list_acceptance_phases(run_id)
+    proc = subprocess.run(["systemctl", "restart", deploy_target.PRODUCTION.service],
+                          capture_output=True, text=True, timeout=120)
+    if proc.returncode != 0:
+        return "failed", f"could not restart {deploy_target.PRODUCTION.service}: {proc.stderr.strip()}"
+    after = store.list_acceptance_phases(run_id)
+    if len(after) < len(before):
+        return "failed", "the durable run record did not survive the Console restart"
+    return "ok", (f"{deploy_target.PRODUCTION.service} restarted; the run record survived with "
+                  f"{len(after)} phases intact")
+
+
 def execute_as_root(store, run_id: int, *, receipts_dir: str = RECEIPTS_DIR,
-                    now_iso: str | None = None) -> str:
+                    now_iso: str | None = None, resolved_head: str | None = None,
+                    resolved_target: str | None = None, account: str | None = None,
+                    scratch_dir: Path | None = None) -> str:
     """The ROOT side of a launch — what the `start-acceptance` privileged verb runs.
 
-    Runs the bounded engine acceptance, streams each phase into the durable record as it lands
-    (so progress survives a Console restart), then computes the verdict FROM the durable rows
-    and seals a root-owned receipt binding it. Only after the receipt exists does it finish the
-    run. `tcgrowth` never reaches this function — it is gated on euid 0 and invoked through the
-    privileged verb.
+    Runs the bounded engine acceptance, then performs the acceptance's OWN adversarial and
+    integration self-checks (so the owner never does terminal work), streams every phase and
+    check into the durable record as it lands, computes the verdict FROM the durable rows, seals
+    a root-owned receipt binding it, and only then finishes the run. `tcgrowth` never reaches
+    this function — it is gated on euid 0 and invoked through the privileged verb.
     """
     if os.geteuid() != 0:
         raise deploy_acceptance.AcceptanceRefused(
@@ -356,15 +559,28 @@ def execute_as_root(store, run_id: int, *, receipts_dir: str = RECEIPTS_DIR,
     def record(name: str, status: str, detail: str = "") -> None:
         counter["seq"] += 1
         store.record_acceptance_phase(run_id, seq=counter["seq"], name=name, status=status,
-                                      detail=detail or None)
+                                      detail=deploy.redact(detail) if detail else None)
 
     report = deploy_acceptance.run(Path(run["root"]), progress=record)
+
+    # The runner's own checks — recorded as durable evidence, not delegated to the owner.
+    scratch = scratch_dir or (Path(receipts_dir).parent / "self-check-scratch")
+    for name, (status, detail) in (
+        (CHECK_ATTESTATION, verify_attestation_resistance(scratch_dir=scratch)),
+        (CHECK_RECEIPT_BINDING, verify_receipt_binding(
+            report, resolved_head=resolved_head, resolved_target=resolved_target)),
+        (CHECK_STORE_OWNERSHIP, verify_store_ownership(
+            deploy_target.PRODUCTION.db_path, account=account)),
+        (CHECK_RESTART_RECONNECT, verify_restart_reconnect(store, run_id)),
+    ):
+        record(name, status, detail)
+
     phases = store.list_acceptance_phases(run_id)
     rows_verdict = verdict(phases)
     completed = now_iso or deploy.now_iso()
     write_receipt_as_root(
-        run_id, target=report.get("target_name", ""),
-        engine_head=report.get("target_sha", ""), phases=phases,
+        run_id, target=resolved_target or report.get("target_name", ""),
+        engine_head=resolved_head or report.get("target_sha", ""), phases=phases,
         verdict_value=rows_verdict, completed_at=completed, receipts_dir=receipts_dir)
     store.finish_acceptance_run(
         run_id, verdict=rows_verdict,

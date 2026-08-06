@@ -80,11 +80,29 @@ it cannot manufacture a trusted positive verdict however freely it writes the st
    digest-substitution, cross-run, non-root-ownership and unattested-positive cases. The
    unprivileged launcher can only ever record a launch refusal and `BLOCKED`; it never finalises
    a positive verdict.
-3. **The on-host proof (outstanding).** The owner's browser session on the VPS executing
-   Acceptance A and B criteria in one run: the full engine acceptance driven end-to-end through
-   `start-acceptance` from a real root-owned runtime, with a booted service manager so the six
-   systemd phases execute and the sealed receipt reads `PASS`. Off-host, `start-acceptance`
-   refuses for want of a `current` runtime and every launch is honestly `BLOCKED`.
+3. **The acceptance verifies itself; the owner never does terminal verification (done, this
+   increment — review of `90ae12f`).** The runner performs its own adversarial and integration
+   checks and records each as durable evidence, so the owner approves once in the browser and
+   reads one verdict:
+   - `check-attestation-resistance` — the forgery battery (forged rows + PASS column, wrong run
+     id, digest mismatch, non-root receipt) runs against a **disposable** record on the host at
+     run time, proving each yields `BLOCKED` without anyone editing the live store;
+   - `check-receipt-binds-runtime-and-target` — root confirms the receipt binds the
+     independently-resolved runtime SHA and a disposable, non-production target;
+   - `check-store-ownership-preserved` — no root-owned db/WAL/journal is left behind, and (given a
+     service account) it can reopen and write the store;
+   - `check-console-restart-reconnect` — the runner restarts the Console and confirms the durable
+     record survived.
+
+   A positive verdict requires every engine phase AND every self-check `ok`; a failed check is a
+   trust/integration failure and is `BLOCKED`, never `FAILED SAFELY`. The systemd-bound restart
+   check defers off-host, so off-host every run is honestly `BLOCKED`.
+
+4. **The on-host proof (outstanding).** The owner's browser session on the VPS: the full engine
+   acceptance driven end-to-end through `start-acceptance` from a real root-owned runtime, with a
+   booted service manager so the six systemd phases and the restart-reconnect check execute and
+   the sealed receipt reads `PASS`. Off-host, `start-acceptance` refuses for want of a `current`
+   runtime and every launch is `BLOCKED`. See `docs/runbooks/U4D2-CONSOLE-ACCEPTANCE.md`.
 
 ## Held throughout
 

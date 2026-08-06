@@ -866,7 +866,12 @@ verb_start_acceptance() {
     phase "verify-interpreter" ok
     note "the acceptance harness will execute as root from $runtime, which the service user cannot write"
 
-    ( cd "$runtime/orchestrator" && run_clean "$interpreter" -m tc_growth.cli acceptance-root "$run_id" ) \
+    # The runtime SHA and service user are ROOT-derived references (from `current` and
+    # target.conf), never caller input — they let the root side attest which code produced the
+    # verdict and let it exercise a service-account write against the store.
+    ( cd "$runtime/orchestrator" && env -i PATH="$PATH" HOME=/root LANG=C.UTF-8 \
+        TC_ACCEPTANCE_RUNTIME_SHA="$current" TC_ACCEPTANCE_SERVICE_USER="$TC_SERVICE_USER" \
+        "$interpreter" -m tc_growth.cli acceptance-root "$run_id" ) \
         || die "the acceptance harness reported a failure"
     phase "start-acceptance" ok
     return 0

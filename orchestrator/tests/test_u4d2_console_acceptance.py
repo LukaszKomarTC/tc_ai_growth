@@ -265,27 +265,42 @@ def test_no_phases_is_blocked_not_pass():
 
 
 def test_a_deferred_phase_is_never_success():
-    phases = [{"name": n, "status": "ok"} for n in deploy_acceptance.PHASE_ORDER]
-    for i, name in enumerate(deploy_acceptance.PHASE_ORDER):
+    phases = [{"name": n, "status": "ok"} for n in acceptance_run.ALL_PHASES]
+    for i, name in enumerate(acceptance_run.ALL_PHASES):
         poisoned = [dict(p) for p in phases]
         poisoned[i] = {"name": name, "status": "deferred"}
         assert acceptance_run.verdict(poisoned) == "BLOCKED", (
             f"a deferred {name} was represented as something other than BLOCKED")
 
 
+def test_a_failed_self_check_is_blocked_not_pass():
+    """A failed self-check is a trust/integration failure — BLOCKED, never FAILED SAFELY."""
+    for check in acceptance_run.CHECK_ORDER:
+        phases = [{"name": n, "status": "ok"} for n in acceptance_run.ALL_PHASES]
+        phases[list(acceptance_run.ALL_PHASES).index(check)]["status"] = "failed"
+        assert acceptance_run.verdict(phases) == "BLOCKED", (
+            f"a failed {check} was not BLOCKED")
+
+
 def test_every_phase_ok_is_pass():
-    phases = [{"name": n, "status": "ok"} for n in deploy_acceptance.PHASE_ORDER]
+    phases = [{"name": n, "status": "ok"} for n in acceptance_run.ALL_PHASES]
     assert acceptance_run.verdict(phases) == "PASS"
 
 
+def test_engine_all_ok_but_a_check_missing_is_blocked():
+    """PASS requires the self-checks too: engine-only green is not enough."""
+    phases = [{"name": n, "status": "ok"} for n in deploy_acceptance.PHASE_ORDER]
+    assert acceptance_run.verdict(phases) == "BLOCKED"
+
+
 def test_an_incomplete_phase_record_is_blocked_not_pass():
-    phases = [{"name": n, "status": "ok"} for n in deploy_acceptance.PHASE_ORDER[:-1]]
+    phases = [{"name": n, "status": "ok"} for n in list(acceptance_run.ALL_PHASES)[:-1]]
     assert acceptance_run.verdict(phases) == "BLOCKED"
 
 
 def test_a_failure_with_green_safety_evidence_is_failed_safely():
-    phases = [{"name": n, "status": "ok"} for n in deploy_acceptance.PHASE_ORDER]
-    phases[deploy_acceptance.PHASE_ORDER.index("apply-file-phases")]["status"] = "failed"
+    phases = _all_ok_phases()      # engine + self-checks all ok...
+    phases[list(acceptance_run.ALL_PHASES).index("apply-file-phases")]["status"] = "failed"
     assert acceptance_run.verdict(phases) == "FAILED SAFELY"
 
 
@@ -307,7 +322,7 @@ def test_a_failed_launch_alone_is_blocked():
 def test_a_retried_phase_is_judged_on_its_final_record():
     phases = ([{"name": "launch", "status": "failed"}]
               + [{"name": "launch", "status": "ok"}]
-              + [{"name": n, "status": "ok"} for n in deploy_acceptance.PHASE_ORDER])
+              + _all_ok_phases())
     assert acceptance_run.verdict(phases) == "PASS"
 
 
@@ -403,6 +418,9 @@ def test_the_phase_vocabulary_is_single_sourced():
     assert set(deploy_acceptance.SYSTEMD_PHASES) <= set(deploy_acceptance.PHASE_ORDER)
     assert set(acceptance_run.SAFETY_PHASES) <= set(deploy_acceptance.PHASE_ORDER)
     assert len(deploy_acceptance.PHASE_ORDER) == len(set(deploy_acceptance.PHASE_ORDER))
+    # ALL_PHASES is engine phases then self-checks, with no name collision between the two.
+    assert acceptance_run.ALL_PHASES == tuple(deploy_acceptance.PHASE_ORDER) + acceptance_run.CHECK_ORDER
+    assert len(acceptance_run.ALL_PHASES) == len(set(acceptance_run.ALL_PHASES))
 
 
 # --- increment 2: the trust boundary — a positive verdict is unforgeable by tcgrowth --------
@@ -411,9 +429,11 @@ import os  # noqa: E402 - kept beside the trust tests that use it
 
 
 def _all_ok_phases(offset: int = 2):
-    """Engine phases, all ok, seq starting after the reserved launch slot."""
+    """Every digested phase — engine phases AND self-checks — all ok, seq starting after the
+    reserved launch slot. A positive verdict now requires the self-checks too, so the happy-path
+    fixture must include them."""
     return [{"seq": i + offset, "name": n, "status": "ok"}
-            for i, n in enumerate(deploy_acceptance.PHASE_ORDER)]
+            for i, n in enumerate(acceptance_run.ALL_PHASES)]
 
 
 def _write_receipt(tmp_path, run_id, phases, *, verdict="PASS", run_id_field=None,
@@ -428,15 +448,15 @@ def _write_receipt(tmp_path, run_id, phases, *, verdict="PASS", run_id_field=Non
 
 
 def test_forged_rows_and_a_pass_column_without_a_receipt_report_blocked(env):
-    """CRITERION 4, executed. Forge every engine phase ok AND stamp the store's verdict column
-    PASS — without any privileged run — and the owner surface still reports BLOCKED, because no
+    """CRITERION 4, executed. Forge every phase ok AND stamp the store's verdict column PASS —
+    without any privileged run — and the owner surface still reports BLOCKED, because no
     root-owned receipt attests it. This is the whole point of increment 2."""
     _enable(env)
     store = _store(env)
     try:
         run_id = store.begin_acceptance_run(requested_by="attacker", root="/x")
         store.claim_acceptance_run(run_id)
-        for i, name in enumerate(deploy_acceptance.PHASE_ORDER):
+        for i, name in enumerate(acceptance_run.ALL_PHASES):
             store.record_acceptance_phase(run_id, seq=i + 2, name=name, status="ok")
         store.finish_acceptance_run(run_id, verdict="PASS", summary="forged")
     finally:
@@ -649,33 +669,72 @@ def test_a_successful_launch_leaves_no_positive_verdict_for_the_launcher_to_forg
         store.close()
 
 
-@pytest.mark.skipif(os.geteuid() != 0, reason="execute_as_root seals a root-owned receipt")
-def test_execute_as_root_streams_phases_and_seals_a_matching_receipt(env, root_base, monkeypatch):
-    """The root wiring, without the multi-minute full engine: stub deploy_acceptance.run to
-    emit a couple of phases through the progress hook and return a report, then prove
-    execute_as_root recorded those phases, sealed a root-owned receipt, and that the Console
-    then shows the attested verdict computed from the durable rows."""
-    _enable(env)
-    receipts = str(root_base / "receipts")
-
+def _stub_engine(monkeypatch):
     def fake_run(root, *, keep=False, progress=None):
         for name in deploy_acceptance.PHASE_ORDER:
             progress(name, "ok", "")
         return {"target_name": "disposable/vpsprobe", "target_sha": "b" * 40,
                 "executed": list(deploy_acceptance.PHASE_ORDER), "deferred": [], "steps": {}}
-
     monkeypatch.setattr(deploy_acceptance, "run", fake_run)
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="execute_as_root seals a root-owned receipt")
+def test_execute_as_root_off_host_records_checks_and_is_blocked(env, root_base, monkeypatch):
+    """Off-host (no systemd), the runner still performs its self-checks and records them, seals a
+    receipt, and finishes BLOCKED — because the restart-reconnect check defers without a booted
+    service manager. The honest outcome: no on-host proof, no PASS."""
+    _enable(env)
+    _stub_engine(monkeypatch)
+    receipts = str(root_base / "receipts")
     store = _store(env)
     try:
         run_id = store.begin_acceptance_run(requested_by="owner", root=str(root_base / "run"))
         store.claim_acceptance_run(run_id)
-        outcome = acceptance_run.execute_as_root(store, run_id, receipts_dir=receipts)
+        outcome = acceptance_run.execute_as_root(
+            store, run_id, receipts_dir=receipts, scratch_dir=root_base / "scratch")
+        assert outcome == "BLOCKED"
+        phases = store.list_acceptance_phases(run_id)
+        names = [p["name"] for p in phases]
+        # Both engine phases and self-checks are recorded as durable evidence.
+        assert acceptance_run.CHECK_ATTESTATION in names
+        assert acceptance_run.CHECK_RESTART_RECONNECT in names
+        by_name = {p["name"]: p["status"] for p in phases}
+        assert by_name[acceptance_run.CHECK_ATTESTATION] == "ok"      # forgery battery passed
+        assert by_name[acceptance_run.CHECK_RESTART_RECONNECT] == "deferred"
+        run = store.get_acceptance_run(run_id)
+        assert acceptance_run.trusted_verdict(run, phases, receipts_dir=receipts) == "BLOCKED"
+    finally:
+        store.close()
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="execute_as_root seals a root-owned receipt")
+def test_execute_as_root_passes_when_every_phase_and_check_is_green(env, root_base, monkeypatch):
+    """The wiring for a clean run: with the systemd-bound and store-ownership checks satisfied and
+    the runtime references supplied, execute_as_root aggregates engine phases + self-checks into
+    an attested PASS and seals the receipt. (The systemd/ownership checks are what the on-host run
+    exercises for real; here they are stubbed so the aggregation itself is proven.)"""
+    _enable(env)
+    _stub_engine(monkeypatch)
+    monkeypatch.setattr(acceptance_run, "verify_store_ownership",
+                        lambda *a, **k: ("ok", "stubbed: service account can write"))
+    monkeypatch.setattr(acceptance_run, "verify_restart_reconnect",
+                        lambda *a, **k: ("ok", "stubbed: run record survived restart"))
+    receipts = str(root_base / "receipts")
+    store = _store(env)
+    try:
+        run_id = store.begin_acceptance_run(requested_by="owner", root=str(root_base / "run"))
+        store.claim_acceptance_run(run_id)
+        outcome = acceptance_run.execute_as_root(
+            store, run_id, receipts_dir=receipts, scratch_dir=root_base / "scratch",
+            resolved_head="b" * 40, resolved_target="disposable/vpsprobe")
         assert outcome == "PASS"
         run = store.get_acceptance_run(run_id)
         assert run["status"] == "done"
         phases = store.list_acceptance_phases(run_id)
-        names = [p["name"] for p in phases]
-        assert names == list(deploy_acceptance.PHASE_ORDER)
         assert acceptance_run.trusted_verdict(run, phases, receipts_dir=receipts) == "PASS"
+        # The receipt binds the independently-resolved head/target.
+        receipt = acceptance_run.read_trusted_receipt(run_id, phases, receipts_dir=receipts)
+        assert receipt["engine_head"] == "b" * 40
+        assert receipt["target"] == "disposable/vpsprobe"
     finally:
         store.close()
