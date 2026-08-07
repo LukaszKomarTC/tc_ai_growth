@@ -245,6 +245,33 @@ class Store(Protocol):
 
     def list_acceptance_phases(self, run_id: int) -> list[dict]: ...
 
+    # -- WP-U5.1: inspection runs and observations --
+    # CONSTITUTIONAL INVARIANT: observations are append-only, a 'done' inspection run is
+    # terminal, and a run's (profile, environment) is immutable — all three enforced by
+    # triggers. `profile` and `environment` are REQUIRED on every call: U5 evidence never
+    # inherits its subject from process-global state (issue #82 amendment 1).
+    def begin_inspection_run(self, *, profile: str, environment: str, trigger: str,
+                             collector_set_version: str, repo_commit: str) -> int: ...
+
+    def finish_inspection_run(self, run_id: int, *, summary: str) -> None: ...
+
+    def get_inspection_run(self, run_id: int) -> dict | None: ...
+
+    def latest_inspection_run(self, *, profile: str, environment: str) -> dict | None: ...
+
+    def latest_observation(self, *, profile: str, environment: str,
+                           scope: str) -> dict | None: ...
+
+    def record_observation(self, run_id: int, *, collector_id: str, collector_version: str,
+                           scope: str, source: str, profile: str, environment: str,
+                           captured_at: str, status: str, value_json: str, value_digest: str,
+                           evidence: str | None, predecessor_id: int | None, change_class: str,
+                           severity: str, confidence: str | None, reason: str | None) -> int: ...
+
+    def list_observations(self, run_id: int) -> list[dict]: ...
+
+    def latest_observations(self, *, profile: str, environment: str) -> list[dict]: ...
+
     # -- lifecycle --
     def seed_incident_case(self) -> int: ...
 

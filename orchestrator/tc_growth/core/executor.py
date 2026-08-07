@@ -153,17 +153,25 @@ class ExecutionBlocked(Exception):
         self.detail = detail
 
 
-def _provenance(op: Operation, environment: str) -> dict:
+def _provenance(op: Operation, environment: str, profile: str | None = None) -> dict:
     """Which code, on which target, produced this evidence — so 'the scan passed' is always
     traceable to a reviewed revision months later. The commit is injected at DEPLOY time via
     TC_BUILD_COMMIT (the deployment package pins it); op-specific provenance like a script's own
-    sha256 is emitted by the operation into its output. See docs/TECHNICAL_INSPECTOR.md."""
+    sha256 is emitted by the operation into its output. See docs/TECHNICAL_INSPECTOR.md.
+
+    `profile` is explicit when the caller knows it (WP-U5.1, issue #82 amendment 1). It used to
+    be resolved here from `active_site()` alone, which is fine for an operation launched by the
+    process that owns that identity — and wrong for one launched ON BEHALF of a named profile,
+    because the execution row would then disagree with the evidence the operation produced. Two
+    halves of one evidence chain naming different businesses is worse than no provenance at all.
+    The global remains the fallback so existing callers are unchanged.
+    """
     from ..config import RELEASE, active_site
 
     return {
         "repo_commit": os.environ.get("TC_BUILD_COMMIT", "unknown"),
         "release": RELEASE,
-        "profile": active_site() or "default",
+        "profile": (profile or "").strip() or active_site() or "default",
         "environment": environment,
         "binding": f"tool:{op.tool}" if op.tool else f"cli:{op.command}",
     }
@@ -201,12 +209,17 @@ class Executor:
         confirm: Confirm | None = None,
         store_factory: Callable[[], object] | None = None,
         cli_timeout_s: float = 120.0,
+        profile: str | None = None,
     ):
         self.phase = phase
         self._environment = environment  # None => resolve from settings at call time
         self._confirm = confirm
         self._store_factory = store_factory
         self._cli_timeout_s = cli_timeout_s
+        # None => resolve from the active site, as before. An operation executed on behalf of a
+        # NAMED profile passes it here so the execution record and the evidence that operation
+        # produces cannot name different businesses (WP-U5.1, issue #82 amendment 1).
+        self._profile = profile
 
     # -- introspection --------------------------------------------------------
 
@@ -216,6 +229,14 @@ class Executor:
         from ..config import get_settings  # lazy: core stays import-cycle-free
 
         return (get_settings().env_kind or "staging").strip().lower()
+
+    def profile(self) -> str:
+        """The business this execution is on behalf of — explicit when the caller said so."""
+        if self._profile is not None and self._profile.strip():
+            return self._profile.strip()
+        from ..config import active_site  # lazy: core stays import-cycle-free
+
+        return active_site() or "default"
 
     def preview(self, op_id: str, args: dict | None = None) -> OperationPreview:
         """Build the pre-execution preview. Never runs anything."""
@@ -453,7 +474,8 @@ class Executor:
             detail = json.dumps({
                 "actor": result.actor,
                 "environment": self.environment(),
-                "provenance": _provenance(op, self.environment()),
+                "profile": self.profile(),
+                "provenance": _provenance(op, self.environment(), self.profile()),
                 "execution_status": result.execution_status,
                 "outcome": result.outcome,
                 "severity": result.severity,

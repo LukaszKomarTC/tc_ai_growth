@@ -847,3 +847,95 @@ def acceptance_run_body(run: dict, phases: list[dict], *, trusted: str | None = 
     refresh = "" if terminal else "<script>setTimeout(()=>location.reload(), 4000)</script>"
     return (_section(f"Acceptance #{run['id']} — {_e(run['root'])}", head + "".join(rows))
             + refresh)
+
+
+# --- WP-U5.1: Operations health ------------------------------------------------------------------
+
+_U5_LABELS = {
+    "ok": ("ok", "✅ Healthy"),
+    "warn": ("sev-warn", "🟡 Keep an eye on"),
+    "action": ("sev-err", "🔴 Action required"),
+    "unknown": ("sev-unknown", "⚪ Unknown"),
+}
+
+_U5_HEADLINES = {
+    "ok": "Operations healthy",
+    "warn": "Keep an eye on",
+    "action": "Action required",
+    "unknown": "Not currently known",
+}
+
+_U5_FRESHNESS_NOTE = {
+    "current": "",
+    "aging": " · this reading is getting old",
+    "stale": " · this reading is STALE, so it is no longer treated as current",
+    "unavailable": " · this reading could not be dated",
+    "never": " · never observed",
+}
+
+
+def operations_health_body(run: dict | None, observations: list[dict], *,
+                           profile: str, environment: str, now, effective, freshness,
+                           rollup, value_of) -> str:
+    """The owner's one answer to 'is my operation healthy?'.
+
+    Deliberately parameterised over the freshness/severity functions rather than importing them:
+    the view decides nothing about health, it renders what policy decided — and the tests can
+    drive it with a frozen clock to prove a green page goes grey without a new observation.
+
+    Every store-sourced string is escaped. A collector's `value` and `evidence` come from
+    inspected systems (plugin names, log lines) and are therefore hostile input by default.
+    """
+    if not observations:
+        return (
+            "<section class='card'><p class='lead'>⚪ Nothing observed yet</p>"
+            "<div class='muted'>No inspection has run for "
+            f"<strong>{_e(profile)}</strong> / <strong>{_e(environment)}</strong>. That is not a "
+            "clean bill of health — it is an absence of evidence.</div></section>")
+
+    states = [effective(o, now=now) for o in observations]
+    overall = rollup(states)
+    cls, _label = _U5_LABELS.get(overall, _U5_LABELS["unknown"])
+    headline = _U5_HEADLINES.get(overall, _U5_HEADLINES["unknown"])
+    actions = sum(1 for s in states if s == "action")
+
+    when = _age(run.get("finished_at") or run.get("started_at")) if run else "—"
+    head = (
+        f"<section class='statuscard {_e(cls)}'><p class='lead'>{_e(headline)}</p>"
+        f"<div class='muted'>{_e(profile)} · {_e(environment)} · last inspection {_e(when)} · "
+        f"{actions} action{'' if actions == 1 else 's'} required</div></section>")
+
+    rows = []
+    for obs, state in zip(observations, states):
+        row_cls, label = _U5_LABELS.get(state, _U5_LABELS["unknown"])
+        fresh = freshness(obs.get("captured_at"), now=now)
+        note = _U5_FRESHNESS_NOTE.get(fresh, "")
+        reason = obs.get("reason") or ""
+        change = obs.get("change_class", "")
+        # The business meaning first; identifiers and raw evidence stay behind the fold.
+        detail = (
+            "<details style='margin-top:6px'><summary class='muted'>Evidence</summary>"
+            f"<div class='muted' style='margin-top:6px'>collector "
+            f"<code>{_e(obs.get('collector_id'))}</code> v{_e(obs.get('collector_version'))} · "
+            f"source <code>{_e(obs.get('source'))}</code> · captured "
+            f"{_e(obs.get('captured_at'))} ({_e(fresh)}) · change {_e(change)} · "
+            f"digest <code>{_e(str(obs.get('value_digest'))[:12])}</code></div>"
+            f"<pre style='white-space:pre-wrap'>{_e(canonical_preview(value_of(obs)))}</pre>"
+            + (f"<pre style='white-space:pre-wrap'>{_e(obs.get('evidence'))}</pre>"
+               if obs.get("evidence") else "")
+            + "</details>")
+        rows.append(
+            f"<div class='{_e(row_cls)}' style='margin-bottom:8px'>"
+            f"<strong>{_e(label)}</strong> — {_e(obs.get('scope'))}"
+            + (f"<div class='muted'>{_e(reason)}{_e(note)}</div>" if reason or note else "")
+            + detail + "</div>")
+
+    return head + _section(f"Observations ({len(observations)})", "".join(rows))
+
+
+def canonical_preview(value: dict, *, limit: int = 600) -> str:
+    """A readable, bounded rendering of a normalized value. Never the raw source output."""
+    import json as _json
+
+    text = _json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False)
+    return text if len(text) <= limit else text[:limit] + "\n… truncated"
