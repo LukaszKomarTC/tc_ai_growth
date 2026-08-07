@@ -17,7 +17,8 @@ So the boundary is now closed over the exact command **forms** U5.2 needs:
 * **One variable slot, tightly typed.** Only the systemd unit varies, and only within a pattern
   that cannot express a flag, a path or a shell metacharacter.
 * **Genuinely bounded output.** Output is read incrementally against a byte cap while the child
-  runs, and the child is killed when it exceeds it. The previous version used
+  runs, and the child is killed the moment either stream crosses its cap — not flagged and
+  drained to EOF, which bounds memory while leaving the process running. The previous version used
   `capture_output=True`, which buffers everything the child produces and only *slices* it
   afterwards — that bounds what gets stored, not what gets produced, and the docstring claimed
   otherwise.
@@ -32,7 +33,6 @@ table rather than by trusting a comment.
 from __future__ import annotations
 
 import os
-import re
 import selectors
 import subprocess
 import time
@@ -47,15 +47,24 @@ JOURNAL_WINDOW = "24 hours ago"
 JOURNAL_MAX_LINES = "2000"
 JOURNAL_PRIORITY = "warning"
 
-#: The only argv element that varies, and it cannot express a flag, a path or a metacharacter.
-_UNIT_RE = re.compile(r"^[A-Za-z0-9@:._-]{1,64}\.(service|timer)$")
+#: The only argv element that varies — and it varies over a CLOSED SET, not a pattern.
+#:
+#: A syntactic rule (`anything ending .service`) would still permit `systemctl show ssh.service`
+#: and a journal read of any unit on the box: read-only, but a host-introspection capability
+#: wider than the collectors that were reviewed (PR #86 re-review). The collectors already know
+#: their units literally, so the boundary can too.
+ALLOWED_UNITS = frozenset({
+    "tc-console.service",
+    "tc-weekly-report.timer",
+    "tc-autodeploy.timer",
+})
 
 
 class _UnitSlot:
     """Marks the one position in a spec where a caller-supplied value is permitted."""
 
     def matches(self, value: str) -> bool:
-        return bool(_UNIT_RE.match(value))
+        return value in ALLOWED_UNITS
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return "<unit>"
@@ -189,7 +198,6 @@ def _drain(proc: subprocess.Popen, argv: tuple[str, ...], *, timeout_s: float,
     """
     out, err = bytearray(), bytearray()
     deadline = time.monotonic() + timeout_s
-    overflow = False
 
     sel = selectors.DefaultSelector()
     for stream in (proc.stdout, proc.stderr):
@@ -206,13 +214,22 @@ def _drain(proc: subprocess.Popen, argv: tuple[str, ...], *, timeout_s: float,
                 if not chunk:
                     sel.unregister(key.fileobj)
                     continue
-                buffer = out if key.fileobj is proc.stdout else err
-                cap = limit if buffer is out else STDERR_LIMIT
+                is_stdout = key.fileobj is proc.stdout
+                buffer = out if is_stdout else err
+                cap = limit if is_stdout else STDERR_LIMIT
                 room = cap - len(buffer)
                 if room > 0:
                     buffer.extend(chunk[:room])
                 if len(chunk) > room:
-                    overflow = overflow or buffer is out
+                    # Stop the child AT the cap. The previous version set a flag and kept
+                    # draining to EOF, which bounded memory but not the child — the invariant
+                    # this comment claims was simply not true (PR #86 re-review). Either stream
+                    # counts: unbounded stderr is unbounded output.
+                    _terminate(proc)
+                    stream = "stdout" if is_stdout else "stderr"
+                    return _unavailable(
+                        argv, f"{argv[0]} produced more than {cap} bytes on {stream} "
+                              f"and was stopped")
     except OSError as exc:  # noqa: BLE001 — a broken pipe mid-read is an unreadable source
         _terminate(proc)
         return _unavailable(argv, f"{argv[0]} output could not be read: {type(exc).__name__}")
@@ -221,10 +238,6 @@ def _drain(proc: subprocess.Popen, argv: tuple[str, ...], *, timeout_s: float,
         for stream in (proc.stdout, proc.stderr):
             if stream is not None:
                 stream.close()
-
-    if overflow:
-        _terminate(proc)
-        return _unavailable(argv, f"{argv[0]} produced more than {limit} bytes and was stopped")
 
     try:
         returncode = proc.wait(timeout=max(0.0, deadline - time.monotonic()))

@@ -81,12 +81,78 @@ def test_no_general_interpreter_or_unused_program_is_reachable():
     assert "php" not in programs and "du" not in programs and "stat" not in programs
 
 
-def test_the_unit_slot_cannot_express_a_flag_or_a_path():
-    """The one variable position in the whole boundary."""
-    for bad in ("../../etc/passwd", "-u", "a.service; rm -rf /", "x" * 200, "notaunit"):
+def test_the_unit_slot_is_a_closed_set_not_a_pattern():
+    """A syntactic rule would still permit reading any unit on the box. Read-only, but a wider
+    host-introspection capability than the reviewed collectors need."""
+    for bad in ("../../etc/passwd", "-u", "a.service; rm -rf /", "x" * 200, "notaunit",
+                "ssh.service", "mysql.service", "sshd.service"):
         assert not _exec.is_allowed(_exec.systemctl_show(bad)), bad
-    assert _exec.is_allowed(_exec.systemctl_show("tc-console.service"))
-    assert _exec.is_allowed(_exec.journalctl_probe("tc-weekly-report.timer"))
+        assert not _exec.is_allowed(_exec.journalctl_window(bad)), bad
+    for good in _exec.ALLOWED_UNITS:
+        assert _exec.is_allowed(_exec.systemctl_show(good))
+    assert _exec.is_allowed(_exec.journalctl_probe("tc-console.service"))
+
+
+def test_an_unrelated_but_syntactically_valid_unit_is_refused_at_the_door():
+    result = _exec.run_command(_exec.journalctl_window("ssh.service"))
+    assert result.unavailable and "permitted read-only form" in result.detail
+
+
+class _FakeProc:
+    """A child whose pipes the test controls, so termination is observable and deterministic.
+
+    Real `os.pipe` file objects, because the drain loop registers them with a selector and needs
+    genuine file descriptors.
+    """
+
+    def __init__(self, stdout: bytes = b"", stderr: bytes = b""):
+        out_r, out_w = os.pipe()
+        err_r, err_w = os.pipe()
+        os.write(out_w, stdout)
+        os.write(err_w, stderr)
+        os.close(out_w)
+        os.close(err_w)
+        self.stdout = os.fdopen(out_r, "rb")
+        self.stderr = os.fdopen(err_r, "rb")
+        self.killed = False
+
+    def kill(self):
+        self.killed = True
+
+    def wait(self, timeout=None):
+        return 0
+
+
+def test_the_child_is_killed_the_moment_stdout_crosses_the_cap():
+    """The invariant the docstring claimed. The previous version set a flag and kept draining to
+    EOF, which bounded memory while leaving the process running."""
+    proc = _FakeProc(stdout=b"x" * 4096)
+    result = _exec._drain(proc, _exec.wp_core_version(), timeout_s=5, limit=64)
+
+    assert proc.killed is True, "an overproducing child must be stopped, not merely ignored"
+    assert result.unavailable
+    assert "more than 64 bytes on stdout" in result.detail
+
+
+def test_unbounded_stderr_is_also_stopped():
+    """Unbounded stderr is unbounded output. The first version's overflow check ignored it
+    entirely."""
+    proc = _FakeProc(stdout=b"", stderr=b"e" * (_exec.STDERR_LIMIT + 5000))
+    result = _exec._drain(proc, _exec.wp_core_version(), timeout_s=5,
+                          limit=_exec.DEFAULT_OUTPUT_LIMIT)
+
+    assert proc.killed is True
+    assert result.unavailable
+    assert "on stderr" in result.detail
+
+
+def test_output_within_the_cap_is_returned_normally_and_the_child_is_not_killed():
+    """The control: the bound must be invisible to a well-behaved command."""
+    proc = _FakeProc(stdout=b"6.5.2\n")
+    result = _exec._drain(proc, _exec.wp_core_version(), timeout_s=5, limit=64)
+
+    assert proc.killed is False
+    assert result.ok and result.stdout.strip() == "6.5.2"
 
 
 def test_a_missing_program_is_unavailable_not_an_exception():
