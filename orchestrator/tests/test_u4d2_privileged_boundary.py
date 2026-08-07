@@ -18,6 +18,7 @@ _phases_as_unavailable_rather_than_claiming_them` pins that it does.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import stat
@@ -1185,3 +1186,110 @@ def test_start_acceptance_runs_the_harness_against_the_targets_durable_store(fre
                     / "orchestrator" / "data")
     assert not runtime_data.exists(), \
         "the harness resolved a store inside the root-owned runtime instead of TC_STORE_DB"
+
+
+# --- executing a trusted runtime must not invalidate it (PR #81 review, run #3) -----------------
+#
+# Run #3 passed on the production VPS and, in passing, proved a defect: the harness is Python
+# executing FROM the root-owned runtime, so its own imports wrote `__pycache__/*.pyc` into the
+# tree root had just authenticated. The manifest then described a tree that no longer existed,
+# and `verify_runtime` would refuse the SECOND launch from the same runtime. A trusted runtime
+# that invalidates itself by running is not immutable in the sense the receipt claims.
+
+def _tree_digest(root: Path) -> list[str]:
+    """Every file under `root`, path and content, in a stable order — the same shape the
+    program's own manifest records, computed independently of it."""
+    out = []
+    for path in sorted(p for p in root.rglob("*") if p.is_file()):
+        out.append(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.relative_to(root)}")
+    return out
+
+
+def _launch_acceptance(target, run_id_root: Path) -> subprocess.CompletedProcess:
+    """Drive the REAL `start-acceptance` verb into the stand-in harness, exactly as the Console's
+    sudo hop does. The harness reports BLOCKED off-host (exit 2); what matters here is what the
+    launch leaves behind in the runtime, not the verdict."""
+    from tc_growth.store import open_store
+
+    store = open_store(target.target.db_path)
+    try:
+        run_id = store.begin_acceptance_run(requested_by="probe", root=str(run_id_root))
+        assert store.claim_acceptance_run(run_id)
+    finally:
+        store.close()
+    return run_verb(target, "start-acceptance", str(run_id))
+
+
+def test_executing_the_trusted_runtime_leaves_it_byte_for_byte_unchanged(fresh, tmp_path):
+    """Criteria 1, 2 and 4: hash the materialised runtime, launch it through the real privileged
+    path, hash it again. Nothing the interpreter generates may land inside the tree root vouched
+    for. Fails against `b64bfaf`, where the launch wrote `__pycache__` into the runtime."""
+    staged_release(fresh)
+    assert run_verb(fresh, "bootstrap", fresh.target_sha).returncode == 0
+
+    runtime = Path(fresh.target.runtime_dir) / fresh.target_sha
+    manifest = Path(f"{runtime}.manifest")
+    before, manifest_before = _tree_digest(runtime), manifest.read_text()
+
+    proc = _launch_acceptance(fresh, tmp_path / "run-root")
+    assert proc.returncode == 2, (proc.returncode, proc.stdout, proc.stderr)   # BLOCKED off-host
+
+    generated = [str(p.relative_to(runtime)) for p in runtime.rglob("*")
+                 if p.name == "__pycache__" or p.suffix == ".pyc"]
+    assert not generated, f"the launch wrote interpreter artefacts into the trusted tree: {generated}"
+    assert _tree_digest(runtime) == before, "executing the runtime changed the authenticated tree"
+    assert manifest.read_text() == manifest_before, "the runtime manifest was rewritten"
+
+
+def test_the_same_trusted_runtime_can_be_launched_twice_without_re_materialisation(fresh, tmp_path):
+    """Criterion 3. The second launch is the one that used to fail: `verify_runtime` compares the
+    tree against the manifest, and the FIRST launch had changed the tree. No cleanup, no
+    re-materialisation, no regenerated manifest between the two."""
+    staged_release(fresh)
+    assert run_verb(fresh, "bootstrap", fresh.target_sha).returncode == 0
+
+    first = _launch_acceptance(fresh, tmp_path / "run-root-1")
+    assert first.returncode == 2, (first.stdout, first.stderr)
+    second = _launch_acceptance(fresh, tmp_path / "run-root-2")
+    assert second.returncode == 2, (second.stdout, second.stderr)
+
+    # The signature of the defect: the second launch refused because the tree root authenticated
+    # no longer matched the manifest root recorded for it.
+    assert "no longer matches its manifest" not in second.stderr, second.stderr
+    assert "phase=verify-runtime         status=ok" in second.stdout, second.stdout
+
+
+def test_materialisation_takes_only_committed_content_from_a_dirty_release(fresh):
+    """Criterion 5. A release directory is a LIVE working tree — the Console serves out of it, so
+    Python drops `__pycache__` there and deployment leaves an untracked `.env` beside the code.
+    Materialising by copying that directory meant bootstrap refused (`verify_against_commit`
+    caught the extras) until an administrator hand-cleaned a serving tree. Root now builds the
+    tree from the commit, so untracked content is never a candidate for the trusted copy."""
+    release = staged_release(fresh)
+    (release / "orchestrator" / "tc_growth" / "__pycache__").mkdir(parents=True, exist_ok=True)
+    (release / "orchestrator" / "tc_growth" / "__pycache__" / "cli.cpython-312.pyc").write_bytes(b"\x00cached")
+    (release / "orchestrator" / ".env").write_text("TC_SECRET=not-in-any-commit\n")
+
+    proc = run_verb(fresh, "bootstrap", fresh.target_sha)
+    assert proc.returncode == 0, (
+        f"bootstrap refused a release carrying ordinary untracked artefacts, so trusted state "
+        f"still depends on hand-cleaning a serving tree:\n{proc.stdout}\n{proc.stderr}")
+
+    runtime = Path(fresh.target.runtime_dir) / fresh.target_sha
+    assert not list(runtime.rglob("__pycache__")), "untracked bytecode reached the trusted tree"
+    assert not (runtime / "orchestrator" / ".env").exists(), \
+        "an uncommitted .env was copied into the tree root vouches for"
+    assert (runtime / "orchestrator" / "tc_growth" / "cli.py").exists(), "committed content missing"
+
+
+def test_the_deployed_unit_does_not_write_bytecode_into_the_runtime(target):
+    """The same invariant for the long-running service `apply` deploys: it runs FROM the
+    authenticated runtime, so without this its first import would invalidate the manifest root
+    recorded for the runtime it just deployed."""
+    staged_release(target)
+    assert run_verb(target, "apply", target.target_sha).returncode in (0, 3)
+
+    unit = Path(target.target.unit_path).read_text()
+    assert "Environment=PYTHONDONTWRITEBYTECODE=1" in unit, unit
+    exec_start = [ln for ln in unit.splitlines() if ln.startswith("ExecStart=")]
+    assert exec_start and " -B -m tc_growth.cli" in exec_start[0], exec_start

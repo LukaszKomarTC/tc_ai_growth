@@ -276,10 +276,37 @@ materialize_runtime() {
     # A previous materialisation is root-owned, so removing it is safe and keeps apply idempotent.
     [ -e "$runtime" ] && run_clean rm -rf "$runtime"
     run_clean install -d -m 0755 -o root -g root "$runtime" || die "cannot create $runtime"
-    run_clean cp -a "$release/." "$runtime/" || die "could not copy the release into root-owned storage"
-    # `.git` in a worktree is a POINTER back into the service user's repository. It is not runtime
-    # content and root has no business carrying it into a tree it vouches for.
-    run_clean rm -rf "$runtime/.git"
+
+    # The tree is built from the COMMIT, not from the staged worktree. It used to be `cp -a` of
+    # the release directory, which copied whatever happened to be sitting there — and a release
+    # directory is a live working tree: the Console serves out of it, so Python drops
+    # `__pycache__/*.pyc` into it, and deployment leaves an untracked `.env` beside the code.
+    # Root then vouched for files no commit authorised, `verify_against_commit` refused the
+    # extras (correctly), and the only way forward was an administrator hand-cleaning a serving
+    # tree before every bootstrap — trusted state built on a manual tidy-up (PR #81 review,
+    # criterion 5). Reading the commit instead makes "root runs exactly the reviewed bytes" a
+    # property of HOW the tree is built rather than something checked after the fact.
+    #
+    # `git_ro` is the same hardened reader `verify_against_commit` uses — replacement objects
+    # disabled, repository configuration neutralised — so the extraction and the authentication
+    # that follows it read the object store on identical terms. Extracting also removes the old
+    # `rm -rf "$runtime/.git"` step: an archive of a commit has no `.git` pointer back into the
+    # service user's repository to begin with.
+    #
+    # `verify_against_commit` still runs on the result and is still load-bearing: it is what
+    # catches a truncated extraction, and it fails CLOSED if some future `.gitattributes`
+    # `export-ignore` were to silently drop a file from the archive.
+    command -v tar >/dev/null || die "tar is required to materialise a runtime from the commit"
+    [ -d "$release" ] || die "no staged release directory for $sha; stage the release worktree first"
+    assert_staged_release_matches_commit "$sha" "$release"
+    if ! git_ro -C "$TC_APP_DIR" archive --format=tar "$sha" | run_clean tar -xf - -C "$runtime"; then
+        run_clean rm -rf "$runtime"
+        die "could not materialise commit $sha into root-owned storage from the object store"
+    fi
+    [ -n "$(ls -A "$runtime" 2>/dev/null)" ] || {
+        run_clean rm -rf "$runtime"
+        die "commit $sha materialised an empty runtime tree; refusing to vouch for it"
+    }
     run_clean chown -R root:root "$runtime" || die "could not take ownership of the runtime copy"
     # Strip every group/other write bit. This is the property, not a tidy-up.
     run_clean chmod -R go-w "$runtime" || die "could not lock the runtime copy"
@@ -330,21 +357,57 @@ git_ro() {
             -c safe.directory="$TC_APP_DIR" "$@"
 }
 
-verify_against_commit() {
-    local sha="$1" runtime="$2" expected actual line mode kind oid path
-    expected="$(mktemp)" || die "cannot stage the expected manifest"
+# The commit's authorised content as a `sha256  ./path` list, read through `git_ro` so object
+# replacement is disabled. Both consumers below build their own copy rather than sharing one:
+# a cached list is state, and state that decides an authentication is state worth poisoning.
+_write_expected_commit_manifest() {
+    local sha="$1" out="$2" line mode kind oid path
+    : > "$out"
     while IFS= read -r line; do
         [ -n "$line" ] || continue
         mode="${line%% *}"; line="${line#* }"
         kind="${line%% *}"; line="${line#* }"
         oid="${line%%$'\t'*}"; path="${line#*$'\t'}"
-        [ "$kind" = "blob" ] || { rm -f "$expected"; die "unsupported $kind entry in commit $sha: $path"; }
+        [ "$kind" = "blob" ] || { rm -f "$out"; die "unsupported $kind entry in commit $sha: $path"; }
         printf '%s  ./%s\n' \
             "$(git_ro -C "$TC_APP_DIR" cat-file blob "$oid" | sha256sum | cut -d' ' -f1)" "$path" \
-            >> "$expected"
+            >> "$out"
     done < <(git_ro -C "$TC_APP_DIR" ls-tree -r "$sha" 2>/dev/null)
+    [ -s "$out" ] || { rm -f "$out"; die "could not read the tree of commit $sha from the object store"; }
+}
 
-    [ -s "$expected" ] || { rm -f "$expected"; die "could not read the tree of commit $sha from the object store"; }
+# Root builds the runtime from the commit, so substituted content in the staged release can no
+# longer reach the tree root vouches for. That closes the door — and, on its own, would also
+# close root's EYES: a release whose tracked files were tampered with after `stage` would be
+# silently ignored and the deployment would proceed as if nothing had happened. Substitution in
+# that window is evidence of an active attack, and refusing to deploy is the report.
+#
+# So the tracked files of the staged release are compared against the commit BEFORE anything is
+# materialised. Only paths the commit names are checked, which is the whole difference from the
+# old `cp -a` behaviour: `__pycache__`, `.env` and every other untracked artefact a live serving
+# tree accumulates are not the commit's business and no longer block a deployment (PR #81 review,
+# criterion 5), while a substituted MODULE still stops the chain exactly as it did before.
+assert_staged_release_matches_commit() {
+    local sha="$1" release="$2" expected line digest path actual
+    expected="$(mktemp)" || die "cannot stage the expected manifest"
+    _write_expected_commit_manifest "$sha" "$expected"
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        digest="${line:0:64}"
+        path="${line:66}"
+        actual="$(sha256sum "$release/${path#./}" 2>/dev/null | cut -d' ' -f1)"
+        if [ "$actual" != "$digest" ]; then
+            rm -f "$expected"
+            die "the staged release does not match commit $sha — '${path#./}' was ${actual:+substituted}${actual:-removed} after the release was staged; refusing to deploy it"
+        fi
+    done < "$expected"
+    rm -f "$expected"
+}
+
+verify_against_commit() {
+    local sha="$1" runtime="$2" expected actual
+    expected="$(mktemp)" || die "cannot stage the expected manifest"
+    _write_expected_commit_manifest "$sha" "$expected"
     actual="$(mktemp)"
     ( cd "$runtime" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0r sha256sum ) > "$actual"
     LC_ALL=C sort -o "$expected" "$expected"
@@ -587,6 +650,12 @@ write_unit() {
     # WorkingDirectory and ExecStart point at the ROOT-OWNED runtime copy, never at the release
     # tree. That single substitution is what closes blocker 1: the service consumes bytes the
     # service user cannot reach, so there is no window to redirect it in.
+    #
+    # `-B` and PYTHONDONTWRITEBYTECODE=1: the long-running service runs FROM the authenticated
+    # tree, so without them its first import writes `__pycache__/*.pyc` into it and the runtime
+    # stops matching the manifest root vouched for — the deployed Console would invalidate its
+    # own runtime by starting (PR #81 review). Both, because the flag survives an environment
+    # the interpreter never sees and the variable is inherited by any Python child.
     local sha="$1" interpreter="$2" staged="$TC_SNAPSHOT_DIR/unit.next"
     cat > "$staged" <<UNIT
 [Unit]
@@ -598,9 +667,10 @@ User=$TC_SERVICE_USER
 WorkingDirectory=$TC_RUNTIME_DIR/$sha/orchestrator
 Environment=TC_CONSOLE_PORT=$TC_CONSOLE_PORT
 Environment=TC_BUILD_COMMIT=$sha
+Environment=PYTHONDONTWRITEBYTECODE=1
 ${TC_STORE_DB:+Environment=TC_DB_PATH=$TC_STORE_DB}
 ${TC_CONSOLE_ENV_FILE:+EnvironmentFile=-$TC_CONSOLE_ENV_FILE}
-ExecStart=$interpreter -m tc_growth.cli console $TC_CONSOLE_PORT
+ExecStart=$interpreter -B -m tc_growth.cli console $TC_CONSOLE_PORT
 Restart=on-failure
 
 [Install]
@@ -855,14 +925,18 @@ verb_start_run() {
     [ -d /run/systemd/system ] || {
         phase "transient-unit" unavailable
         note "systemd is not booted here; no transient unit was created."
-        note "the command it WOULD have run: $interpreter -m tc_growth.cli deploy-run $run_id --target-config $TARGET_CONF"
+        note "the command it WOULD have run: $interpreter -B -m tc_growth.cli deploy-run $run_id --target-config $TARGET_CONF"
         note "  working directory: $runtime/orchestrator"
         return "$EXIT_SYSTEMD_ABSENT"
     }
+    # `-B` / PYTHONDONTWRITEBYTECODE: the runner executes FROM the authenticated runtime, so
+    # letting it write bytecode there would leave the tree no longer matching its manifest — the
+    # next `verify_runtime` would refuse the very runtime root just deployed (PR #81 review).
     run_clean systemd-run --collect --unit="$TC_UNIT_PREFIX-run-$run_id" \
         --uid="$TC_SERVICE_USER" --working-directory="$runtime/orchestrator" \
         --setenv=TC_DB_PATH="$TC_STORE_DB" \
-        "$interpreter" -m tc_growth.cli deploy-run "$run_id" --target-config "$TARGET_CONF" \
+        --setenv=PYTHONDONTWRITEBYTECODE=1 \
+        "$interpreter" -B -m tc_growth.cli deploy-run "$run_id" --target-config "$TARGET_CONF" \
         || die "could not create the transient deployment unit"
     phase "transient-unit" ok
     note "$TC_UNIT_PREFIX-run-$run_id created, running from the root-owned runtime"
@@ -925,6 +999,12 @@ verb_start_acceptance() {
     # `systemd-run` remains a ROOT capability — the service user's sudo surface is unchanged.
     # Without a booted systemd the direct exec remains: the restart check defers there, so the
     # self-termination path cannot arise.
+    #
+    # Both launches disable bytecode writes (`-B` and PYTHONDONTWRITEBYTECODE=1). The harness is
+    # Python executing FROM the authenticated runtime; on the first on-host PASS it left
+    # `__pycache__` behind inside that tree, so the runtime no longer matched the manifest and a
+    # SECOND launch would have been refused against it (PR #81 review). The flag covers this
+    # interpreter and the variable covers the Python children the harness itself spawns.
     if [ -d /run/systemd/system ]; then
         systemctl reset-failed "$TC_UNIT_PREFIX-acceptance-$run_id.service" 2>/dev/null || true
         run_clean systemd-run --quiet --wait --pipe --collect \
@@ -934,13 +1014,14 @@ verb_start_acceptance() {
             --setenv=TC_ACCEPTANCE_RUNTIME_SHA="$current" \
             --setenv=TC_ACCEPTANCE_SERVICE_USER="$TC_SERVICE_USER" \
             --setenv=TC_DB_PATH="$TC_STORE_DB" \
-            "$interpreter" -m tc_growth.cli acceptance-root "$run_id" \
+            --setenv=PYTHONDONTWRITEBYTECODE=1 \
+            "$interpreter" -B -m tc_growth.cli acceptance-root "$run_id" \
             || die "the acceptance harness reported a failure"
     else
         ( cd "$runtime/orchestrator" && env -i PATH="$PATH" HOME=/root LANG=C.UTF-8 \
             TC_ACCEPTANCE_RUNTIME_SHA="$current" TC_ACCEPTANCE_SERVICE_USER="$TC_SERVICE_USER" \
-            TC_DB_PATH="$TC_STORE_DB" \
-            "$interpreter" -m tc_growth.cli acceptance-root "$run_id" ) \
+            TC_DB_PATH="$TC_STORE_DB" PYTHONDONTWRITEBYTECODE=1 \
+            "$interpreter" -B -m tc_growth.cli acceptance-root "$run_id" ) \
             || die "the acceptance harness reported a failure"
     fi
     phase "start-acceptance" ok

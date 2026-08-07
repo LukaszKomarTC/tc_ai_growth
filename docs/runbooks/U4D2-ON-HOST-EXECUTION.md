@@ -22,6 +22,23 @@ findings are addressed).
 > bytes and manifest change with the head), and A3's worktree + `bootstrap` at the new SHA. The
 > dedicated deploy venv and the acceptance drop-in persist; the installer and bootstrap refresh
 > what the head governs.
+>
+> **`bootstrap` will refuse if a trusted runtime already exists.** That is deliberate — it is a
+> one-time setup action and will not replace an established runtime — but it means there is
+> currently **no least-privilege verb that advances the trusted runtime to a newer head**
+> (`apply` would do it, but only by also installing the full production-deploy sudo surface and
+> rewriting the Console unit, which is a production posture change, not an acceptance step).
+> Until that gap is closed, advancing the acceptance runtime is a **governed manual reset**:
+> record the current state, confirm no service depends on the stale runtime, move (do not delete)
+> the stale `current` + runtime tree + manifest into a root-owned `0700` quarantine, then
+> `bootstrap` the new SHA and let the verified program recreate every trusted artefact. Never
+> hand-write `current`, a runtime file or a manifest. This is tracked as a follow-up work item.
+>
+> You do **not** need to clean the release worktree first. Root materialises the runtime from the
+> commit's objects, so the `__pycache__` a serving Console writes into its own release tree and
+> the untracked `.env` beside it are neither copied into the trusted tree nor able to block the
+> bootstrap. A *tracked* file that differs from the commit is still refused — that is
+> substitution, not clutter.
 
 ### A1. Put the #81 code in service (release-dir deployment — the shape production actually has)
 
