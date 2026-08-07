@@ -308,6 +308,9 @@ section.card h2 { margin:0 0 10px; font-size:16px; font-weight:700; }
 section.card > div { padding:3px 0; }
 .sev-warn { border-left:3px solid var(--warn); padding-left:10px !important; }
 .sev-err  { border-left:3px solid var(--err); padding-left:10px !important; }
+/* WP-U5.1: `unknown` must be visibly its own state. It is NOT a quieter kind of healthy —
+   a dashed grey rule reads as "no answer here", which is exactly what it means. */
+.sev-unknown { border-left:3px dashed var(--muted); padding-left:10px !important; }
 #envtruth { color:var(--muted); font-size:12.5px; }
 #envtruth .tag { min-width:150px; display:inline-block; }
 .muted { color:var(--muted); }
@@ -356,6 +359,7 @@ def _shell(title: str, active: str, body: str, *, site_name: str, env_kind: str)
     # takes you somewhere other than what it says is a truth defect on this surface).
     nav = "".join([
         _tab("Home", "/"), _tab("Decisions", "/decisions"), _tab("Operations", "/operations"),
+        _tab("Health", "/operations-health"),
         _tab("Evidence", "/logs"), _tab("Cases", "/cases"), _tab("Deploy", "/deploy"),
         _tab("Acceptance", "/acceptance"),
     ])
@@ -813,6 +817,41 @@ class _Handler(BaseHTTPRequestHandler):
             except Exception as exc:  # noqa: BLE001
                 body = f"<p class='muted'>Cases unavailable: {_e(_redact(str(exc)))}</p>"
             self._html(200, _shell("Cases", "cases", body, **chrome))
+        elif path == "/operations-health":
+            # WP-U5.1. Read-only: this page RENDERS evidence, it never collects. There is no
+            # control here that starts an inspection, so no browser input can reach a collector.
+            from datetime import datetime, timezone
+
+            from . import console_views, inspection
+
+            try:
+                from .store import open_store
+
+                # The identity is derived on the SERVER from this Console's own configuration —
+                # never from the query string, so a crafted URL cannot make one business's page
+                # display another's evidence (issue #82 amendment 1).
+                from .config import active_site, get_settings
+
+                profile = active_site() or "default"
+                environment = (get_settings().env_kind or "staging").strip().lower()
+                store = open_store()
+                try:
+                    run = store.latest_inspection_run(profile=profile, environment=environment)
+                    observations = store.latest_observations(profile=profile,
+                                                             environment=environment)
+                finally:
+                    store.close()
+                body = console_views.operations_health_body(
+                    run, observations, profile=profile, environment=environment,
+                    now=datetime.now(timezone.utc),
+                    effective=inspection.effective_status,
+                    freshness=inspection.freshness,
+                    rollup=inspection.rollup,
+                    value_of=inspection.observation_value)
+            except Exception as exc:  # noqa: BLE001 — one bad row must not remove the surface
+                body = ("<p class='muted'>Operations health unavailable: "
+                        f"{_e(_redact(str(exc)))}</p>")
+            self._html(200, _shell("Health", "health", body, **chrome))
         else:
             self._send(404, b"not found", "text/plain; charset=utf-8")
 

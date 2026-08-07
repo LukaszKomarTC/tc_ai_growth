@@ -1036,3 +1036,120 @@ def record_acceptance_phase(conn: sqlite3.Connection, run_id: int, *, seq: int, 
 def list_acceptance_phases(conn: sqlite3.Connection, run_id: int) -> list[dict]:
     return [dict(r) for r in conn.execute(
         "SELECT * FROM acceptance_phases WHERE run_id = ? ORDER BY seq", (run_id,))]
+
+
+# --- WP-U5.1: inspection runs and observations --------------------------------------------------
+#
+# Every function here takes `profile` and `environment` as required keyword arguments. There is
+# deliberately no "resolve it from the environment if omitted" convenience: the older evidence
+# paths do exactly that and it is what allows a run's identity to disagree with its rows.
+
+_OBSERVATION_STATUSES = ("ok", "warn", "action", "unknown")
+_CHANGE_CLASSES = ("baseline", "unchanged", "changed", "appeared", "disappeared")
+
+
+def _require_identity(profile: str, environment: str) -> tuple[str, str]:
+    p, e = (profile or "").strip(), (environment or "").strip()
+    if not p or not e:
+        raise ValueError(
+            "an inspection needs an explicit profile and environment; refusing to record "
+            "evidence whose subject is unknown (issue #82 amendment 1)")
+    return p, e
+
+
+def begin_inspection_run(conn: sqlite3.Connection, *, profile: str, environment: str,
+                         trigger: str, collector_set_version: str, repo_commit: str) -> int:
+    profile, environment = _require_identity(profile, environment)
+    if trigger not in ("console", "schedule", "cli"):
+        raise ValueError(f"not an inspection trigger: {trigger}")
+    cur = conn.execute(
+        "INSERT INTO inspection_runs (started_at, profile, environment, trigger, "
+        "collector_set_version, repo_commit, status) VALUES (?, ?, ?, ?, ?, ?, 'running')",
+        (_now(), profile, environment, trigger, collector_set_version, repo_commit or "unknown"))
+    conn.commit()
+    return int(cur.lastrowid)
+
+
+def finish_inspection_run(conn: sqlite3.Connection, run_id: int, *, summary: str) -> None:
+    conn.execute(
+        "UPDATE inspection_runs SET status='done', finished_at=?, summary=? WHERE id=?",
+        (_now(), summary, run_id))
+    conn.commit()
+
+
+def get_inspection_run(conn: sqlite3.Connection, run_id: int) -> dict | None:
+    row = conn.execute("SELECT * FROM inspection_runs WHERE id = ?", (run_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def latest_inspection_run(conn: sqlite3.Connection, *, profile: str,
+                          environment: str) -> dict | None:
+    profile, environment = _require_identity(profile, environment)
+    row = conn.execute(
+        "SELECT * FROM inspection_runs WHERE profile = ? AND environment = ? "
+        "ORDER BY id DESC LIMIT 1", (profile, environment)).fetchone()
+    return dict(row) if row else None
+
+
+def latest_observation(conn: sqlite3.Connection, *, profile: str, environment: str,
+                       scope: str) -> dict | None:
+    """The predecessor for a scope, scoped to ONE identity.
+
+    The identity columns are part of the WHERE clause rather than a filter applied afterwards,
+    so a diff cannot be computed against another business's or environment's history even if the
+    scope names collide — which they will, since every profile has a `host.capacity`.
+    """
+    profile, environment = _require_identity(profile, environment)
+    row = conn.execute(
+        "SELECT * FROM observations WHERE profile = ? AND environment = ? AND scope = ? "
+        "ORDER BY id DESC LIMIT 1", (profile, environment, scope)).fetchone()
+    return dict(row) if row else None
+
+
+def record_observation(conn: sqlite3.Connection, run_id: int, *, collector_id: str,
+                       collector_version: str, scope: str, source: str, profile: str,
+                       environment: str, captured_at: str, status: str, value_json: str,
+                       value_digest: str, evidence: str | None, predecessor_id: int | None,
+                       change_class: str, severity: str, confidence: str | None,
+                       reason: str | None) -> int:
+    profile, environment = _require_identity(profile, environment)
+    if status not in _OBSERVATION_STATUSES:
+        raise ValueError(f"not an observation status: {status}")
+    if severity not in _OBSERVATION_STATUSES:
+        raise ValueError(f"not an observation severity: {severity}")
+    if change_class not in _CHANGE_CLASSES:
+        raise ValueError(f"not a change class: {change_class}")
+    # The run's identity is authoritative; an observation may not be filed under a different one.
+    run = conn.execute("SELECT profile, environment FROM inspection_runs WHERE id = ?",
+                       (run_id,)).fetchone()
+    if run is None:
+        raise ValueError(f"no such inspection run: {run_id}")
+    if (run["profile"], run["environment"]) != (profile, environment):
+        raise ValueError(
+            f"observation identity {profile}/{environment} does not match its inspection run "
+            f"{run['profile']}/{run['environment']} — refusing to split one run's identity")
+    cur = conn.execute(
+        "INSERT INTO observations (run_id, collector_id, collector_version, scope, source, "
+        "profile, environment, captured_at, status, value_json, value_digest, evidence, "
+        "predecessor_id, change_class, severity, confidence, reason) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (run_id, collector_id, collector_version, scope, source, profile, environment,
+         captured_at, status, value_json, value_digest, evidence, predecessor_id, change_class,
+         severity, confidence, reason))
+    conn.commit()
+    return int(cur.lastrowid)
+
+
+def list_observations(conn: sqlite3.Connection, run_id: int) -> list[dict]:
+    return [dict(r) for r in conn.execute(
+        "SELECT * FROM observations WHERE run_id = ? ORDER BY scope, id", (run_id,))]
+
+
+def latest_observations(conn: sqlite3.Connection, *, profile: str,
+                        environment: str) -> list[dict]:
+    """The newest observation per scope for one identity — what the owner surface renders."""
+    profile, environment = _require_identity(profile, environment)
+    return [dict(r) for r in conn.execute(
+        "SELECT * FROM observations WHERE id IN ("
+        "  SELECT MAX(id) FROM observations WHERE profile = ? AND environment = ? GROUP BY scope"
+        ") ORDER BY scope", (profile, environment))]

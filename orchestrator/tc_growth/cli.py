@@ -35,6 +35,7 @@
     python -m tc_growth.cli acceptance-run <id>       # what the Console's detached acceptance runner runs
     python -m tc_growth.cli acceptance-root <id>      # the ROOT side start-acceptance runs; seals the receipt
     python -m tc_growth.cli deploy-harness <dir> [--tamper] [--keep] [--stand-in]  # build a DISPOSABLE deploy target and run the real chain against it
+    python -m tc_growth.cli inspect --profile=<name> --environment=<env>  # WP-U5.1 read-only collection sweep (both required)
 
 `smoke` exercises a single host-side tool WITHOUT the AI runtime — the fastest way to surface
 OAuth/vault/credential problems (the usual first failure point). `weekly-report` runs the full
@@ -640,6 +641,44 @@ def cmd_acceptance_root(run_id_raw: str) -> int:
     return 0 if outcome in ("PASS", "FAILED SAFELY") else 1
 
 
+def cmd_inspect(*, profile: str, environment: str) -> int:
+    """WP-U5.1: run one read-only collection sweep for an EXPLICIT profile and environment.
+
+    Both are required arguments with no default. `--profile` deliberately does not fall back to
+    `TC_SITE`: a sweep launched by a process configured for one business must not be able to
+    file evidence under another just because nobody said which was meant (issue #82 amendment 1).
+    """
+    from . import inspection
+    from .collectors import FixtureCollector
+    from .store import open_store
+
+    if not profile.strip() or not environment.strip():
+        print("Usage: inspect --profile=<name> --environment=<staging|production>")
+        print("Both are required: U5 evidence never infers whose environment it describes.")
+        return 2
+    try:
+        ctx = inspection.CollectionContext(profile=profile.strip(),
+                                           environment=environment.strip(),
+                                           repo_commit=inspection.repo_commit())
+    except inspection.CollectionRefused as exc:
+        print(f"refused: {exc}")
+        return 2
+
+    store = open_store()
+    try:
+        run_id = inspection.run_inspection(store, [FixtureCollector()], ctx, trigger="cli")
+        run = store.get_inspection_run(run_id)
+        rows = store.list_observations(run_id)
+    finally:
+        store.close()
+
+    print(f"inspection #{run_id} — {run['profile']}/{run['environment']} — {run['summary']}")
+    for row in rows:
+        print(f"  {row['scope']:<24} {row['severity']:<8} {row['change_class']:<12} "
+              f"{row['status']}")
+    return 0
+
+
 def cmd_deploy_harness(root_raw: str, *, tamper: bool, keep: bool,
                        stand_in: bool = False) -> int:
     """WP-U4d.1: build a disposable deployment target and run the real chain against it.
@@ -850,6 +889,11 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_case_status(rest[0], rest[1])
     if cmd == "draft-test":
         return cmd_draft_test(rest[0] if rest else "")
+    if cmd == "inspect":
+        opts = {a.split("=", 1)[0]: a.split("=", 1)[1]
+                for a in rest if a.startswith("--") and "=" in a}
+        return cmd_inspect(profile=opts.get("--profile", ""),
+                           environment=opts.get("--environment", ""))
     if cmd == "validation":
         return cmd_validation()
     if cmd == "decision-outcome":

@@ -195,6 +195,45 @@ class SqliteStore:
     def list_acceptance_phases(self, run_id: int) -> list[dict]:
         return records.list_acceptance_phases(self._conn, run_id)
 
+    # -- WP-U5.1: inspection runs and observations --
+    def begin_inspection_run(self, *, profile: str, environment: str, trigger: str,
+                             collector_set_version: str, repo_commit: str) -> int:
+        return records.begin_inspection_run(
+            self._conn, profile=profile, environment=environment, trigger=trigger,
+            collector_set_version=collector_set_version, repo_commit=repo_commit)
+
+    def finish_inspection_run(self, run_id: int, *, summary: str) -> None:
+        records.finish_inspection_run(self._conn, run_id, summary=summary)
+
+    def get_inspection_run(self, run_id: int) -> dict | None:
+        return records.get_inspection_run(self._conn, run_id)
+
+    def latest_inspection_run(self, *, profile: str, environment: str) -> dict | None:
+        return records.latest_inspection_run(self._conn, profile=profile,
+                                             environment=environment)
+
+    def latest_observation(self, *, profile: str, environment: str, scope: str) -> dict | None:
+        return records.latest_observation(self._conn, profile=profile, environment=environment,
+                                          scope=scope)
+
+    def record_observation(self, run_id: int, *, collector_id: str, collector_version: str,
+                           scope: str, source: str, profile: str, environment: str,
+                           captured_at: str, status: str, value_json: str, value_digest: str,
+                           evidence: str | None, predecessor_id: int | None, change_class: str,
+                           severity: str, confidence: str | None, reason: str | None) -> int:
+        return records.record_observation(
+            self._conn, run_id, collector_id=collector_id, collector_version=collector_version,
+            scope=scope, source=source, profile=profile, environment=environment,
+            captured_at=captured_at, status=status, value_json=value_json,
+            value_digest=value_digest, evidence=evidence, predecessor_id=predecessor_id,
+            change_class=change_class, severity=severity, confidence=confidence, reason=reason)
+
+    def list_observations(self, run_id: int) -> list[dict]:
+        return records.list_observations(self._conn, run_id)
+
+    def latest_observations(self, *, profile: str, environment: str) -> list[dict]:
+        return records.latest_observations(self._conn, profile=profile, environment=environment)
+
     # -- lifecycle --
     def seed_incident_case(self) -> int:
         return seed.seed_incident_case(self._conn)

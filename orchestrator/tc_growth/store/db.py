@@ -16,7 +16,7 @@ from pathlib import Path
 
 from ..config import BASE_DIR, active_site, get_settings
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 # One statement per table; CREATE ... IF NOT EXISTS makes init idempotent.
 _SCHEMA = """
@@ -201,6 +201,63 @@ CREATE TABLE IF NOT EXISTS acceptance_phases (
     UNIQUE (run_id, seq)
 );
 
+-- WP-U5.1: read-only Operations Intelligence. A collection sweep and the observations it
+-- produced.
+--
+-- `profile` and `environment` are NOT NULL on BOTH tables and are always supplied explicitly by
+-- the caller. That is the point, not a formality (issue #82, amendment 1): the platform's older
+-- evidence resolves identity from process-global state with silent fallbacks
+-- (`active_site() or "default"`, settings environment or 'staging'), so a collection launched for
+-- one business could otherwise record evidence stamped with another's identity. A U5 row that
+-- cannot say whose environment it describes is not evidence, so there is nowhere for it to come
+-- from except the caller.
+CREATE TABLE IF NOT EXISTS inspection_runs (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at            TEXT NOT NULL,
+    finished_at           TEXT,
+    profile               TEXT NOT NULL,
+    environment           TEXT NOT NULL,
+    trigger               TEXT NOT NULL,   -- console | schedule | cli
+    collector_set_version TEXT NOT NULL,
+    repo_commit           TEXT NOT NULL,   -- TC_BUILD_COMMIT, or 'unknown' — never invented
+    status                TEXT NOT NULL,   -- running | done
+    summary               TEXT
+);
+
+CREATE TABLE IF NOT EXISTS observations (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id            INTEGER NOT NULL REFERENCES inspection_runs(id),
+    collector_id      TEXT NOT NULL,
+    collector_version TEXT NOT NULL,
+    scope             TEXT NOT NULL,       -- e.g. wp.inventory, host.capacity
+    source            TEXT NOT NULL,       -- which system produced it (wp-cli, systemd, ...)
+    profile           TEXT NOT NULL,
+    environment       TEXT NOT NULL,
+    captured_at       TEXT NOT NULL,
+    -- What the collector observed. `unknown` is a REAL state meaning the source could not be
+    -- read; it is never absence and never green (issue #82 §14).
+    status            TEXT NOT NULL,       -- ok | warn | action | unknown
+    value_json        TEXT NOT NULL,       -- canonical JSON of the normalized value
+    value_digest      TEXT NOT NULL,       -- sha256 of those exact bytes
+    evidence          TEXT,                -- bounded + redacted; never a raw log tail
+    -- The predecessor is resolved for the same (profile, environment, scope), so a diff can
+    -- never be computed across businesses or environments.
+    predecessor_id    INTEGER REFERENCES observations(id),
+    change_class      TEXT NOT NULL,       -- baseline | unchanged | changed | appeared | disappeared
+    severity          TEXT NOT NULL,       -- ok | warn | action | unknown (deterministic policy)
+    confidence        TEXT,
+    reason            TEXT,                -- owner-facing why, not diagnostic trivia
+    -- U5.1/U5.2 NEVER set this: case linkage waits for machine-enforced
+    -- (profile, environment, finding) keying in U5.4 (issue #82, amendment 2).
+    case_id           INTEGER REFERENCES cases(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_observations_run   ON observations(run_id);
+-- The predecessor lookup: newest row for one identity+scope. Identity leads the index because
+-- it leads the query — a scan that started from `scope` could match another profile's rows.
+CREATE INDEX IF NOT EXISTS idx_observations_scope ON observations(profile, environment, scope, id);
+CREATE INDEX IF NOT EXISTS idx_inspection_runs    ON inspection_runs(profile, environment, id);
+
 CREATE TABLE IF NOT EXISTS decision_adoptions (
     -- Adopt-live idempotence as a DURABLE EXACT KEY (review #76): source decision + its
     -- revision + its envelope hash + the digest of the snapshot the owner was shown. UNIQUE, so
@@ -314,6 +371,38 @@ BEFORE UPDATE ON acceptance_runs
 WHEN OLD.status = 'done'
 BEGIN
     SELECT RAISE(ABORT, 'a finished acceptance run is terminal');
+END;
+
+-- WP-U5.1: an observation is evidence the moment it is written. Drift detection compares each
+-- observation against its predecessor, so a rewritable history would let a later run redefine
+-- what "changed" means — the diff would describe the edit, not the environment.
+CREATE TRIGGER IF NOT EXISTS trg_observations_no_update
+BEFORE UPDATE ON observations
+BEGIN
+    SELECT RAISE(ABORT, 'observations are append-only evidence');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_observations_no_delete
+BEFORE DELETE ON observations
+BEGIN
+    SELECT RAISE(ABORT, 'observations are append-only evidence');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_inspection_runs_terminal
+BEFORE UPDATE ON inspection_runs
+WHEN OLD.status = 'done'
+BEGIN
+    SELECT RAISE(ABORT, 'a finished inspection run is terminal');
+END;
+
+-- Identity is fixed at creation. Allowing it to be edited afterwards would let a run's
+-- observations and their parent disagree about whose environment they describe — the exact
+-- split-identity failure amendment 1 exists to prevent.
+CREATE TRIGGER IF NOT EXISTS trg_inspection_runs_identity_immutable
+BEFORE UPDATE ON inspection_runs
+WHEN NEW.profile != OLD.profile OR NEW.environment != OLD.environment
+BEGIN
+    SELECT RAISE(ABORT, 'an inspection run''s profile and environment are immutable');
 END;
 """
 
@@ -446,6 +535,11 @@ def _migrate(conn: sqlite3.Connection, *, from_version: int) -> None:
             except sqlite3.OperationalError as exc:
                 if "duplicate column" not in str(exc).lower():
                     raise
+    if from_version < 9:
+        # v8 -> v9 (WP-U5.1): inspection_runs + observations — additive tables and indexes only,
+        # created by _SCHEMA above, triggers applied after migration like the deploy ones. No
+        # column changes to any existing table, so no existing row is touched or rewritten.
+        pass
     if from_version < 8:
         # v7 -> v8 (WP-U4d.2): acceptance_runs + acceptance_phases — additive tables only,
         # created by _SCHEMA above, triggers applied after migration like the deploy ones.
