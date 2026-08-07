@@ -472,3 +472,120 @@ def test_v8_store_migrates_to_v9_leaving_every_existing_record_intact(tmp_path):
     with pytest.raises(sqlite3.IntegrityError):
         s._conn.execute("DELETE FROM observations")
     s.close()
+
+
+# --- the normalized value is evidence too (PR #85 review) ---------------------------------------
+#
+# HTML escaping protects the browser; it does not protect credentials. These cover the value
+# path, which the first cut of this increment redacted nowhere.
+
+def test_a_secret_shaped_string_inside_a_value_never_reaches_the_record(store):
+    leaked = "TC_API_TOKEN=super-secret-value"
+    run_id = inspection.run_inspection(store, [_Stub({"config": leaked})], ctx(now=T0))
+
+    row = store.list_observations(run_id)[0]
+    assert "super-secret-value" not in row["value_json"]
+    assert "redacted" in row["value_json"]
+    # And it is not on the owner surface either.
+    assert "super-secret-value" not in _render(store, now=T0)
+
+
+def test_a_secret_named_key_is_masked_whatever_its_value_looks_like(store):
+    """`deploy.redact` needs the name and value adjacent, and canonical JSON puts a quote
+    between them — so a structured secret needs the structural pass, not the text one."""
+    run_id = inspection.run_inspection(
+        store, [_Stub({"api_token": "plainlookingstring", "nested": {"password": "hunter2"},
+                       "list": [{"access_key": "AKIAEXAMPLE"}]})], ctx(now=T0))
+
+    stored = store.list_observations(run_id)[0]["value_json"]
+    for secret in ("plainlookingstring", "hunter2", "AKIAEXAMPLE"):
+        assert secret not in stored
+    assert stored.count("***redacted***") == 3
+
+
+def test_ordinary_fields_that_merely_resemble_secret_names_survive(store):
+    """Over-redaction is the safe direction, but a monitor that masks `keywords` is useless."""
+    run_id = inspection.run_inspection(
+        store, [_Stub({"keywords": "cycling", "monkey": "patch", "keyboard": "qwerty"})],
+        ctx(now=T0))
+    stored = store.list_observations(run_id)[0]["value_json"]
+    assert "cycling" in stored and "patch" in stored and "qwerty" in stored
+
+
+def test_the_digest_binds_the_stored_value_not_the_raw_reading(store):
+    """Criterion 2. The digest must describe what the record holds — otherwise it vouches for
+    material the record deliberately does not contain."""
+    run_id = inspection.run_inspection(
+        store, [_Stub({"api_token": "secret"})], ctx(now=T0))
+    row = store.list_observations(run_id)[0]
+
+    assert row["value_digest"] == inspection.prepare_value({"api_token": "secret"}).digest
+    assert row["value_digest"] != inspection.value_digest({"api_token": "secret"})
+    # The stored bytes and the stored digest agree with each other.
+    import hashlib
+    assert row["value_digest"] == hashlib.sha256(row["value_json"].encode()).hexdigest()
+
+
+def test_redaction_is_stable_so_a_secret_bearing_reading_is_not_permanent_drift(store):
+    """The trap this fix could have introduced: if the digest were taken over the raw value
+    while the stored predecessor held the redacted one, nothing would ever match and every
+    sweep would cry drift forever."""
+    inspection.run_inspection(store, [_Stub({"api_token": "secret", "v": 1})], ctx(now=T0))
+    second = inspection.run_inspection(store, [_Stub({"api_token": "secret", "v": 1})],
+                                       ctx(now=T0))
+    assert store.list_observations(second)[0]["change_class"] == inspection.CHANGE_UNCHANGED
+
+    # A change to the non-secret part is still detected through the redaction.
+    third = inspection.run_inspection(store, [_Stub({"api_token": "secret", "v": 2})],
+                                      ctx(now=T0))
+    assert store.list_observations(third)[0]["change_class"] == inspection.CHANGE_CHANGED
+
+
+def test_an_oversized_value_degrades_honestly_instead_of_storing_it(store):
+    """Criterion 3. Half a JSON document is not evidence, and a truncated structure would digest
+    differently every run and read as permanent drift."""
+    huge = {"plugins": ["plugin-" + ("x" * 200) for _ in range(200)]}
+    run_id = inspection.run_inspection(store, [_Stub(huge)], ctx(now=T0))
+
+    row = store.list_observations(run_id)[0]
+    assert row["status"] == inspection.STATUS_UNKNOWN
+    assert row["severity"] == inspection.STATUS_UNKNOWN
+    assert "xxxxxxxxxx" not in row["value_json"]
+    assert "exceeded the permitted size" in row["value_json"]
+    assert len(row["value_json"].encode()) <= inspection.MAX_VALUE_BYTES
+    assert "unknown" in (row["reason"] or "")
+    # An oversized reading must not render as healthy.
+    assert "Operations healthy" not in _render(store, now=T0)
+
+
+def test_an_oversized_value_is_bounded_before_the_page_ever_sees_it(store):
+    inspection.run_inspection(store, [_Stub({"blob": "y" * 40000})], ctx(now=T0))
+    html = _render(store, now=T0)
+    assert "yyyyyyyyyy" not in html
+
+
+def test_a_deeply_nested_value_cannot_recurse_the_sweep(store):
+    nested: dict = {"leaf": "bottom"}
+    for _ in range(60):
+        nested = {"deeper": nested}
+    run_id = inspection.run_inspection(store, [_Stub(nested)], ctx(now=T0))
+    assert "too deeply nested" in store.list_observations(run_id)[0]["value_json"]
+
+
+def test_evidence_redaction_and_bounding_are_unchanged(store):
+    """Criterion 4: the fix to the value path must not have loosened the evidence path."""
+    run_id = inspection.run_inspection(
+        store, [_Stub({"v": 1}, evidence="TC_SECRET_KEY=abc\n" + "z" * 9000)], ctx(now=T0))
+    evidence = store.list_observations(run_id)[0]["evidence"]
+    assert "abc" not in evidence and "redacted" in evidence
+    assert len(evidence.encode()) <= inspection.MAX_EVIDENCE_BYTES + 100
+
+
+def test_the_fixture_env_value_is_redacted_by_the_common_boundary(store, monkeypatch):
+    """The reviewer's worked example: the fixture puts its raw source into BOTH value and
+    evidence, and only evidence was protected. The boundary now covers both."""
+    monkeypatch.setenv("TC_U5_FIXTURE_VALUE", "TC_TOKEN=leakme")
+    run_id = inspection.run_inspection(store, [FixtureCollector()], ctx(now=T0))
+    row = store.list_observations(run_id)[0]
+    assert "leakme" not in row["value_json"]
+    assert "leakme" not in (row["evidence"] or "")

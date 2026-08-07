@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Protocol, runtime_checkable
@@ -61,6 +62,27 @@ FRESH_NEVER = "never"
 
 #: Evidence is a bounded, redacted summary. A collector that wants to say more says less.
 MAX_EVIDENCE_BYTES = 2000
+#: The normalized value is bounded too, and for the same reason. It is structured rather than
+#: prose, so it gets its own (larger) budget — an inventory of plugins is legitimately bigger
+#: than a log excerpt.
+MAX_VALUE_BYTES = 8000
+
+#: Keys whose VALUE is secret whatever it looks like. `deploy.redact` masks secret-shaped text
+#: (`NAME=value`, `Bearer …`), which is the right tool for prose — but it needs the name and the
+#: value to be adjacent, and canonical JSON renders `{"api_token":"xyz"}` with a quote between
+#: them, so a structured secret slips straight past it. Hence a structural pass as well.
+#:
+#: Segments are matched with separators on both sides so `keywords` and `monkey` are not
+#: mistaken for secrets. Where the two disagree, over-redaction wins: a masked plugin field is
+#: an inconvenience, a leaked credential in an append-only table is permanent.
+_SECRET_KEY_RE = re.compile(
+    r"(?i)(?:^|[_\-.])(?:api[_\-.]?key|access[_\-.]?key|private[_\-.]?key|secret[_\-.]?key|"
+    r"token|secret|password|passwd|pwd|credential|credentials|authorization|"
+    r"session[_\-.]?id|cookie)(?:$|[_\-.])")
+_REDACTED = "***redacted***"
+#: Depth guard: a collector returning a deeply nested structure is a bug, and recursing into it
+#: to find out is how a monitoring sweep takes down the Console.
+_MAX_VALUE_DEPTH = 12
 
 
 class CollectionRefused(Exception):
@@ -82,6 +104,7 @@ class CollectionContext:
     environment: str
     repo_commit: str = "unknown"
     max_evidence_bytes: int = MAX_EVIDENCE_BYTES
+    max_value_bytes: int = MAX_VALUE_BYTES
     #: Injected so tests can freeze it; production passes the real clock.
     now: Callable[[], datetime] = field(default=lambda: datetime.now(timezone.utc))
 
@@ -143,6 +166,76 @@ def value_digest(value: dict[str, Any]) -> str:
     return hashlib.sha256(canonical_value(value).encode("utf-8")).hexdigest()
 
 
+def redact_value(obj: Any, *, depth: int = 0) -> Any:
+    """Mask secrets inside a NORMALIZED value, structurally.
+
+    Two passes, because one is not enough. Every string leaf goes through `deploy.redact`, which
+    catches secret-shaped prose a collector scraped from somewhere. Separately, any key whose
+    NAME says its value is a credential has that value replaced outright — the value of a field
+    called `api_token` is a secret whether or not it happens to look like one.
+
+    This runs at the common collection boundary rather than in each collector, so it protects
+    collectors nobody has written yet. Relying on future authors to remember is not a boundary.
+    """
+    if depth > _MAX_VALUE_DEPTH:
+        return "[too deeply nested to record]"
+    if isinstance(obj, dict):
+        out: dict[str, Any] = {}
+        for key, value in obj.items():
+            name = str(key)
+            if _SECRET_KEY_RE.search(name):
+                out[name] = _REDACTED
+            else:
+                out[name] = redact_value(value, depth=depth + 1)
+        return out
+    if isinstance(obj, (list, tuple)):
+        return [redact_value(v, depth=depth + 1) for v in obj]
+    if isinstance(obj, str):
+        return deploy.redact(obj)
+    return obj
+
+
+@dataclass(frozen=True)
+class NormalizedValue:
+    """What actually gets stored: the safe value, its canonical bytes, and its digest.
+
+    The digest is taken over the SAFE value, so it binds what the record contains rather than
+    source material the record deliberately does not hold. It also has to be this way for drift
+    to work at all: a digest of the raw value could never match the stored predecessor's, and
+    every sweep would report change forever.
+    """
+
+    value: dict[str, Any]
+    canonical: str
+    digest: str
+    oversized: bool
+
+
+def prepare_value(value: dict[str, Any], *, limit: int = MAX_VALUE_BYTES) -> NormalizedValue:
+    """Redact, then bound, then canonicalize and digest — in that order.
+
+    An oversized value is not silently truncated: half a JSON document is not evidence, and a
+    truncated structure would digest differently on every run and read as permanent drift. It is
+    replaced by an honest statement of its size, and the caller degrades the observation to
+    `unknown` — we saw something and could not record it faithfully, which is precisely what
+    `unknown` means.
+    """
+    safe = redact_value(value if isinstance(value, dict) else {"value": value})
+    canonical = canonical_value(safe)
+    if len(canonical.encode("utf-8")) > limit:
+        safe = {"error": "value exceeded the permitted size and was not recorded",
+                "bytes": len(canonical.encode("utf-8")), "limit": limit}
+        canonical = canonical_value(safe)
+        return NormalizedValue(safe, canonical, _sha256(canonical), True)
+    return NormalizedValue(safe, canonical, _sha256(canonical), False)
+
+
+def _sha256(text: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
 def bound_evidence(text: str, *, limit: int = MAX_EVIDENCE_BYTES) -> str:
     """Redact, then truncate, then say so. Order matters: truncating first could cut a secret in
     half and leave the readable half in the record."""
@@ -158,8 +251,12 @@ def bound_evidence(text: str, *, limit: int = MAX_EVIDENCE_BYTES) -> str:
 
 # --- classification -----------------------------------------------------------------------------
 
-def classify(previous: dict | None, current: CollectorResult) -> str:
+def classify(previous: dict | None, *, status: str, digest: str) -> str:
     """What changed, decided from the durable predecessor row and the fresh reading.
+
+    `digest` is the digest of the SAFE stored value, so this compares what the record holds
+    against what the record held. Comparing a raw reading against a redacted predecessor would
+    never match, and every sweep would report drift forever.
 
     A first observation is `baseline`. Reporting it as `unchanged` would be a claim about a
     comparison that never happened, and it is the single easiest way for this kind of system to
@@ -168,7 +265,7 @@ def classify(previous: dict | None, current: CollectorResult) -> str:
     if previous is None:
         return CHANGE_BASELINE
     was_unknown = previous["status"] == STATUS_UNKNOWN
-    is_unknown = current.status == STATUS_UNKNOWN
+    is_unknown = status == STATUS_UNKNOWN
     if was_unknown and not is_unknown:
         return CHANGE_APPEARED
     if is_unknown and not was_unknown:
@@ -177,7 +274,7 @@ def classify(previous: dict | None, current: CollectorResult) -> str:
         # Still unreadable. Nothing was compared, so nothing changed — but it is not healthy
         # either; the severity table keeps it `unknown`.
         return CHANGE_UNCHANGED
-    if previous["value_digest"] == value_digest(current.value):
+    if previous["value_digest"] == digest:
         return CHANGE_UNCHANGED
     return CHANGE_CHANGED
 
@@ -197,17 +294,18 @@ _CHANGE_SEVERITY: dict[str, str] = {
 }
 
 
-def severity_for(result: CollectorResult, change_class: str) -> str:
+def severity_for(status: str, change_class: str) -> str:
     """The deterministic severity. Same inputs, same answer, every time.
 
     A collector that reports `warn` or `action` has seen something policy cannot soften — a
     threshold breach is a threshold breach whether or not it also changed. `unknown` dominates
-    everything: a source that could not be read cannot be called healthy.
+    everything: a source that could not be read, or could not be recorded faithfully, cannot be
+    called healthy.
     """
-    if result.status == STATUS_UNKNOWN:
+    if status == STATUS_UNKNOWN:
         return STATUS_UNKNOWN
-    if result.status in (STATUS_WARN, STATUS_ACTION):
-        return result.status
+    if status in (STATUS_WARN, STATUS_ACTION):
+        return status
     return _CHANGE_SEVERITY.get(change_class, STATUS_UNKNOWN)
 
 
@@ -311,10 +409,20 @@ def run_inspection(store, collectors: list[Collector], ctx: CollectionContext, *
         except Exception as exc:  # noqa: BLE001 — an unreadable source is evidence, not a crash
             result = _unknown_result(collector, exc)
 
+        # The one boundary where a reading becomes evidence: redacted and bounded BEFORE it is
+        # digested or stored, so no collector — including ones not yet written — can put a
+        # credential into an append-only table (issue #82, PR #85 review).
+        normalized = prepare_value(result.value, limit=ctx.max_value_bytes)
+        status = STATUS_UNKNOWN if normalized.oversized else result.status
+        reason = result.reason or None
+        if normalized.oversized:
+            reason = ("this source returned more than can be recorded faithfully, so its state "
+                      "is unknown — not healthy")
+
         previous = store.latest_observation(profile=ctx.profile, environment=ctx.environment,
                                             scope=result.scope)
-        change_class = classify(previous, result)
-        severity = severity_for(result, change_class)
+        change_class = classify(previous, status=status, digest=normalized.digest)
+        severity = severity_for(status, change_class)
         severities.append(severity)
         store.record_observation(
             run_id,
@@ -325,15 +433,15 @@ def run_inspection(store, collectors: list[Collector], ctx: CollectionContext, *
             profile=ctx.profile,
             environment=ctx.environment,
             captured_at=ctx.now_iso(),
-            status=result.status,
-            value_json=canonical_value(result.value),
-            value_digest=value_digest(result.value),
+            status=status,
+            value_json=normalized.canonical,
+            value_digest=normalized.digest,
             evidence=bound_evidence(result.evidence, limit=ctx.max_evidence_bytes),
             predecessor_id=previous["id"] if previous else None,
             change_class=change_class,
             severity=severity,
             confidence=result.confidence,
-            reason=result.reason or None,
+            reason=reason,
             # case_id is deliberately never passed: U5.1/U5.2 create no cases (amendment 2).
         )
 
