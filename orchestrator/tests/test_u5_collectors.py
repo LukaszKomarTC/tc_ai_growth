@@ -55,29 +55,57 @@ def failed(stderr="boom", argv=("wp",)):
 
 # --- the execution boundary ---------------------------------------------------------------------
 
-def test_only_allowlisted_programs_can_be_executed():
-    """The allowlist is the second lock. Every argv is a literal in a collector module, so this
-    is unreachable from data — which is the point: reaching it means a code change needs review."""
-    result = _exec.run_command(("rm", "-rf", "/"))
-    assert result.unavailable and "not an allowlisted" in result.detail
-    assert result.returncode == -1
+def test_only_permitted_command_forms_can_be_executed():
+    """The boundary is closed over command FORMS, not program names. Allowlisting `wp` would
+    permit `wp plugin install`; allowlisting `php` would permit anything at all."""
+    for argv in (
+        ("rm", "-rf", "/"),
+        ("php", "-r", "system('id');"),                      # a general interpreter
+        ("wp", "plugin", "install", "evil", "--activate"),   # write-capable wp subcommand
+        ("wp", "user", "create", "eve", "eve@example.com", "--role=administrator"),
+        ("wp", "core", "version", "--path=/etc"),            # extra argument, not the same form
+        ("systemctl", "restart", "tc-console.service"),      # a state change
+        ("journalctl", "-u", "tc-console.service"),          # unbounded read
+    ):
+        result = _exec.run_command(argv)
+        assert result.unavailable, f"{argv} should not be runnable"
+        assert "permitted read-only form" in result.detail
+        assert result.returncode == -1
+
+
+def test_no_general_interpreter_or_unused_program_is_reachable():
+    """Nothing is permitted 'for future collectors'. Capability arrives with the collector that
+    needs it and the review that approved it."""
+    programs = {spec[0] for spec in _exec._ALLOWED_COMMANDS}
+    assert programs == {"wp", "systemctl", "journalctl"}
+    assert "php" not in programs and "du" not in programs and "stat" not in programs
+
+
+def test_the_unit_slot_cannot_express_a_flag_or_a_path():
+    """The one variable position in the whole boundary."""
+    for bad in ("../../etc/passwd", "-u", "a.service; rm -rf /", "x" * 200, "notaunit"):
+        assert not _exec.is_allowed(_exec.systemctl_show(bad)), bad
+    assert _exec.is_allowed(_exec.systemctl_show("tc-console.service"))
+    assert _exec.is_allowed(_exec.journalctl_probe("tc-weekly-report.timer"))
 
 
 def test_a_missing_program_is_unavailable_not_an_exception():
-    result = _exec.run_command(("wp", "core", "version"))
+    result = _exec.run_command(_exec.wp_core_version())
     # wp-cli is not installed in CI; that must be evidence, not a crash.
     assert result.unavailable or result.ok or result.returncode >= 0
 
 
-def test_output_is_bounded_before_it_is_decoded():
-    result = _exec.run_command(("df", "-P"), limit=64)
-    if not result.unavailable:
-        assert len(result.stdout.encode()) <= 64
+def test_output_is_bounded_while_the_child_runs_not_after_it_finishes():
+    """The bound must stop production, not merely trim storage. A child that keeps talking past
+    the cap is killed — `capture_output=True` would have buffered all of it first."""
+    result = _exec.run_command(_exec.journalctl_probe("tc-console.service"), limit=8)
+    # Either the journal is absent (unavailable) or it produced <= the cap; never more.
+    assert result.unavailable or len(result.stdout.encode()) <= 8
 
 
 def test_a_timeout_is_reported_as_unavailable_rather_than_hanging():
-    # `df` over a nonexistent path returns fast; the timeout path is exercised by the tiny budget.
-    result = _exec.run_command(("df", "-P", "/"), timeout_s=0.000001)
+    result = _exec.run_command(_exec.journalctl_probe("tc-console.service"),
+                               timeout_s=0.000001)
     assert result.unavailable or result.ok
 
 
@@ -256,8 +284,8 @@ def test_platform_services_never_reads_root_crontab():
     # The word appears in the docstring explaining why it is NOT read; what must be absent is
     # crontab as a command.
     assert '"crontab"' not in src and "'crontab'" not in src
-    assert "crontab" not in _exec._ALLOWED_PROGRAMS
-    assert "sudo" not in _exec._ALLOWED_PROGRAMS
+    programs = {spec[0] for spec in _exec._ALLOWED_COMMANDS}
+    assert "crontab" not in programs and "sudo" not in programs
 
 
 # --- host.capacity ------------------------------------------------------------------------------
@@ -449,3 +477,102 @@ def test_the_native_runner_stamps_the_identity_it_was_given(store, monkeypatch):
     run = store.latest_inspection_run(profile="tossa-cycling", environment="production")
     assert run is not None and run["trigger"] == "console"
     assert store.latest_inspection_run(profile="tour-de-girona", environment="production") is None
+
+
+# --- timer cadence: an active timer is not a running one (PR #86 review) -------------------------
+
+def _timer_runner(*, last_trigger_usec: str = "0", active: str = "active",
+                  result: str = "success", load: str = "loaded", unreadable: bool = False):
+    """systemd's answer for a single timer under test."""
+    def run(argv, **kw):
+        if unreadable:
+            return unavailable("systemctl is not available")
+        return ok(f"LoadState={load}\nActiveState={active}\nSubState=waiting\n"
+                  f"Result={result}\nExecMainStatus=0\n"
+                  f"LastTriggerUSec={last_trigger_usec}\n")
+    return run
+
+
+def _usec_hours_ago(hours: float) -> str:
+    return str(int((T0.timestamp() - hours * 3600) * 1_000_000))
+
+
+def _one_timer(runner, tmp_path, fresh_log=True):
+    log = tmp_path / "scan.log"
+    log.write_text("scan")
+    if not fresh_log:
+        old = T0.timestamp() - 96 * 3600
+        os.utime(log, (old, old))
+    return PlatformServicesCollector(runner=runner, scan_log=str(log),
+                                     units=("tc-autodeploy.timer",))
+
+
+def test_a_timer_that_has_fired_recently_is_healthy(tmp_path):
+    c = _one_timer(_timer_runner(last_trigger_usec=_usec_hours_ago(0.1)), tmp_path)
+    result = c.collect(ctx())
+    assert result.status == inspection.STATUS_OK
+    assert result.value["units"]["tc-autodeploy.timer"]["verdict"] == "running"
+
+
+def test_a_timer_that_has_never_fired_is_unknown_not_ok(tmp_path):
+    """The false positive the previous version shipped: LoadState=loaded, ActiveState=active,
+    Result=success, LastTriggerUSec=0 — and a green page. systemd is happy to call a timer
+    active forever while the job behind it has never run."""
+    c = _one_timer(_timer_runner(last_trigger_usec="0"), tmp_path)
+    result = c.collect(ctx())
+    assert result.status == inspection.STATUS_UNKNOWN
+    assert result.value["units"]["tc-autodeploy.timer"]["verdict"] == "unproven"
+    assert "no evidence" in result.value["units"]["tc-autodeploy.timer"]["note"]
+
+
+def test_a_materially_overdue_timer_is_not_ok(tmp_path):
+    """tc-autodeploy runs every 5 minutes; 9 hours of silence means the path is dead."""
+    c = _one_timer(_timer_runner(last_trigger_usec=_usec_hours_ago(9)), tmp_path)
+    result = c.collect(ctx())
+    assert result.status == inspection.STATUS_WARN
+    assert result.value["units"]["tc-autodeploy.timer"]["verdict"] == "overdue"
+
+
+def test_cadence_is_per_unit_not_one_global_threshold(tmp_path):
+    """A weekly report firing 30 hours ago is perfectly healthy; autodeploy is not."""
+    log = tmp_path / "scan.log"
+    log.write_text("scan")
+    weekly = PlatformServicesCollector(
+        runner=_timer_runner(last_trigger_usec=_usec_hours_ago(30)), scan_log=str(log),
+        units=("tc-weekly-report.timer",))
+    assert weekly.collect(ctx()).status == inspection.STATUS_OK
+
+    auto = PlatformServicesCollector(
+        runner=_timer_runner(last_trigger_usec=_usec_hours_ago(30)), scan_log=str(log),
+        units=("tc-autodeploy.timer",))
+    assert auto.collect(ctx()).status == inspection.STATUS_WARN
+
+
+def test_a_failed_timer_is_action_whatever_its_trigger_age(tmp_path):
+    c = _one_timer(_timer_runner(last_trigger_usec=_usec_hours_ago(0.1), result="exit-code"),
+                   tmp_path)
+    assert c.collect(ctx()).status == inspection.STATUS_ACTION
+
+
+def test_an_unreadable_unit_is_unknown(tmp_path):
+    c = _one_timer(_timer_runner(unreadable=True), tmp_path)
+    assert c.collect(ctx()).status == inspection.STATUS_UNKNOWN
+
+
+def test_a_long_running_service_needs_no_trigger_cadence(tmp_path):
+    """A service proves itself by being active; requiring a trigger age would report every
+    healthy daemon as unproven."""
+    log = tmp_path / "scan.log"
+    log.write_text("scan")
+    c = PlatformServicesCollector(runner=_timer_runner(last_trigger_usec="0"),
+                                  scan_log=str(log), units=("tc-console.service",))
+    assert c.collect(ctx()).status == inspection.STATUS_OK
+
+
+def test_the_scan_log_claims_only_activity_not_proof_of_a_scheduled_run(tmp_path):
+    """#84 is open precisely because the v0 scan's operational acceptance was never completed,
+    so mtime must not be presented as proof the cron fired."""
+    c = _one_timer(_timer_runner(last_trigger_usec=_usec_hours_ago(0.1)), tmp_path)
+    scan = c.collect(ctx()).value["integrity_scan"]
+    assert scan["state"] == "log-activity-observed"
+    assert scan["proves_scheduled_execution"] is False

@@ -24,14 +24,16 @@ from typing import Callable
 
 from ..inspection import (STATUS_OK, STATUS_UNKNOWN, STATUS_WARN, CollectionContext,
                           CollectorResult)
-from ._exec import CommandResult, run_command
+from ._exec import (JOURNAL_MAX_LINES, JOURNAL_PRIORITY, JOURNAL_WINDOW,
+                    CommandResult, journalctl_probe, journalctl_window,
+                    run_command)
 
-WINDOW = "24 hours ago"
+#: Owned by `_exec`, because they are part of the permitted command form rather than a local
+#: preference — changing them changes what this platform is allowed to run.
+WINDOW = JOURNAL_WINDOW
 WINDOW_HOURS = 24
-#: journalctl enforces this itself, so the cap applies before the bytes exist rather than after.
-MAX_LINES = 2000
-#: Warning and above. Info-level chatter is not what this collector is for.
-PRIORITY = "warning"
+MAX_LINES = int(JOURNAL_MAX_LINES)
+PRIORITY = JOURNAL_PRIORITY
 UNIT = "tc-console.service"
 MAX_SIGNATURE_LEN = 160
 TOP_N = 12
@@ -76,7 +78,7 @@ class LogSignaturesCollector:
         # cannot tell "no errors in 24h" from "no such unit, no journal, nothing was ever
         # inspected". Reporting the second as the first is precisely the reassuring lie this
         # collector exists to avoid (issue #82 §6.4).
-        probe = self._run(("journalctl", "-u", self._unit, "--no-pager", "-o", "cat", "-n", "1"))
+        probe = self._run(journalctl_probe(self._unit))
         if probe.unavailable or not probe.ok:
             return self._unknown(window, (probe.detail or probe.stderr.strip())[:300],
                                  f"the journal for {self._unit} could not be read")
@@ -86,9 +88,7 @@ class LogSignaturesCollector:
                 f"{self._unit} has never written to this journal, so there is nothing to "
                 f"inspect — absence of entries is not absence of errors")
 
-        argv = ("journalctl", "-u", self._unit, "--since", WINDOW, "--no-pager",
-                "-o", "cat", "-n", str(MAX_LINES), "-p", PRIORITY)
-        result = self._run(argv)
+        result = self._run(journalctl_window(self._unit))
 
         if result.unavailable or not result.ok:
             return self._unknown(window, (result.detail or result.stderr.strip())[:300],

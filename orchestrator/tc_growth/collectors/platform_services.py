@@ -26,13 +26,28 @@ from typing import Callable
 
 from ..inspection import (STATUS_ACTION, STATUS_OK, STATUS_UNKNOWN, STATUS_WARN,
                           CollectionContext, CollectorResult)
-from ._exec import CommandResult, run_command
+from ._exec import CommandResult, run_command, systemctl_show
 
-#: The project's own units. Literals: no unit name is ever derived from data.
+#: The project's own units, and what "running" MEANS for each. Literals: no unit name is ever
+#: derived from data.
+#:
+#: A timer needs a cadence, not just a state. `ActiveState=active` on a timer that has never
+#: fired is the reassuring lie this collector exists to prevent (PR #86 review) — systemd is
+#: perfectly happy to report a timer as active forever while the job behind it has not run since
+#: March. So each timer declares how stale its last trigger may be before its health is in
+#: doubt, and a timer that cannot prove it ever ran is `unknown`, never `ok`.
+#:
+#: The windows are the schedule plus generous slack, so an ordinary late run is not an alert.
 UNITS = ("tc-console.service", "tc-weekly-report.timer", "tc-autodeploy.timer")
 
-_PROPERTIES = ("LoadState,ActiveState,SubState,Result,ExecMainStatus,"
-               "ExecMainExitTimestamp,LastTriggerUSec,NextElapseUSecRealtime")
+UNIT_POLICY: dict[str, dict] = {
+    # A long-running service proves itself by being active; it has no trigger cadence.
+    "tc-console.service": {"kind": "service"},
+    # Weekly, Monday 07:00 Europe/Madrid — 9 days covers a missed run plus a DST edge.
+    "tc-weekly-report.timer": {"kind": "timer", "max_trigger_age_hours": 9 * 24},
+    # Every 5 minutes; hours of silence means the deploy path is dead, not merely late.
+    "tc-autodeploy.timer": {"kind": "timer", "max_trigger_age_hours": 3},
+}
 
 #: Where the v0 integrity scan appends. Overridable because the scan's own docs make it so.
 SCAN_LOG_ENV = "TC_INSPECTOR_LOG"
@@ -60,9 +75,11 @@ class PlatformServicesCollector:
         unreadable: list[str] = []
         failed: list[str] = []
         inactive: list[str] = []
+        overdue: list[str] = []
+        unproven: list[str] = []
 
         for unit in self._units:
-            result = self._run(("systemctl", "show", unit, f"--property={_PROPERTIES}"))
+            result = self._run(systemctl_show(unit))
             if result.unavailable or not result.ok:
                 units[unit] = {"state": "unreadable"}
                 unreadable.append(unit)
@@ -83,10 +100,22 @@ class PlatformServicesCollector:
             if load == "not-found":
                 # Not installed at all. That is a real absence, not a degraded reading.
                 failed.append(unit)
+                entry["verdict"] = "missing"
             elif props.get("Result") not in ("", "success") or active == "failed":
                 failed.append(unit)
+                entry["verdict"] = "failed"
             elif active not in ("active", "activating"):
                 inactive.append(unit)
+                entry["verdict"] = "inactive"
+            else:
+                verdict, note = _judge_execution(unit, entry)
+                entry["verdict"] = verdict
+                if note:
+                    entry["note"] = note
+                if verdict == "overdue":
+                    overdue.append(unit)
+                elif verdict == "unproven":
+                    unproven.append(unit)
 
         scan = self._scan_evidence(now)
         value = {"units": units, "integrity_scan": scan}
@@ -95,18 +124,23 @@ class PlatformServicesCollector:
             status, reason = STATUS_ACTION, (
                 f"{', '.join(sorted(failed))} is not running as it should — the work it does is "
                 f"not happening")
+        elif overdue:
+            status, reason = STATUS_WARN, (
+                f"{', '.join(sorted(overdue))} is active but has not actually run within its "
+                f"expected window — a schedule that stopped firing looks exactly like this")
         elif scan.get("state") == "stale":
             status, reason = STATUS_WARN, (
                 f"the integrity scan's log has not been written for "
                 f"{scan.get('age_hours')}h; a daily scan that stopped writing has stopped running")
-        elif inactive or unreadable or scan.get("state") == "unreadable":
-            bits = sorted(inactive + unreadable)
+        elif inactive or unreadable or unproven or scan.get("state") == "unreadable":
+            bits = sorted(inactive + unreadable + unproven)
             status, reason = STATUS_UNKNOWN, (
                 "could not confirm that " + (", ".join(bits) if bits else "the integrity scan")
                 + " is running, so its state is unknown — not healthy")
         else:
             status, reason = STATUS_OK, (
-                f"{len(self._units)} project unit(s) active, integrity scan writing its log")
+                f"{len(self._units)} project unit(s) active and running on schedule; "
+                f"integrity-scan log active")
 
         return CollectorResult(
             scope=self.scope, status=status, value=value, source="systemd",
@@ -123,9 +157,35 @@ class PlatformServicesCollector:
             return {"state": "unreadable", "path": path, "error": type(exc).__name__}
         age = (now - datetime.fromtimestamp(st.st_mtime, tz=timezone.utc)).total_seconds() / 3600
         return {
-            "state": "stale" if age > SCAN_STALE_HOURS else "writing",
+            # "log activity observed" is the honest claim. mtime does NOT prove the cron fired:
+            # #84 records that the v0 scan's operational acceptance — including whether it
+            # writes this log on every invocation — was never completed. Until that is proven,
+            # this evidence may downgrade health but must never be the reason for green.
+            "state": "stale" if age > SCAN_STALE_HOURS else "log-activity-observed",
+            "proves_scheduled_execution": False,
             "path": path, "age_hours": round(age, 1), "size_bytes": st.st_size,
         }
+
+
+def _judge_execution(unit: str, entry: dict) -> tuple[str, str]:
+    """Is this unit actually doing its job, or merely switched on?
+
+    Returns one of `running` (proven), `overdue` (fired, but too long ago) or `unproven`
+    (systemd cannot show that it ever fired). `unproven` is deliberately not a failure: the unit
+    may be newly installed. It is also deliberately not `ok` — the whole point of this collector
+    is that an active timer is not evidence its job has run (PR #86 review).
+    """
+    policy = UNIT_POLICY.get(unit, {})
+    if policy.get("kind") != "timer":
+        return "running", ""
+    age = entry.get("last_trigger_age_hours")
+    if age is None:
+        return "unproven", ("systemd reports no last-trigger time, so there is no evidence this "
+                            "timer has ever fired")
+    limit = policy.get("max_trigger_age_hours")
+    if limit is not None and age > limit:
+        return "overdue", f"last fired {age}h ago, beyond its {limit}h expected window"
+    return "running", f"last fired {age}h ago"
 
 
 def _parse_properties(text: str) -> dict[str, str]:
