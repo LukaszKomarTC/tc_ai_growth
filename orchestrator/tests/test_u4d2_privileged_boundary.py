@@ -1130,3 +1130,58 @@ def test_bootstrap_fails_closed_when_visudo_rejects_the_grant(fresh):
             "the current pointer was written despite a failed sudoers validation"
     finally:
         stub.unlink()
+
+
+# --- start-acceptance reaches the durable store (the first on-host BLOCKED run) -----------------
+
+def test_start_acceptance_runs_the_harness_against_the_targets_durable_store(fresh, tmp_path):
+    """The first on-host run (PR #81, production VPS, 2026-08-07) blocked HERE: the verb launched
+    the harness with a scrubbed environment and no store location, so the harness resolved a
+    per-checkout default INSIDE the immutable runtime and could only refuse — the run row it had
+    to finish lives in the store the Console wrote it to. The verb must hand root's own
+    TC_STORE_DB (digest-verified target.conf, exactly as `start-run` already does at its
+    transient unit) to the harness.
+
+    Through the REAL verb against the disposable target, whose stand-in application implements
+    `acceptance-root` with the real harness's store contract (TC_DB_PATH, or the per-checkout
+    fallback that failed production). The stand-in is the right instrument here for the same
+    reason the harness uses it everywhere: the subject is the LAUNCH MECHANICS — what environment
+    and store the verb hands over — not the engine, and the full real-harness integration is
+    exactly what the on-host acceptance itself proves. Pinned: the evidence lands in the target's
+    configured store, and no second store materialises inside the root-owned runtime."""
+    from tc_growth.store import open_store
+
+    staged_release(fresh)
+    assert run_verb(fresh, "bootstrap", fresh.target_sha).returncode == 0
+
+    store = open_store(fresh.target.db_path)
+    try:
+        run_id = store.begin_acceptance_run(requested_by="probe",
+                                            root=str(tmp_path / "acceptance-run-root"))
+        assert run_id is not None
+        assert store.claim_acceptance_run(run_id)  # the launcher's claim; the verb is root's side
+    finally:
+        store.close()
+
+    proc = run_verb(fresh, "start-acceptance", str(run_id))
+    # The harness reports BLOCKED with a non-zero exit, which the verb relays as its refusal
+    # exit — the honest outcome off-host. What must NOT happen is the store going missing.
+    assert proc.returncode == 2, (proc.returncode, proc.stdout, proc.stderr)
+
+    store = open_store(fresh.target.db_path)
+    try:
+        run = store.get_acceptance_run(run_id)
+        names = {p["name"] for p in store.list_acceptance_phases(run_id)}
+    finally:
+        store.close()
+    assert "stand-in-harness" in names, (
+        f"the harness recorded nothing in the target's durable store — the launch never "
+        f"reached it (phases: {names}; stderr: {proc.stderr})")
+    assert run["status"] == "done" and run["verdict"] == "BLOCKED", run
+    assert "durable store" in (run["summary"] or ""), \
+        "the harness's own summary was not preserved on the finished run"
+    # The defect's signature: a second store materialised inside the immutable runtime.
+    runtime_data = (Path(fresh.target.runtime_dir) / fresh.target_sha
+                    / "orchestrator" / "data")
+    assert not runtime_data.exists(), \
+        "the harness resolved a store inside the root-owned runtime instead of TC_STORE_DB"

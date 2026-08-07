@@ -79,8 +79,37 @@ def db_init() -> int:
     return 0
 
 
+def acceptance_root(run_id: str) -> int:
+    """Mirrors the ONE mechanic of the real harness the boundary suite must pin: where the
+    durable store comes from. The first on-host run (PR #81) proved the verb launched the real
+    harness without TC_DB_PATH, so it resolved a per-checkout store INSIDE the immutable runtime
+    and could only refuse. Without the variable this reproduces that exact failure shape; with
+    it, evidence lands in the store the verb named — the real harness's store/db.py contract."""
+    path = os.environ.get("TC_DB_PATH")
+    if not path:
+        os.makedirs("data", exist_ok=True)
+        sqlite3.connect(os.path.join("data", "tc_growth.db")).close()
+        print("refused: no durable store location reached the harness", file=sys.stderr)
+        return 2
+    conn = sqlite3.connect(path)
+    conn.execute("INSERT INTO acceptance_phases (run_id, seq, at, name, status, detail) "
+                 "VALUES (?, 2, CURRENT_TIMESTAMP, 'stand-in-harness', 'ok', "
+                 "'the durable store location reached the harness')", (int(run_id),))
+    conn.execute("UPDATE acceptance_runs SET status='done', finished_at=CURRENT_TIMESTAMP, "
+                 "verdict='BLOCKED', summary='stand-in harness: evidence recorded in the "
+                 "durable store; BLOCKED off-host' WHERE id=?", (int(run_id),))
+    conn.commit()
+    conn.close()
+    print("BLOCKED")
+    return 1  # the real harness exits non-zero for BLOCKED; the verb relays it
+
+
 if __name__ == "__main__":
-    sys.exit(db_init() if sys.argv[1:2] == ["db-init"] else 1)
+    if sys.argv[1:2] == ["db-init"]:
+        sys.exit(db_init())
+    if sys.argv[1:2] == ["acceptance-root"] and len(sys.argv) == 3:
+        sys.exit(acceptance_root(sys.argv[2]))
+    sys.exit(1)
 ''',
     "orchestrator/tests/test_disposable_app.py": (
         "def test_the_disposable_application_has_a_real_suite_that_really_runs():\n"

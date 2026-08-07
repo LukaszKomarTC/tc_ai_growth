@@ -251,7 +251,7 @@ TC_VENV=$VENV
 TC_CONSOLE_ENV_FILE=$CONSOLE_ENV_FILE
 TC_RUNTIME_DIR=$RUNTIME_DIR
 # The remaining fields exist so the DEPLOYMENT RUNNER can reconstruct this exact target. Without
-# them `deploy-run` resolves production by default, so a disposable transient unit would execute
+# them 'deploy-run' resolves production by default, so a disposable transient unit would execute
 # production constants — shell commands full of "probe" and Python quietly addressing the real
 # host. Root-owned and digest-covered like everything else here.
 TC_TARGET_NAME=$TARGET_NAME

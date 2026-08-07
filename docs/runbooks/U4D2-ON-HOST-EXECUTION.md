@@ -17,18 +17,50 @@ findings are addressed).
 
 ## Section A — technical maintainer (terminal, once)
 
-### A1. Put the #81 branch on the host
+> **Advancing to a newer reviewed head later?** Redo the whole of Section A at that head: A1
+> (deploy-console from a new release worktree), A2's installer re-run (the privileged program's
+> bytes and manifest change with the head), and A3's worktree + `bootstrap` at the new SHA. The
+> dedicated deploy venv and the acceptance drop-in persist; the installer and bootstrap refresh
+> what the head governs.
 
-The console must run the #81 code (which contains #80). As a controlled deployment, update the
-production checkout to the reviewed surface head and restart. The Console runs from an **editable**
-install in its own venv, so the checkout is the running code — there is nothing to reinstall, and
-the Console venv is **not touched** here:
+### A1. Put the #81 code in service (release-dir deployment — the shape production actually has)
+
+**Discovery from the first on-host prep:** the Console does *not* serve the `/opt/tc_ai_growth/app`
+checkout. Its unit pins `WorkingDirectory` to a **detached release worktree** under
+`/opt/tc_ai_growth/releases/<sha>` — with the shared venv's editable install, cwd wins module
+resolution, so the release dir *is* the running code, and updating the app checkout + restarting
+changes nothing the service executes. Deploy the reviewed head with the Console's own reviewed
+deployment operation, `deploy-console.sh`, from a release worktree pinned at that head:
 
 ```bash
 REVIEWED=<the #81 head SHA from the PR body>
 sudo -u tcgrowth git -C /opt/tc_ai_growth/app fetch origin feature/u4d2-console-acceptance
+sudo -u tcgrowth git -C /opt/tc_ai_growth/app worktree add --detach \
+    /opt/tc_ai_growth/releases/"$REVIEWED" "$REVIEWED"
+# the app config the Console reads from its cwd — copy it from the currently-serving release
+sudo -u tcgrowth cp -p /opt/tc_ai_growth/releases/<current-serving-sha>/orchestrator/.env \
+    /opt/tc_ai_growth/releases/"$REVIEWED"/orchestrator/.env
+
+cd /opt/tc_ai_growth/releases/"$REVIEWED"/orchestrator
+sudo TC_VENV=/opt/tc_ai_growth/app/orchestrator/.venv \
+     TC_STORE_DB=/opt/tc_ai_growth/app/orchestrator/data/tc_growth.db \
+     TC_RELEASE_BRANCH=feature/u4d2-console-acceptance \
+     bash scripts/deploy-console.sh              # DRY RUN first — review the plan
+# then, when the plan shows the right commit / clean tree / matching remote tip:
+sudo TC_VENV=/opt/tc_ai_growth/app/orchestrator/.venv \
+     TC_STORE_DB=/opt/tc_ai_growth/app/orchestrator/data/tc_growth.db \
+     TC_RELEASE_BRANCH=feature/u4d2-console-acceptance \
+     bash scripts/deploy-console.sh --apply
+```
+
+`TC_STORE_DB` must name the durable shared store, or acceptance evidence dies with the next
+redeploy. The redeploy rotates the session epoch — sign in again with the same token. The Console
+venv is **not touched** by any of this.
+
+Also update the plain checkout (A3 stages the release worktree from it):
+
+```bash
 sudo -u tcgrowth git -C /opt/tc_ai_growth/app checkout "$REVIEWED"
-sudo systemctl restart tc-console
 ```
 
 ### A2. Provision a dedicated root-owned deploy venv (the supported path)

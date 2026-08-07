@@ -137,6 +137,38 @@ trailing wildcard permits extra trailing args and digit-then-junk ids — the **
 those (strict argc + numeric check), pinned separately. bootstrap's documentation is updated from
 "no sudoers" to this exact least-privilege behaviour.
 
+## On-host discoveries (the first BLOCKED run, production VPS, 2026-08-07)
+
+The first browser-launched run ended `BLOCKED` at the launch phase — the honest verdict doing its
+job — and exposed three integration defects no off-host test could reach, each fixed as a reviewed
+diff:
+
+1. **The verb never told the harness where the durable store is.** `start-acceptance` launched
+   `acceptance-root` under a scrubbed environment without `TC_DB_PATH`, so the harness resolved a
+   per-checkout default *inside the immutable runtime* and could only refuse (loudly, thanks to
+   the service's read-only namespace — the store did not silently fork). Fixed: the verb passes
+   root's own `TC_STORE_DB` from digest-verified `target.conf`, exactly as `start-run` already
+   did for the deploy runner. Pinned by a root test driving the real verb into the harness and
+   asserting the phases land in the target's configured store, with no second store inside the
+   runtime.
+2. **The harness would have been killed by its own restart check.** The Console's sudo hop starts
+   the root program inside `tc-console.service`'s cgroup (a detached session does not leave the
+   cgroup), and `check-console-restart-reconnect` restarts that unit — SIGTERMing the harness
+   mid-run under the default control-group KillMode. Off-host the check defers, so no test could
+   see it. Fixed: where systemd is booted, root moves the harness into its **own transient unit**
+   (`--wait --pipe --collect`), the same shape `start-run` already uses; this also stops the
+   harness inheriting the Console's `ProtectSystem` sandbox. The service user's sudo surface is
+   unchanged — `systemd-run` remains root-only. The on-host restart check passing is itself the
+   proof of this branch.
+3. **The launcher overwrote root's verdict summary.** The harness exits non-zero to report
+   `BLOCKED`; the launcher's failure branch treated every non-zero exit as "nothing ran" and
+   replaced root's summary on an already-finished run. Fixed: the launcher finishes only a run
+   the root side left unfinished. Pinned by an unprivileged test.
+
+The same prep also corrected the runbook's deployment model: the Console serves a pinned release
+worktree (`deploy-console.sh`, release-dir deployment), not the app checkout — restarting the
+service on an updated checkout changes nothing it executes.
+
 ## Held throughout
 
 `deploy_release` stays `enabled=False` and server-refused. PR #80 stays draft until Acceptance A

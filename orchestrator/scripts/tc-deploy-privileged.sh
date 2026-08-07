@@ -903,13 +903,46 @@ verb_start_acceptance() {
     phase "verify-interpreter" ok
     note "the acceptance harness will execute as root from $runtime, which the service user cannot write"
 
-    # The runtime SHA and service user are ROOT-derived references (from `current` and
-    # target.conf), never caller input — they let the root side attest which code produced the
-    # verdict and let it exercise a service-account write against the store.
-    ( cd "$runtime/orchestrator" && env -i PATH="$PATH" HOME=/root LANG=C.UTF-8 \
-        TC_ACCEPTANCE_RUNTIME_SHA="$current" TC_ACCEPTANCE_SERVICE_USER="$TC_SERVICE_USER" \
-        "$interpreter" -m tc_growth.cli acceptance-root "$run_id" ) \
-        || die "the acceptance harness reported a failure"
+    # The harness inherits nothing from the caller; everything it needs is a ROOT-derived
+    # reference — the runtime SHA and service user (from `current` and target.conf), and the
+    # durable store location (TC_STORE_DB, same as `start-run` passes at line ~864). The first
+    # on-host run proved the store path is not optional: launched without it, the harness
+    # resolved a per-checkout default INSIDE the immutable runtime and could only refuse — the
+    # run row it must finish lives in the store the Console wrote it to, nowhere else.
+    [ -n "$TC_STORE_DB" ] || die \
+"target.conf carries no TC_STORE_DB, so root cannot locate the durable acceptance record. The "\
+"harness must read and finish the SAME run row the Console created; refusing to launch it "\
+"against a guessed store."
+
+    # WHERE it runs matters as much as what it inherits. The Console's sudo hop starts this
+    # program inside tc-console.service's own cgroup and mount namespace, which breaks the run
+    # twice over: `check-console-restart-reconnect` restarts that very unit — with the default
+    # control-group KillMode that would kill the harness mid-run, by its own self-check — and
+    # the unit's ProtectSystem sandbox mounts /usr read-only over the root-owned runtime. So
+    # where a service manager is booted, root moves the harness into its OWN transient unit,
+    # exactly as `start-run` already does for the deploy runner; `--wait --pipe` because unlike
+    # the fire-and-forget runner, the launcher's evidence is this verb's exit and output.
+    # `systemd-run` remains a ROOT capability — the service user's sudo surface is unchanged.
+    # Without a booted systemd the direct exec remains: the restart check defers there, so the
+    # self-termination path cannot arise.
+    if [ -d /run/systemd/system ]; then
+        systemctl reset-failed "$TC_UNIT_PREFIX-acceptance-$run_id.service" 2>/dev/null || true
+        run_clean systemd-run --quiet --wait --pipe --collect \
+            --unit="$TC_UNIT_PREFIX-acceptance-$run_id" \
+            --property=WorkingDirectory="$runtime/orchestrator" \
+            --setenv=PATH="$PATH" --setenv=HOME=/root --setenv=LANG=C.UTF-8 \
+            --setenv=TC_ACCEPTANCE_RUNTIME_SHA="$current" \
+            --setenv=TC_ACCEPTANCE_SERVICE_USER="$TC_SERVICE_USER" \
+            --setenv=TC_DB_PATH="$TC_STORE_DB" \
+            "$interpreter" -m tc_growth.cli acceptance-root "$run_id" \
+            || die "the acceptance harness reported a failure"
+    else
+        ( cd "$runtime/orchestrator" && env -i PATH="$PATH" HOME=/root LANG=C.UTF-8 \
+            TC_ACCEPTANCE_RUNTIME_SHA="$current" TC_ACCEPTANCE_SERVICE_USER="$TC_SERVICE_USER" \
+            TC_DB_PATH="$TC_STORE_DB" \
+            "$interpreter" -m tc_growth.cli acceptance-root "$run_id" ) \
+            || die "the acceptance harness reported a failure"
+    fi
     phase "start-acceptance" ok
     return 0
 }

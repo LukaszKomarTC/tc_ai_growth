@@ -697,6 +697,44 @@ def test_a_successful_launch_leaves_no_positive_verdict_for_the_launcher_to_forg
         store.close()
 
 
+def test_the_launcher_preserves_a_verdict_the_root_side_already_finished(env, monkeypatch):
+    """The first on-host run (PR #81, 2026-08-07) exposed this: the harness ran, recorded its
+    evidence and finished the run itself — then exited non-zero, because non-zero is how it
+    reports a BLOCKED verdict — and the launcher's failure branch OVERWROTE root's summary with
+    "no acceptance phase ran", captioning a run full of durable phases as an empty one. A
+    non-zero exit is not proof that nothing ran: the launcher may finish only a run the root
+    side left unfinished."""
+    _enable(env)
+    env.monkeypatch.setattr(acceptance_run, "spawn_detached", lambda run_id, **kw: None)
+    _post(env, "/acceptance/run", csrf=_csrf(env), confirmed="1")
+    store = _store(env)
+    try:
+        run_id = store.list_acceptance_runs()[0]["id"]
+        root_summary = "a systemd-bound phase deferred; the run is BLOCKED on-host evidence"
+
+        def fake_escalation(*a, **k):
+            # The root side, compressed: it reached the durable store, recorded a phase and
+            # finished the run — and its BLOCKED verdict then surfaced as the non-zero exit.
+            store.record_acceptance_phase(run_id, seq=2,
+                                          name=deploy_acceptance.PHASE_ORDER[0], status="ok")
+            store.finish_acceptance_run(run_id, verdict="BLOCKED", summary=root_summary)
+            return type("P", (), {"returncode": 2, "stdout": "",
+                                  "stderr": "REFUSED: the acceptance harness reported a failure"})()
+
+        monkeypatch.setattr(acceptance_run.subprocess, "run", fake_escalation)
+        outcome = acceptance_run.execute(store, run_id)
+        assert outcome == "blocked"
+        run = store.get_acceptance_run(run_id)
+        assert run["status"] == "done" and run["verdict"] == "BLOCKED"
+        assert run["summary"] == root_summary, "the launcher overwrote root's honest summary"
+        # The launch failure is still recorded, as launcher bookkeeping outside the digest.
+        launches = [p for p in store.list_acceptance_phases(run_id)
+                    if p["name"] == acceptance_run.LAUNCH_PHASE]
+        assert launches and launches[-1]["status"] == "failed"
+    finally:
+        store.close()
+
+
 def _stub_engine(monkeypatch):
     def fake_run(root, *, keep=False, progress=None):
         for name in deploy_acceptance.PHASE_ORDER:

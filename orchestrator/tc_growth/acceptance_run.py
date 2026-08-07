@@ -356,6 +356,15 @@ def execute(store, run_id: int) -> str:
 
     store.record_acceptance_phase(run_id, seq=1, name=LAUNCH_PHASE, status="failed",
                                   detail=f"exit={code}\n{tail}")
+    # A non-zero exit does NOT always mean nothing ran: the harness itself exits non-zero for a
+    # BLOCKED verdict after recording every phase and finishing the run. In that case root's
+    # verdict and summary are the honest record and this side has nothing to add — the first
+    # on-host run showed the generic summary below overwriting root's, captioning a run full of
+    # durable phases with "no acceptance phase ran". Only an UNFINISHED run may be finished
+    # here, as the launch-refusal it then genuinely is.
+    finished = store.get_acceptance_run(run_id)
+    if finished is not None and finished.get("status") == "done":
+        return "blocked"
     store.finish_acceptance_run(
         run_id, verdict=VERDICT_BLOCKED,
         summary="the privileged program refused the launch or is not installed on this host; "
