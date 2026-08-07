@@ -649,7 +649,7 @@ def cmd_inspect(*, profile: str, environment: str) -> int:
     file evidence under another just because nobody said which was meant (issue #82 amendment 1).
     """
     from . import inspection
-    from .collectors import FixtureCollector
+    from .collectors import default_collectors
     from .store import open_store
 
     if not profile.strip() or not environment.strip():
@@ -666,7 +666,7 @@ def cmd_inspect(*, profile: str, environment: str) -> int:
 
     store = open_store()
     try:
-        run_id = inspection.run_inspection(store, [FixtureCollector()], ctx, trigger="cli")
+        run_id = inspection.run_inspection(store, default_collectors(), ctx, trigger="cli")
         run = store.get_inspection_run(run_id)
         rows = store.list_observations(run_id)
     finally:
