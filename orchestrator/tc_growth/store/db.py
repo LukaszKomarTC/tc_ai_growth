@@ -16,7 +16,7 @@ from pathlib import Path
 
 from ..config import BASE_DIR, active_site, get_settings
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 # One statement per table; CREATE ... IF NOT EXISTS makes init idempotent.
 _SCHEMA = """
@@ -172,6 +172,35 @@ CREATE TABLE IF NOT EXISTS deploy_steps (
     UNIQUE (run_id, seq)
 );
 
+-- WP-U4d.2: the Console-driven acceptance run. The row is the durable channel between the
+-- browser and the root-side acceptance process: the Console writes the request, the runner
+-- writes phases and the terminal verdict, and the run page is nothing but a read of these rows
+-- — which is what makes progress survive a Console restart. The verdict is a CLOSED set:
+-- PASS | FAILED SAFELY | BLOCKED. Deferred work is never success; when in doubt the verdict
+-- degrades toward BLOCKED, never toward PASS.
+CREATE TABLE IF NOT EXISTS acceptance_runs (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    requested_at  TEXT NOT NULL,
+    requested_by  TEXT NOT NULL,
+    root          TEXT NOT NULL,                -- server-derived run directory; never from the browser
+    status        TEXT NOT NULL,                -- requested | running | done
+    started_at    TEXT,
+    finished_at   TEXT,
+    verdict       TEXT,                         -- PASS | FAILED SAFELY | BLOCKED (only when done)
+    summary       TEXT                          -- one owner-readable terminal line
+);
+
+CREATE TABLE IF NOT EXISTS acceptance_phases (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id   INTEGER NOT NULL REFERENCES acceptance_runs(id),
+    seq      INTEGER NOT NULL,
+    at       TEXT NOT NULL,
+    name     TEXT NOT NULL,
+    status   TEXT NOT NULL,                     -- ok | deferred | failed | refused
+    detail   TEXT,
+    UNIQUE (run_id, seq)
+);
+
 CREATE TABLE IF NOT EXISTS decision_adoptions (
     -- Adopt-live idempotence as a DURABLE EXACT KEY (review #76): source decision + its
     -- revision + its envelope hash + the digest of the snapshot the owner was shown. UNIQUE, so
@@ -264,6 +293,27 @@ BEFORE UPDATE ON deploy_runs
 WHEN NEW.sha <> OLD.sha OR NEW.plan_digest <> OLD.plan_digest OR NEW.plan <> OLD.plan
 BEGIN
     SELECT RAISE(ABORT, 'the authorized deploy target is immutable');
+END;
+
+-- WP-U4d.2: acceptance phases are evidence the moment they are written, and a finished
+-- acceptance run — verdict included — can never be rewritten into a better-looking one.
+CREATE TRIGGER IF NOT EXISTS trg_acceptance_phases_no_update
+BEFORE UPDATE ON acceptance_phases
+BEGIN
+    SELECT RAISE(ABORT, 'acceptance phases are append-only evidence');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_acceptance_phases_no_delete
+BEFORE DELETE ON acceptance_phases
+BEGIN
+    SELECT RAISE(ABORT, 'acceptance phases are append-only evidence');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_acceptance_runs_terminal
+BEFORE UPDATE ON acceptance_runs
+WHEN OLD.status = 'done'
+BEGIN
+    SELECT RAISE(ABORT, 'a finished acceptance run is terminal');
 END;
 """
 
@@ -396,6 +446,10 @@ def _migrate(conn: sqlite3.Connection, *, from_version: int) -> None:
             except sqlite3.OperationalError as exc:
                 if "duplicate column" not in str(exc).lower():
                     raise
+    if from_version < 8:
+        # v7 -> v8 (WP-U4d.2): acceptance_runs + acceptance_phases — additive tables only,
+        # created by _SCHEMA above, triggers applied after migration like the deploy ones.
+        pass
     if from_version < 7:
         # v6 -> v7 (WP-U4d): deploy_runs + deploy_steps — additive tables only, created by
         # _SCHEMA above, with their triggers applied after migration like the decision ones.

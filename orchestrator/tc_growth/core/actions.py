@@ -79,6 +79,15 @@ class Operation:
     enforced_by: tuple[str, ...] = ()  # code layers that actually refuse a bad call
     rollback_description: str = ""     # prose — NOT machine-enforced (see module docstring)
     verification_description: str = "" # prose — NOT machine-enforced
+    # Writes PRODUCTION (e.g. deploy_release). Such an operation must stay `enabled=False` until it
+    # has been proven on a real host (#77) — validate_registry refuses to let one be enabled. A
+    # disposable-only operation that provably never touches production leaves this False.
+    production_write: bool = False
+    # Appears on the generic /operations page and runs through the generic Execution Service. An
+    # operation with its OWN dedicated Console surface (deploy_release → /deploy,
+    # deploy_acceptance → /acceptance) sets this False, so enabling it cannot create a second,
+    # argument-less invocation path through /api/execute.
+    self_service: bool = True
     enabled: bool = True
 
 
@@ -196,7 +205,63 @@ OPERATIONS: tuple[Operation, ...] = (
         # KillMode=process on tc-console.service) and the staging/disposable proof has run. The
         # registry describes CURRENT AUTHORITY: a capability that has not been proven is present
         # here to be reviewed, not offered to be clicked. #77 requires the proof before first use.
+        # It writes PRODUCTION, so validate_registry refuses to let it be enabled while unproven,
+        # and it has its own /deploy surface so it never rides the generic operations page.
+        production_write=True,
+        self_service=False,
         enabled=False,
+    ),
+    Operation(
+        id="deploy_acceptance",
+        name="Run deployment acceptance (WP-U4d.2)",
+        category=Category.PLATFORM,
+        min_phase=Phase.CONTROLLED_EXECUTION,
+        environments=("staging", "production"),
+        approval=Approval.ALWAYS_ASK,
+        command="acceptance-run",
+        # NO arguments at all. The run directory is derived server-side from the fixed safe
+        # parent; every path, service, unit, port and user comes from the engine's own
+        # resolution, which refuses production by value. There is no request shape that can
+        # point this operation anywhere.
+        allowed_args=(),
+        result_policy=((0, "success"), (1, "failure")),
+        timeout_s=3600.0,
+        target_surface="platform",
+        preconditions=("the root-owned privileged machinery is installed on the host (the "
+                       "one-time governed setup event)",
+                       "no other acceptance run is live (the store enforces at most one)",
+                       "a booted service manager — without one the run ends BLOCKED, never PASS"),
+        enforced_by=(_GATE,
+                     "tc_growth.deploy_acceptance.assert_nothing_production — every resolved "
+                     "value refused if it is production's, before a single mutation",
+                     "tc_growth.acceptance_run — the run directory is derived from the fixed "
+                     "safe parent; the browser supplies no values; the one escalation is the "
+                     "root-owned program's fixed verb surface",
+                     "store triggers trg_acceptance_phases_no_update/_no_delete and "
+                     "trg_acceptance_runs_terminal — phases are append-only and a finished "
+                     "run's verdict cannot be rewritten",
+                     "the verdict set is closed (PASS / FAILED SAFELY / BLOCKED) and a deferred "
+                     "phase is never represented as success"),
+        rollback_description="the run operates only on a disposable tree under "
+                             "/srv/tc-u4d-acceptance and tears it down itself; rollback of the "
+                             "disposable deployment is one of the phases under test, and "
+                             "production paths, service, store and sudoers are never touched",
+        verification_description="every phase is written to acceptance_phases as append-only "
+                                 "evidence by processes that outlive the Console; the run ends "
+                                 "in an explicit closed verdict where anything unproven — a "
+                                 "refused launch, absent machinery, a deferred phase — is "
+                                 "BLOCKED, and FAILED SAFELY requires the rollback and "
+                                 "production-state phases to have recorded ok",
+        # ENABLED (WP-U4d.2, review of head 76a9fd3): the acceptance is a disposable-only,
+        # self-attesting operation — it provably never touches production (production_write=False;
+        # deploy_acceptance.assert_nothing_production refuses every production value), and it is
+        # the mechanism by which the deployment boundary is proven. It has its own /acceptance
+        # surface, so self_service=False keeps it off the generic operations page: there is no
+        # second, argument-less way to invoke it. `deploy_release` stays disabled and server-
+        # refused — enabling the acceptance does not enable production deployment.
+        production_write=False,
+        self_service=False,
+        enabled=True,
     ),
 )
 
@@ -242,6 +307,12 @@ def validate_registry(ops: tuple[Operation, ...] = OPERATIONS) -> None:
         if op.target_surface == "platform" and op.category is not Category.PLATFORM:
             raise RegistryError(f"{op.id}: only PLATFORM-category operations may declare "
                                 "target_surface='platform'")
+        # #77: a production-writing operation must not be offered until it has been proven on a
+        # real host. This is the machine-enforced half of the "staging proof before first use"
+        # rule — a disposable-only acceptance operation (production_write=False) is exempt.
+        if op.production_write and op.enabled:
+            raise RegistryError(f"{op.id}: a production-writing operation must stay disabled until "
+                                "it is proven on a real host (#77)")
         if op.min_phase > Phase.READ_ONLY:
             if not op.rollback_description:
                 raise RegistryError(f"{op.id}: write-capable operations require a "

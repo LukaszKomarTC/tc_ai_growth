@@ -736,3 +736,114 @@ def deploy_run_body(run: dict, steps: list[dict]) -> str:
     refresh = "" if terminal else "<script>setTimeout(()=>location.reload(), 4000)</script>"
     return (_section(f"Deploy #{run['id']} — {_e(run['sha'][:12])}", head + "".join(rows))
             + refresh)
+
+
+# --- WP-U4d.2: the Console-driven acceptance (Acceptance B) -------------------------------
+
+def acceptance_body(runs: list[dict], *, csrf: str, offered: bool, disabled_reason: str,
+                    trusted: dict | None = None, notice: str = "", error: str = "") -> str:
+    """The acceptance list. History always renders; the control that LAUNCHES a run appears
+    only when the operation is enabled — and the form carries no input the run could use:
+    the browser selects the closed operation, nothing else."""
+    head = ""
+    if notice:
+        head += f"<div class='ok'>{_e(notice)}</div>"
+    if error:
+        head += f"<div class='sev-warn'>{_e(error)}</div>"
+
+    preview = (
+        "<div class='muted'>Runs the bounded disposable deployment acceptance on this host: a "
+        "throwaway target under <code>/srv/tc-u4d-acceptance</code> with its own repository, "
+        "store, service unit and port. The run installs nothing into production, refuses every "
+        "production value before its first mutation, deploys, injects a failure, rolls back, "
+        "and records every phase here as append-only evidence. The verdict is PASS, FAILED "
+        "SAFELY or BLOCKED — a phase that did not run is never reported as success.</div>")
+    if offered:
+        form = (
+            "<form method='post' action='/acceptance/run' style='margin-top:10px'>"
+            f"<input type='hidden' name='csrf' value='{_e(csrf)}'>"
+            "<button type='submit'>Run deployment acceptance</button>"
+            "<div class='muted' style='margin-top:4px'>You will confirm on the next page before "
+            "anything runs. The browser supplies nothing but this click — every path, service "
+            "and port is derived on the server and refused if it is production's.</div>"
+            "</form>")
+    else:
+        form = f"<div class='muted' style='margin-top:10px'>{_e(disabled_reason)}</div>"
+
+    trusted = trusted or {}
+    rows = []
+    for r in runs:
+        # The badge shows the TRUSTED verdict (attested against the root-owned receipt), never
+        # the store's verdict column. A done run with no valid receipt reads BLOCKED here too.
+        if r["status"] == "done":
+            state = trusted.get(r["id"]) or "BLOCKED"
+            badge = "ok" if state == "PASS" else "sev-warn"
+        else:
+            state = r["status"]
+            badge = "muted"
+        rows.append(
+            f"<div class='card'><div><b>Acceptance #{r['id']}</b> — "
+            f"<span class='{badge}'>{_e(state)}</span></div>"
+            f"<div class='muted'>requested {_e(r['requested_at'])} by {_e(r['requested_by'])}"
+            f" · {_e(r['root'])}</div>"
+            f"<div>{_e(r.get('summary') or '')}</div>"
+            f"<div><a href='/acceptance/{r['id']}'>Open →</a></div></div>")
+    body = head + _section("Run deployment acceptance", preview + form)
+    body += _section("Acceptance history", "".join(rows) or
+                     "<div class='muted'>No acceptance runs recorded yet.</div>")
+    return body
+
+
+def acceptance_confirm_body(*, csrf: str) -> str:
+    """The explicit approval step. The first POST rendered this page and mutated NOTHING; only
+    the confirmed POST below creates the run row and launches the detached runner."""
+    return _section(
+        "Confirm: run deployment acceptance",
+        "<div class='sev-warn'><b>This runs real host mutations</b> — against a disposable "
+        "target only. It creates a throwaway tree under <code>/srv/tc-u4d-acceptance</code>, "
+        "deploys to it through the privileged boundary, injects a failure and rolls back. "
+        "Production paths, the production service, store and sudoers are refused by value "
+        "before anything is created.</div>"
+        "<div class='muted' style='margin-top:8px'>At most one acceptance runs at a time. The "
+        "run continues in its own process whatever happens to the Console, and every phase is "
+        "recorded as append-only evidence.</div>"
+        "<form method='post' action='/acceptance/run' style='margin-top:12px'>"
+        f"<input type='hidden' name='csrf' value='{_e(csrf)}'>"
+        "<input type='hidden' name='confirmed' value='1'>"
+        "<button type='submit'>Yes — run the acceptance</button> "
+        "<a href='/acceptance'>Cancel</a></form>")
+
+
+def acceptance_run_body(run: dict, phases: list[dict], *, trusted: str | None = None) -> str:
+    """The observation view. Everything on this page is a read of the durable record, which is
+    why a restarted Console reconnects to the same run instead of orphaning it.
+
+    The verdict banner shows the TRUSTED verdict — computed by the server against the root-owned
+    receipt, passed in as `trusted` — not the store's `verdict` column, which application code
+    could set. A live run shows RUNNING (`trusted is None`); a finished run with no valid
+    attestation shows BLOCKED, never a provisional success."""
+    terminal = run["status"] == "done"
+    if terminal:
+        verdict = trusted or "BLOCKED"
+        cls = "ok" if verdict == "PASS" else "sev-warn"
+        note = ("" if verdict in ("PASS", "FAILED SAFELY")
+                else " <span class='muted'>(no root-owned receipt attests a positive verdict "
+                     "for this run)</span>")
+        head = (f"<div class='{cls}'><b>{_e(verdict)}</b> — "
+                f"{_e(run.get('summary') or '')}{note}</div>")
+    else:
+        head = ("<div class='muted'>RUNNING. This page refreshes itself from the durable "
+                "record; the run continues even while the Console restarts.</div>")
+    rows = []
+    for ph in phases:
+        mark = {"ok": "✅", "deferred": "⏸", "failed": "❌", "refused": "❌"}.get(ph["status"], "·")
+        detail = (f"<details><summary class='muted'>detail</summary>"
+                  f"<pre>{_e(ph['detail'])}</pre></details>") if ph.get("detail") else ""
+        rows.append(f"<div class='card'><div>{mark} <b>{_e(ph['name'])}</b> — "
+                    f"{_e(ph['status'])}</div><div class='muted'>{_e(ph['at'])}</div>"
+                    f"{detail}</div>")
+    if not rows:
+        rows.append("<div class='muted'>No phases recorded yet.</div>")
+    refresh = "" if terminal else "<script>setTimeout(()=>location.reload(), 4000)</script>"
+    return (_section(f"Acceptance #{run['id']} — {_e(run['root'])}", head + "".join(rows))
+            + refresh)

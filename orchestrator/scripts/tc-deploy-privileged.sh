@@ -36,6 +36,8 @@
 #   apply <40-hex-sha>  deploy that release; file phases always, systemd phases when booted
 #   rollback            restore the previous unit, inspector and sudoers from root-owned state
 #   start-run <id>      create the transient per-deployment unit (systemd only)
+#   start-acceptance <id>  run the Console-driven acceptance (WP-U4d.2) as root from the
+#                       root-owned runtime, and seal the root-owned verdict receipt
 #   bootstrap <sha>     ONE-TIME setup: establish the trusted runner runtime so start-run has
 #                       immutable code to launch from on a fresh host. Never in sudoers.
 #
@@ -274,10 +276,37 @@ materialize_runtime() {
     # A previous materialisation is root-owned, so removing it is safe and keeps apply idempotent.
     [ -e "$runtime" ] && run_clean rm -rf "$runtime"
     run_clean install -d -m 0755 -o root -g root "$runtime" || die "cannot create $runtime"
-    run_clean cp -a "$release/." "$runtime/" || die "could not copy the release into root-owned storage"
-    # `.git` in a worktree is a POINTER back into the service user's repository. It is not runtime
-    # content and root has no business carrying it into a tree it vouches for.
-    run_clean rm -rf "$runtime/.git"
+
+    # The tree is built from the COMMIT, not from the staged worktree. It used to be `cp -a` of
+    # the release directory, which copied whatever happened to be sitting there — and a release
+    # directory is a live working tree: the Console serves out of it, so Python drops
+    # `__pycache__/*.pyc` into it, and deployment leaves an untracked `.env` beside the code.
+    # Root then vouched for files no commit authorised, `verify_against_commit` refused the
+    # extras (correctly), and the only way forward was an administrator hand-cleaning a serving
+    # tree before every bootstrap — trusted state built on a manual tidy-up (PR #81 review,
+    # criterion 5). Reading the commit instead makes "root runs exactly the reviewed bytes" a
+    # property of HOW the tree is built rather than something checked after the fact.
+    #
+    # `git_ro` is the same hardened reader `verify_against_commit` uses — replacement objects
+    # disabled, repository configuration neutralised — so the extraction and the authentication
+    # that follows it read the object store on identical terms. Extracting also removes the old
+    # `rm -rf "$runtime/.git"` step: an archive of a commit has no `.git` pointer back into the
+    # service user's repository to begin with.
+    #
+    # `verify_against_commit` still runs on the result and is still load-bearing: it is what
+    # catches a truncated extraction, and it fails CLOSED if some future `.gitattributes`
+    # `export-ignore` were to silently drop a file from the archive.
+    command -v tar >/dev/null || die "tar is required to materialise a runtime from the commit"
+    [ -d "$release" ] || die "no staged release directory for $sha; stage the release worktree first"
+    assert_staged_release_matches_commit "$sha" "$release"
+    if ! git_ro -C "$TC_APP_DIR" archive --format=tar "$sha" | run_clean tar -xf - -C "$runtime"; then
+        run_clean rm -rf "$runtime"
+        die "could not materialise commit $sha into root-owned storage from the object store"
+    fi
+    [ -n "$(ls -A "$runtime" 2>/dev/null)" ] || {
+        run_clean rm -rf "$runtime"
+        die "commit $sha materialised an empty runtime tree; refusing to vouch for it"
+    }
     run_clean chown -R root:root "$runtime" || die "could not take ownership of the runtime copy"
     # Strip every group/other write bit. This is the property, not a tidy-up.
     run_clean chmod -R go-w "$runtime" || die "could not lock the runtime copy"
@@ -328,21 +357,57 @@ git_ro() {
             -c safe.directory="$TC_APP_DIR" "$@"
 }
 
-verify_against_commit() {
-    local sha="$1" runtime="$2" expected actual line mode kind oid path
-    expected="$(mktemp)" || die "cannot stage the expected manifest"
+# The commit's authorised content as a `sha256  ./path` list, read through `git_ro` so object
+# replacement is disabled. Both consumers below build their own copy rather than sharing one:
+# a cached list is state, and state that decides an authentication is state worth poisoning.
+_write_expected_commit_manifest() {
+    local sha="$1" out="$2" line mode kind oid path
+    : > "$out"
     while IFS= read -r line; do
         [ -n "$line" ] || continue
         mode="${line%% *}"; line="${line#* }"
         kind="${line%% *}"; line="${line#* }"
         oid="${line%%$'\t'*}"; path="${line#*$'\t'}"
-        [ "$kind" = "blob" ] || { rm -f "$expected"; die "unsupported $kind entry in commit $sha: $path"; }
+        [ "$kind" = "blob" ] || { rm -f "$out"; die "unsupported $kind entry in commit $sha: $path"; }
         printf '%s  ./%s\n' \
             "$(git_ro -C "$TC_APP_DIR" cat-file blob "$oid" | sha256sum | cut -d' ' -f1)" "$path" \
-            >> "$expected"
+            >> "$out"
     done < <(git_ro -C "$TC_APP_DIR" ls-tree -r "$sha" 2>/dev/null)
+    [ -s "$out" ] || { rm -f "$out"; die "could not read the tree of commit $sha from the object store"; }
+}
 
-    [ -s "$expected" ] || { rm -f "$expected"; die "could not read the tree of commit $sha from the object store"; }
+# Root builds the runtime from the commit, so substituted content in the staged release can no
+# longer reach the tree root vouches for. That closes the door — and, on its own, would also
+# close root's EYES: a release whose tracked files were tampered with after `stage` would be
+# silently ignored and the deployment would proceed as if nothing had happened. Substitution in
+# that window is evidence of an active attack, and refusing to deploy is the report.
+#
+# So the tracked files of the staged release are compared against the commit BEFORE anything is
+# materialised. Only paths the commit names are checked, which is the whole difference from the
+# old `cp -a` behaviour: `__pycache__`, `.env` and every other untracked artefact a live serving
+# tree accumulates are not the commit's business and no longer block a deployment (PR #81 review,
+# criterion 5), while a substituted MODULE still stops the chain exactly as it did before.
+assert_staged_release_matches_commit() {
+    local sha="$1" release="$2" expected line digest path actual
+    expected="$(mktemp)" || die "cannot stage the expected manifest"
+    _write_expected_commit_manifest "$sha" "$expected"
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        digest="${line:0:64}"
+        path="${line:66}"
+        actual="$(sha256sum "$release/${path#./}" 2>/dev/null | cut -d' ' -f1)"
+        if [ "$actual" != "$digest" ]; then
+            rm -f "$expected"
+            die "the staged release does not match commit $sha — '${path#./}' was ${actual:+substituted}${actual:-removed} after the release was staged; refusing to deploy it"
+        fi
+    done < "$expected"
+    rm -f "$expected"
+}
+
+verify_against_commit() {
+    local sha="$1" runtime="$2" expected actual
+    expected="$(mktemp)" || die "cannot stage the expected manifest"
+    _write_expected_commit_manifest "$sha" "$expected"
     actual="$(mktemp)"
     ( cd "$runtime" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0r sha256sum ) > "$actual"
     LC_ALL=C sort -o "$expected" "$expected"
@@ -540,22 +605,57 @@ $TC_SERVICE_USER ALL=(root) NOPASSWD: $SELF apply [0-9a-f][0-9a-f][0-9a-f][0-9a-
 $TC_SERVICE_USER ALL=(root) NOPASSWD: $SELF rollback
 $TC_SERVICE_USER ALL=(root) NOPASSWD: $SELF self-check
 $TC_SERVICE_USER ALL=(root) NOPASSWD: $SELF start-run [0-9]*
+$TC_SERVICE_USER ALL=(root) NOPASSWD: $SELF start-acceptance [0-9]*
 $TC_SERVICE_USER ALL=(root) NOPASSWD: $TC_INSPECTOR_DEST ""
 SUDOERS
     chmod 0440 "$staged"
-    if command -v visudo >/dev/null; then
-        run_clean visudo -c -f "$staged" >/dev/null || die "the generated sudoers drop-in does not validate"
-    else
-        note "visudo is not installed; the drop-in was NOT syntax-validated"
-    fi
+    # Fail CLOSED at the sudoers boundary (same rule as the acceptance grant): an absent or
+    # unhappy validator stops us before the drop-in is installed. A malformed rule can break sudo.
+    command -v visudo >/dev/null \
+        || die "visudo is required to validate a sudoers drop-in and is not installed; refusing to install an unvalidated rule"
+    run_clean visudo -c -f "$staged" >/dev/null || die "the generated sudoers drop-in does not validate"
     run_clean install -m 0440 -o root -g root "$staged" "$TC_SUDOERS_FILE" \
         || die "could not install the sudoers drop-in"
+}
+
+write_acceptance_sudoers() {
+    # WP-U4d.2: the acceptance-ONLY sudo capability, installed at bootstrap so the Console can
+    # launch the DISPOSABLE acceptance without a production deploy. It grants the fixed root-owned
+    # entry point EXACTLY ONE verb — `start-acceptance` with a numeric run id — and nothing else:
+    # never apply/rollback/start-run, never systemd-run, a shell, Python or arbitrary arguments.
+    #
+    # It is a SEPARATE drop-in from the integrity-scan grant (which it leaves untouched) and from
+    # the future production-deploy grant that `write_sudoers` installs. Generated from internal
+    # constants only — $SELF (this program's own verified path) and $TC_SERVICE_USER — so no
+    # checkout path, environment value or request can influence the executable path or the verb.
+    local drop="${TC_SUDOERS_FILE}-acceptance" staged="$TC_SNAPSHOT_DIR/acceptance-sudoers.next"
+    cat > "$staged" <<SUDOERS
+# Managed by tc-deploy (bootstrap): acceptance-only sudo capability. Do not edit by hand.
+$TC_SERVICE_USER ALL=(root) NOPASSWD: $SELF start-acceptance [0-9]*
+SUDOERS
+    chmod 0440 "$staged"
+    # Fail CLOSED at the sudoers boundary: a malformed rule can break sudo on the host, so an
+    # ABSENT or UNHAPPY validator must stop us BEFORE the drop-in is installed and (in bootstrap)
+    # before `current` is written. A warning is not sufficient here.
+    command -v visudo >/dev/null \
+        || die "visudo is required to validate a sudoers drop-in and is not installed; refusing to install an unvalidated rule"
+    run_clean visudo -c -f "$staged" >/dev/null \
+        || die "the acceptance sudoers drop-in does not validate; refusing to install it"
+    run_clean install -m 0440 -o root -g root "$staged" "$drop" \
+        || die "could not install the acceptance sudoers drop-in"
+    note "acceptance sudo capability granted at $drop (start-acceptance, numeric id only)"
 }
 
 write_unit() {
     # WorkingDirectory and ExecStart point at the ROOT-OWNED runtime copy, never at the release
     # tree. That single substitution is what closes blocker 1: the service consumes bytes the
     # service user cannot reach, so there is no window to redirect it in.
+    #
+    # `-B` and PYTHONDONTWRITEBYTECODE=1: the long-running service runs FROM the authenticated
+    # tree, so without them its first import writes `__pycache__/*.pyc` into it and the runtime
+    # stops matching the manifest root vouched for — the deployed Console would invalidate its
+    # own runtime by starting (PR #81 review). Both, because the flag survives an environment
+    # the interpreter never sees and the variable is inherited by any Python child.
     local sha="$1" interpreter="$2" staged="$TC_SNAPSHOT_DIR/unit.next"
     cat > "$staged" <<UNIT
 [Unit]
@@ -567,9 +667,10 @@ User=$TC_SERVICE_USER
 WorkingDirectory=$TC_RUNTIME_DIR/$sha/orchestrator
 Environment=TC_CONSOLE_PORT=$TC_CONSOLE_PORT
 Environment=TC_BUILD_COMMIT=$sha
+Environment=PYTHONDONTWRITEBYTECODE=1
 ${TC_STORE_DB:+Environment=TC_DB_PATH=$TC_STORE_DB}
 ${TC_CONSOLE_ENV_FILE:+EnvironmentFile=-$TC_CONSOLE_ENV_FILE}
-ExecStart=$interpreter -m tc_growth.cli console $TC_CONSOLE_PORT
+ExecStart=$interpreter -B -m tc_growth.cli console $TC_CONSOLE_PORT
 Restart=on-failure
 
 [Install]
@@ -745,13 +846,16 @@ verb_bootstrap() {
     # burden this work package exists to remove.
     #
     # So the trusted runner runtime is established ONCE, by the owner, during host setup — the
-    # same act that installs this program. It materialises and authenticates a runtime and sets
-    # `current`, and it touches NOTHING else: no unit, no inspector, no sudoers, no restart. It is
-    # not a deployment and must not be able to become one.
+    # same act that installs this program. It materialises and authenticates a runtime, sets
+    # `current`, and installs ONE narrow sudo capability: the acceptance-only grant
+    # (`start-acceptance <numeric id>` on this fixed entry point, nothing else). It writes NO
+    # unit, NO inspector, does NOT restart the service, and does NOT grant the production-deploy
+    # surface (apply/rollback/start-run) — so it is still not a deployment and cannot become one.
+    # The acceptance grant exists because the DISPOSABLE proof must be launchable without first
+    # running a production deploy; least privilege keeps it to exactly the one verb it needs.
     #
-    # It is deliberately not in the sudoers surface. The service user can never reach it; only a
-    # human already running as root can, which is what makes it a setup step rather than a second
-    # way to deploy.
+    # bootstrap ITSELF is deliberately not in any sudoers surface. The service user can never
+    # reach it; only a human already running as root can, which is what makes it a setup step.
     local sha="$1" release
     valid_sha "$sha" || die "bootstrap takes an exact 40-character lowercase hex SHA"
     release="$TC_RELEASES_DIR/$sha"
@@ -771,12 +875,18 @@ refuses to replace one. Deploy through apply instead."
     phase "authenticate-runtime" ok
     verify_runtime "$sha"
     phase "verify-runtime" ok
+    # Written before `current` so a partial failure re-runs cleanly (bootstrap refuses once
+    # `current` exists). Machinery was verified at startup, so the grant never routes sudo to
+    # unverified code.
+    write_acceptance_sudoers
+    phase "grant-acceptance-sudo" ok
     printf '%s\n' "$sha" > "$TC_SNAPSHOT_DIR/current"
     run_clean chmod 0644 "$TC_SNAPSHOT_DIR/current"
     phase "bootstrap" ok
     note "the trusted runner runtime is $TC_RUNTIME_DIR/$sha"
-    note "no unit, inspector, sudoers or service state was touched — this is not a deployment."
-    note "start-run can now launch the deployment runner from immutable code."
+    note "no unit, inspector or service state was touched, and the production-deploy sudo surface"
+    note "was NOT granted — this is not a deployment. Only the acceptance-only sudo capability was"
+    note "installed (start-acceptance, numeric id), so the disposable acceptance is launchable."
     return 0
 }
 
@@ -815,17 +925,106 @@ verb_start_run() {
     [ -d /run/systemd/system ] || {
         phase "transient-unit" unavailable
         note "systemd is not booted here; no transient unit was created."
-        note "the command it WOULD have run: $interpreter -m tc_growth.cli deploy-run $run_id --target-config $TARGET_CONF"
+        note "the command it WOULD have run: $interpreter -B -m tc_growth.cli deploy-run $run_id --target-config $TARGET_CONF"
         note "  working directory: $runtime/orchestrator"
         return "$EXIT_SYSTEMD_ABSENT"
     }
+    # `-B` / PYTHONDONTWRITEBYTECODE: the runner executes FROM the authenticated runtime, so
+    # letting it write bytecode there would leave the tree no longer matching its manifest — the
+    # next `verify_runtime` would refuse the very runtime root just deployed (PR #81 review).
     run_clean systemd-run --collect --unit="$TC_UNIT_PREFIX-run-$run_id" \
         --uid="$TC_SERVICE_USER" --working-directory="$runtime/orchestrator" \
         --setenv=TC_DB_PATH="$TC_STORE_DB" \
-        "$interpreter" -m tc_growth.cli deploy-run "$run_id" --target-config "$TARGET_CONF" \
+        --setenv=PYTHONDONTWRITEBYTECODE=1 \
+        "$interpreter" -B -m tc_growth.cli deploy-run "$run_id" --target-config "$TARGET_CONF" \
         || die "could not create the transient deployment unit"
     phase "transient-unit" ok
     note "$TC_UNIT_PREFIX-run-$run_id created, running from the root-owned runtime"
+    return 0
+}
+
+verb_start_acceptance() {
+    # WP-U4d.2: the root side of the Console-driven acceptance (Acceptance B). The Console
+    # launches an acceptance run through THIS single entry point — there is no second privileged
+    # path and `systemd-run`/interpreters are never granted to the service user for it.
+    #
+    # The acceptance HARNESS is tc_growth code, so root running it must run it from root-owned
+    # code — otherwise the service user could edit what root executes, which is a worse failure
+    # than the forged verdict this whole increment exists to prevent. It therefore runs from the
+    # same root-owned `current` runtime `start-run` uses, and the receipt it seals is attested
+    # by root about a run root actually performed.
+    #
+    # Unlike `start-run`, this runs the harness AS ROOT (not `systemd-run --uid`): the acceptance
+    # installs a disposable target's machinery and seals a root-owned receipt, both of which
+    # require root. systemd is NOT required — the harness itself defers the systemd-bound phases
+    # and the resulting verdict is BLOCKED, which is the honest outcome on a host without one.
+    local run_id="$1" current runtime interpreter
+    case "$run_id" in ''|*[!0-9]*) die "start-acceptance takes a numeric run id and nothing else" ;; esac
+
+    [ -f "$TC_SNAPSHOT_DIR/current" ] || die \
+        "no deployment has been applied on this target yet, so there is no root-owned runtime to "\
+"run the acceptance harness from. Perform the first deployment (the governed host setup) before "\
+"launching an acceptance from the Console."
+    _assert_root_owned_and_locked "$TC_SNAPSHOT_DIR/current"
+    current="$(cat "$TC_SNAPSHOT_DIR/current")"
+    valid_sha "$current" || die "the current-runtime pointer is not a SHA: refusing to act on it"
+    runtime="$TC_RUNTIME_DIR/$current"
+    _assert_root_owned_and_locked "$runtime"
+    verify_runtime "$current"
+    phase "verify-runtime" ok
+
+    interpreter="$(resolve_interpreter "$current")" || return "$EXIT_REFUSED"
+    phase "verify-interpreter" ok
+    note "the acceptance harness will execute as root from $runtime, which the service user cannot write"
+
+    # The harness inherits nothing from the caller; everything it needs is a ROOT-derived
+    # reference — the runtime SHA and service user (from `current` and target.conf), and the
+    # durable store location (TC_STORE_DB, same as `start-run` passes at line ~864). The first
+    # on-host run proved the store path is not optional: launched without it, the harness
+    # resolved a per-checkout default INSIDE the immutable runtime and could only refuse — the
+    # run row it must finish lives in the store the Console wrote it to, nowhere else.
+    [ -n "$TC_STORE_DB" ] || die \
+"target.conf carries no TC_STORE_DB, so root cannot locate the durable acceptance record. The "\
+"harness must read and finish the SAME run row the Console created; refusing to launch it "\
+"against a guessed store."
+
+    # WHERE it runs matters as much as what it inherits. The Console's sudo hop starts this
+    # program inside tc-console.service's own cgroup and mount namespace, which breaks the run
+    # twice over: `check-console-restart-reconnect` restarts that very unit — with the default
+    # control-group KillMode that would kill the harness mid-run, by its own self-check — and
+    # the unit's ProtectSystem sandbox mounts /usr read-only over the root-owned runtime. So
+    # where a service manager is booted, root moves the harness into its OWN transient unit,
+    # exactly as `start-run` already does for the deploy runner; `--wait --pipe` because unlike
+    # the fire-and-forget runner, the launcher's evidence is this verb's exit and output.
+    # `systemd-run` remains a ROOT capability — the service user's sudo surface is unchanged.
+    # Without a booted systemd the direct exec remains: the restart check defers there, so the
+    # self-termination path cannot arise.
+    #
+    # Both launches disable bytecode writes (`-B` and PYTHONDONTWRITEBYTECODE=1). The harness is
+    # Python executing FROM the authenticated runtime; on the first on-host PASS it left
+    # `__pycache__` behind inside that tree, so the runtime no longer matched the manifest and a
+    # SECOND launch would have been refused against it (PR #81 review). The flag covers this
+    # interpreter and the variable covers the Python children the harness itself spawns.
+    if [ -d /run/systemd/system ]; then
+        systemctl reset-failed "$TC_UNIT_PREFIX-acceptance-$run_id.service" 2>/dev/null || true
+        run_clean systemd-run --quiet --wait --pipe --collect \
+            --unit="$TC_UNIT_PREFIX-acceptance-$run_id" \
+            --property=WorkingDirectory="$runtime/orchestrator" \
+            --setenv=PATH="$PATH" --setenv=HOME=/root --setenv=LANG=C.UTF-8 \
+            --setenv=TC_ACCEPTANCE_RUNTIME_SHA="$current" \
+            --setenv=TC_ACCEPTANCE_SERVICE_USER="$TC_SERVICE_USER" \
+            --setenv=TC_DB_PATH="$TC_STORE_DB" \
+            --setenv=PYTHONDONTWRITEBYTECODE=1 \
+            "$interpreter" -B -m tc_growth.cli acceptance-root "$run_id" \
+            || die "the acceptance harness reported a failure"
+    else
+        ( cd "$runtime/orchestrator" && env -i PATH="$PATH" HOME=/root LANG=C.UTF-8 \
+            TC_ACCEPTANCE_RUNTIME_SHA="$current" TC_ACCEPTANCE_SERVICE_USER="$TC_SERVICE_USER" \
+            TC_DB_PATH="$TC_STORE_DB" PYTHONDONTWRITEBYTECODE=1 \
+            "$interpreter" -B -m tc_growth.cli acceptance-root "$run_id" ) \
+            || die "the acceptance harness reported a failure"
+    fi
+    phase "start-acceptance" ok
     return 0
 }
 
@@ -840,5 +1039,6 @@ case "${1-}" in
     rollback)   [ $# -eq 1 ] || die "rollback takes no arguments"; verb_rollback ;;
     bootstrap)  [ $# -eq 2 ] || die "bootstrap takes exactly one argument, the target SHA"; verb_bootstrap "$2" ;;
     start-run)  [ $# -eq 2 ] || die "start-run takes exactly one argument, the run id"; verb_start_run "$2" ;;
-    *)          die "not a verb: '${1-}' (the interface is: self-check, apply <sha>, rollback, start-run <id>, bootstrap <sha>)" ;;
+    start-acceptance) [ $# -eq 2 ] || die "start-acceptance takes exactly one argument, the run id"; verb_start_acceptance "$2" ;;
+    *)          die "not a verb: '${1-}' (the interface is: self-check, apply <sha>, rollback, start-run <id>, start-acceptance <id>, bootstrap <sha>)" ;;
 esac

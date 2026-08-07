@@ -168,6 +168,33 @@ class SqliteStore:
     def list_deploy_steps(self, run_id: int) -> list[dict]:
         return records.list_deploy_steps(self._conn, run_id)
 
+    # -- WP-U4d.2 acceptance runs --
+    def begin_acceptance_run(self, *, requested_by: str, root: str) -> int | None:
+        return records.begin_acceptance_run(self._conn, requested_by=requested_by, root=root)
+
+    def set_acceptance_root(self, run_id: int, root: str) -> bool:
+        return records.set_acceptance_root(self._conn, run_id, root)
+
+    def get_acceptance_run(self, run_id: int) -> dict | None:
+        return records.get_acceptance_run(self._conn, run_id)
+
+    def list_acceptance_runs(self, *, limit: int = 20) -> list[dict]:
+        return records.list_acceptance_runs(self._conn, limit=limit)
+
+    def claim_acceptance_run(self, run_id: int) -> bool:
+        return records.claim_acceptance_run(self._conn, run_id)
+
+    def finish_acceptance_run(self, run_id: int, *, verdict: str, summary: str) -> None:
+        records.finish_acceptance_run(self._conn, run_id, verdict=verdict, summary=summary)
+
+    def record_acceptance_phase(self, run_id: int, *, seq: int, name: str, status: str,
+                                detail: str | None = None) -> int:
+        return records.record_acceptance_phase(self._conn, run_id, seq=seq, name=name,
+                                               status=status, detail=detail)
+
+    def list_acceptance_phases(self, run_id: int) -> list[dict]:
+        return records.list_acceptance_phases(self._conn, run_id)
+
     # -- lifecycle --
     def seed_incident_case(self) -> int:
         return seed.seed_incident_case(self._conn)

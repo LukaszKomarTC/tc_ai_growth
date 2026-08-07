@@ -32,6 +32,8 @@
     python -m tc_growth.cli console [port]               # Operations Console (execute ops; 127.0.0.1 + token)
     python -m tc_growth.cli deploy-run <id> [--target-config FILE]  # what the transient unit runs
     python -m tc_growth.cli deploy-vps-acceptance <dir> [--keep]  # bounded acceptance run for a DISPOSABLE target
+    python -m tc_growth.cli acceptance-run <id>       # what the Console's detached acceptance runner runs
+    python -m tc_growth.cli acceptance-root <id>      # the ROOT side start-acceptance runs; seals the receipt
     python -m tc_growth.cli deploy-harness <dir> [--tamper] [--keep] [--stand-in]  # build a DISPOSABLE deploy target and run the real chain against it
 
 `smoke` exercises a single host-side tool WITHOUT the AI runtime — the fastest way to surface
@@ -573,6 +575,71 @@ def cmd_deploy_run(run_id_raw: str, target_config: str | None = None) -> int:
     return 0 if outcome == "succeeded" else 1
 
 
+def cmd_acceptance_run(run_id_raw: str) -> int:
+    """WP-U4d.2: the detached acceptance runner the Console spawns.
+
+    Takes a run id — never a path, never a target. It claims the requested row, makes the ONE
+    escalation (`sudo -n <privileged entry> start-acceptance <id>`), and records the outcome. A
+    refused or impossible launch finishes the run BLOCKED; a successful launch hands the row to
+    the root side, which streams the engine phases and writes the terminal verdict.
+    """
+    from . import acceptance_run, deploy_acceptance
+    from .store import open_store
+
+    try:
+        run_id = int(run_id_raw)
+    except ValueError:
+        print("acceptance-run takes the numeric id of a requested acceptance run")
+        return 2
+    store = open_store()
+    try:
+        outcome = acceptance_run.execute(store, run_id)
+    except deploy_acceptance.AcceptanceRefused as exc:
+        print(f"refused: {exc}")
+        return 2
+    finally:
+        store.close()
+    print(outcome)
+    return 0 if outcome == "launched" else 1
+
+
+def cmd_acceptance_root(run_id_raw: str) -> int:
+    """WP-U4d.2: the ROOT side of a Console acceptance — what `start-acceptance` runs.
+
+    Runs the bounded engine acceptance, streams phases into the durable record, computes the
+    verdict from those rows and seals a ROOT-OWNED receipt binding it. This is the only thing
+    that can finalise a positive verdict; it is gated on euid 0 and reached only through the
+    privileged verb, from root-owned code.
+    """
+    from . import acceptance_run, deploy_acceptance
+    from .store import open_store
+
+    try:
+        run_id = int(run_id_raw)
+    except ValueError:
+        print("acceptance-root takes the numeric id of an acceptance run")
+        return 2
+    # These references are ROOT-derived (set by the start-acceptance verb from `current` and
+    # target.conf), never caller input. Absent (e.g. run by hand), the receipt-binding check
+    # defers and the store-ownership write is not exercised — the honest degradation.
+    import os as _os
+    resolved_head = _os.environ.get("TC_ACCEPTANCE_RUNTIME_SHA") or None
+    account = _os.environ.get("TC_ACCEPTANCE_SERVICE_USER") or None
+    resolved_target = acceptance_run.DISPOSABLE_ACCEPTANCE_NAMESPACE if resolved_head else None
+    store = open_store()
+    try:
+        outcome = acceptance_run.execute_as_root(
+            store, run_id, resolved_head=resolved_head, resolved_target=resolved_target,
+            account=account)
+    except deploy_acceptance.AcceptanceRefused as exc:
+        print(f"refused: {exc}")
+        return 2
+    finally:
+        store.close()
+    print(outcome)
+    return 0 if outcome in ("PASS", "FAILED SAFELY") else 1
+
+
 def cmd_deploy_harness(root_raw: str, *, tamper: bool, keep: bool,
                        stand_in: bool = False) -> int:
     """WP-U4d.1: build a disposable deployment target and run the real chain against it.
@@ -748,6 +815,16 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
             config = rest[index + 1]
         return cmd_deploy_run(rest[0], config)
+    if cmd == "acceptance-run":
+        if not rest:
+            print("Usage: acceptance-run <requested-run-id>")
+            return 1
+        return cmd_acceptance_run(rest[0])
+    if cmd == "acceptance-root":
+        if not rest:
+            print("Usage: acceptance-root <acceptance-run-id>")
+            return 1
+        return cmd_acceptance_root(rest[0])
     if cmd == "deploy-vps-acceptance":
         positional = [a for a in rest if not a.startswith("--")]
         if not positional:

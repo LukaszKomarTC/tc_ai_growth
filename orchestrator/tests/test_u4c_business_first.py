@@ -310,8 +310,9 @@ def test_u4c_adds_no_production_write_capability(env):
         assert not any(word in label for word in ("apply", "execute", "publish", "write"))
     from tc_growth.core.actions import OPERATIONS
 
-    assert {op.id for op in OPERATIONS if op.enabled} == {
-        "smtp_test", "run_integrity_scan", "redeliver_latest_report"}
+    # No ENABLED operation writes production. (deploy_acceptance is enabled but disposable-only,
+    # production_write=False — the exact enabled set is pinned in test_action_registry.py.)
+    assert not any(op.enabled and op.production_write for op in OPERATIONS)
 
 
 # --- criteria (review #76 round 2): durable idempotence + defects never wear policy's clothes ---

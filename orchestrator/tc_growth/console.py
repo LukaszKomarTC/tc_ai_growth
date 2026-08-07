@@ -75,6 +75,23 @@ _DEPLOY_ERRORS = {
                 "refusal. It has been recorded in Evidence.",
 }
 
+# WP-U4d.2. Same discipline as the deploy surface: whitelisted keys, server-fixed text.
+_ACCEPTANCE_RUN = re.compile(r"^/acceptance/(\d+)$")
+_ACCEPTANCE_NOTICES = {
+    "started": "Acceptance run launched in its own process. This page follows it from the "
+               "durable record, so it survives anything that happens to the Console.",
+}
+_ACCEPTANCE_ERRORS = {
+    "not-offered": "Running the acceptance from the browser is not enabled yet — the operation "
+                   "is registered for review and stays refused until the privileged verb it "
+                   "launches exists on the host and the enabling flip is itself reviewed "
+                   "(WP-U4d.2).",
+    "busy": "An acceptance run is already live. There is at most one at a time — it mutates "
+            "real host state, and two interleaved runs would corrupt each other's evidence.",
+    "internal": "Something went WRONG INSIDE THE CONSOLE — this is a defect, not a policy "
+                "refusal. It has been recorded in Evidence.",
+}
+
 _DECISION_ACT = re.compile(
     r"^/decision/(\d+)/(approve|reject|unapprove|verify|verify-confirm|adopt-live)$")
 _DECISION_NOTICES = {
@@ -340,6 +357,7 @@ def _shell(title: str, active: str, body: str, *, site_name: str, env_kind: str)
     nav = "".join([
         _tab("Home", "/"), _tab("Decisions", "/decisions"), _tab("Operations", "/operations"),
         _tab("Evidence", "/logs"), _tab("Cases", "/cases"), _tab("Deploy", "/deploy"),
+        _tab("Acceptance", "/acceptance"),
     ])
     kind = (env_kind or "staging").strip().lower()
     badge_cls = "prod" if kind == "production" else "stag"
@@ -376,7 +394,10 @@ def _operations_body() -> str:
     ex = _executor()
     rows = []
     for op in OPERATIONS:
-        if not op.enabled:
+        # Off the generic operations surface: disabled ops, and ops with their OWN dedicated
+        # surface (deploy → /deploy, acceptance → /acceptance). The latter must never be
+        # runnable through the generic executor, which would invoke them with no arguments.
+        if not op.enabled or not op.self_service:
             continue
         prev = ex.preview(op.id)
         badge = "<span class='badge write'>writes</span>" if prev.writes else "<span class='badge'>read-only</span>"
@@ -562,7 +583,8 @@ class _Handler(BaseHTTPRequestHandler):
 
         if path == "/api/operations":
             self._json(200, {"operations": [
-                {"id": op.id, "name": op.name} for op in OPERATIONS if op.enabled]})
+                {"id": op.id, "name": op.name}
+                for op in OPERATIONS if op.enabled and op.self_service]})
             return
         if path == "/api/preview":
             op_id = parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "").get("op", [""])[0]
@@ -719,6 +741,51 @@ class _Handler(BaseHTTPRequestHandler):
                 self._html(200, _shell("Deploy", "deploy", body, **chrome))
                 return
             self._html(200, _shell(title, "deploy", body, **chrome))
+        elif path == "/acceptance" or _ACCEPTANCE_RUN.match(path):
+            # WP-U4d.2. Reading acceptance history is never dangerous, so the page always
+            # renders; the control that LAUNCHES one appears only when the operation is enabled.
+            from .core.actions import get_operation
+            from . import console_views  # noqa: F811 - function-local name in do_GET
+            from .store import open_store  # noqa: F811 - same reason
+
+            offered = get_operation("deploy_acceptance").enabled
+            csrf = csrf_for(session, secret)
+            q = parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+            notice = _ACCEPTANCE_NOTICES.get(q.get("msg", [""])[0], "")
+            error = _ACCEPTANCE_ERRORS.get(q.get("err", [""])[0], "")
+            m = _ACCEPTANCE_RUN.match(path)
+            try:
+                store = open_store()
+                if m:
+                    run = store.get_acceptance_run(int(m.group(1)))
+                    if run is None:
+                        self._send(404, b"no such acceptance run", "text/plain; charset=utf-8")
+                        return
+                    from . import acceptance_run as acceptance_mod
+                    phases = store.list_acceptance_phases(run["id"])
+                    # The DISPLAYED verdict is computed against the root-owned receipt, never
+                    # read from the store's verdict column — application data cannot finalise a
+                    # positive result. No valid receipt ⇒ BLOCKED.
+                    trusted = acceptance_mod.trusted_verdict(run, phases)
+                    body = console_views.acceptance_run_body(run, phases, trusted=trusted)
+                    title = f"Acceptance #{run['id']}"
+                else:
+                    from . import acceptance_run as acceptance_mod
+                    runs = store.list_acceptance_runs(limit=20)
+                    trusted = {r["id"]: acceptance_mod.trusted_verdict(
+                        r, store.list_acceptance_phases(r["id"])) for r in runs}
+                    body = console_views.acceptance_body(
+                        runs, csrf=csrf, offered=offered, trusted=trusted,
+                        disabled_reason=_ACCEPTANCE_ERRORS["not-offered"],
+                        notice=notice, error=error)
+                    title = "Acceptance"
+            except Exception as exc:  # noqa: BLE001 - a defect, and it must say so; rendered
+                # in place for the same reason the deploy view is (redirect-to-self loops).
+                self._record_internal_error("acceptance/view", exc)
+                body = (f"<div class='sev-warn'>{_ACCEPTANCE_ERRORS['internal']}</div>")
+                self._html(200, _shell("Acceptance", "acceptance", body, **chrome))
+                return
+            self._html(200, _shell(title, "acceptance", body, **chrome))
         elif path.startswith("/report/"):
             from . import console_views
 
@@ -800,6 +867,13 @@ class _Handler(BaseHTTPRequestHandler):
             self._deploy_act(path, form)
             return
 
+        if path == "/acceptance/run":
+            if not valid_csrf(form.get("csrf"), session, secret):
+                self._json(403, {"error": "bad csrf token"})
+                return
+            self._acceptance_act(form, session=session, secret=secret)
+            return
+
         m = _DECISION_ACT.match(path)
         if m:
             if not valid_csrf(form.get("csrf"), session, secret):
@@ -857,6 +931,53 @@ class _Handler(BaseHTTPRequestHandler):
             self._redirect_deploy(run_id, "msg=started")
         except Exception as exc:  # noqa: BLE001 - defects never wear policy's clothes
             self._redirect_deploy(None, f"err={self._record_internal_error('deploy/act', exc)}")
+
+    def _redirect_acceptance(self, run_id: int | None, param: str) -> None:
+        where = f"/acceptance/{run_id}" if run_id else "/acceptance"
+        self._headers(303, "text/html; charset=utf-8",
+                      extra=[("Location", f"{where}?{param}")], body_len=0)
+
+    def _acceptance_act(self, form: dict, *, session: str, secret: bytes) -> None:
+        """Launch the bounded disposable acceptance (WP-U4d.2).
+
+        The browser contributes NOTHING but the approved click: no field of this form reaches
+        the run. The run directory is derived server-side from the fixed safe parent, every
+        other value is the engine's own resolution, and the one escalation happens in a
+        detached process through the privileged program's fixed verb surface. Approval is
+        genuinely two-step: the first POST mutates nothing and renders the confirmation page;
+        only the confirmed POST creates the row and launches.
+        """
+        from . import acceptance_run as acceptance_mod
+        from . import console_views  # noqa: F811 - function-local, see do_GET
+        from .config import active_site, get_settings
+        from .core.actions import get_operation
+        from .store import open_store  # noqa: F811 - see do_GET
+
+        if not get_operation("deploy_acceptance").enabled:
+            self._redirect_acceptance(None, "err=not-offered")
+            return
+        try:
+            if form.get("confirmed") != "1":
+                s = get_settings()
+                chrome = {"site_name": s.site_name or (active_site() or "Tossa Cycling"),
+                          "env_kind": s.env_kind}
+                body = console_views.acceptance_confirm_body(csrf=csrf_for(session, secret))
+                self._html(200, _shell("Confirm acceptance run", "acceptance", body, **chrome))
+                return
+            store = open_store()
+            # The row id is not known until the row exists, and the root is derived FROM the
+            # id — so reserve the id first, then stamp the derived root. Two steps, one row;
+            # begin_acceptance_run's NOT EXISTS guard still makes concurrent requests lose.
+            run_id = store.begin_acceptance_run(requested_by="owner", root="pending")
+            if run_id is None:
+                self._redirect_acceptance(None, "err=busy")
+                return
+            store.set_acceptance_root(run_id, acceptance_mod.derive_run_root(run_id))
+            acceptance_mod.spawn_detached(run_id)
+            self._redirect_acceptance(run_id, "msg=started")
+        except Exception as exc:  # noqa: BLE001 - defects never wear policy's clothes
+            self._redirect_acceptance(
+                None, f"err={self._record_internal_error('acceptance/act', exc)}")
 
     def _record_internal_error(self, where: str, exc: BaseException) -> str:
         """An UNEXPECTED exception is a defect, not a policy outcome (review #76). Record it as
@@ -1098,6 +1219,19 @@ class _Handler(BaseHTTPRequestHandler):
                 self.wfile.flush()
 
         stop_pulse = _start_keepalive(self.wfile, wlock)
+
+        # A dedicated-surface operation (deploy_release, deploy_acceptance) must never run through
+        # the generic executor — it would be invoked with no run id. It is absent from the
+        # operations listing, but a crafted /api/execute POST could still name it, so refuse here.
+        op = next((o for o in OPERATIONS if o.id == op_id), None)
+        if op is None or not op.self_service:
+            frame({"type": "result", "execution_status": "blocked", "outcome": "blocked",
+                   "severity": "attention",
+                   "block_reason": "this operation is not runnable from the operations surface; "
+                                   "use its dedicated page"})
+            stop_pulse.set()
+            self.close_connection = True
+            return
 
         def emit(ev: StepEvent) -> None:
             # F3: step detail can carry scanner output including server paths — reduce them the

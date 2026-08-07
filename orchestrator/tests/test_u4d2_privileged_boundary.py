@@ -18,6 +18,7 @@ _phases_as_unavailable_rather_than_claiming_them` pins that it does.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import stat
@@ -537,9 +538,25 @@ def test_the_sudoers_drop_in_grants_the_transient_unit_verb(target):
     sudoers = Path(target.target.sudoers_file).read_text()
     entry = target.target.privileged_entry
     assert f"{entry} start-run [0-9]*" in sudoers
+    # WP-U4d.2: the Console-driven acceptance is launched through this same one entry point,
+    # by a numeric run id and nothing else — no second privileged path.
+    assert f"{entry} start-acceptance [0-9]*" in sudoers
     for verb in ("apply", "rollback", "self-check"):
         assert f"{entry} {verb}" in sudoers
     assert "systemd-run" not in sudoers, "systemd-run must never be granted as a capability"
+
+
+def test_start_acceptance_refuses_before_any_deployment_has_been_applied(target):
+    """The acceptance harness must run from root-owned code, so with no root-owned runtime yet
+    the verb refuses rather than running the service-user-writable checkout as root."""
+    proc = run_verb(target, "start-acceptance", "7")
+    assert proc.returncode == 2
+    assert "no deployment has been applied" in proc.stderr
+
+
+def test_start_acceptance_rejects_a_non_numeric_run_id(target):
+    proc = run_verb(target, "start-acceptance", "1;id")
+    assert proc.returncode == 2
 
 
 def test_start_run_refuses_before_any_deployment_has_been_applied(target):
@@ -775,7 +792,8 @@ def test_bootstrap_is_never_reachable_from_the_service_user(fresh):
     assert f"{fresh.target.privileged_entry} bootstrap" not in sudoers
     granted = [ln.split(fresh.target.privileged_entry + " ")[1].split()[0]
                for ln in sudoers.splitlines() if fresh.target.privileged_entry + " " in ln]
-    assert set(granted) == {"apply", "rollback", "self-check", "start-run"}, granted
+    assert set(granted) == {"apply", "rollback", "self-check", "start-run",
+                            "start-acceptance"}, granted
 
 
 # --- what is NOT proven here, pinned so it cannot be quietly claimed -----------------------------
@@ -991,3 +1009,287 @@ def test_an_untraversable_acceptance_root_is_refused_not_loosened(tmp_path):
         deploy_acceptance.assert_acceptance_root(private / "run")
     assert "will NOT loosen directories outside its own tree" in str(exc.value)
     assert private.stat().st_mode == before
+
+
+# --- WP-U4d.2: bootstrap grants an acceptance-ONLY sudo capability (review of the on-host defect)
+
+def test_bootstrap_installs_only_the_acceptance_sudo_grant(fresh):
+    """The on-host prep found the Console's `sudo -n start-acceptance` was ungranted on a host
+    that had not run a production `apply` (write_sudoers is only called by apply). bootstrap now
+    installs a SEPARATE, least-privilege drop-in: start-acceptance with a numeric id, nothing
+    else — never apply/rollback/start-run, and it does not write the deploy grant file."""
+    staged_release(fresh)
+    assert run_verb(fresh, "bootstrap", fresh.target_sha).returncode == 0
+
+    drop = Path(f"{fresh.target.sudoers_file}-acceptance")
+    assert drop.exists(), "bootstrap did not install the acceptance sudo drop-in"
+    st = drop.stat()
+    assert st.st_uid == 0 and st.st_gid == 0, "the acceptance drop-in is not root-owned"
+    assert stat.S_IMODE(st.st_mode) == 0o440, oct(st.st_mode)
+
+    body = drop.read_text()
+    grant = [ln for ln in body.splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
+    assert len(grant) == 1, grant
+    line = grant[0]
+    assert line.startswith(f"{fresh.target.service_user} ALL=(root) NOPASSWD:"), line
+    assert line.endswith(f"{fresh.target.privileged_entry} start-acceptance [0-9]*"), line
+    # The GRANT itself (not the comment header) must name no other verb.
+    for forbidden in (" apply ", " rollback", "start-run", "systemd-run", "self-check",
+                      " bootstrap"):
+        assert forbidden not in line, f"the acceptance grant must not mention {forbidden!r}"
+
+    # The production-deploy / inspector grant is a SEPARATE file, untouched by bootstrap — it is
+    # only written by a real `apply`, so on a freshly-bootstrapped host it does not exist yet.
+    assert not Path(fresh.target.sudoers_file).exists(), \
+        "bootstrap wrote the deploy grant file; it must only write the acceptance drop-in"
+
+
+def test_the_program_strictly_validates_the_start_acceptance_id(fresh):
+    """sudo's `[0-9]*` is a coarse filter: its trailing wildcard PERMITS extra trailing args and
+    a digit-then-junk id (proven in the real-sudo test below). The PROGRAM is the strict
+    enforcer — it refuses a missing, non-numeric, digit-prefixed-junk or extra-argument id. These
+    invoke the real program directly (as the sudo hop would, once past sudo)."""
+    staged_release(fresh)
+    assert run_verb(fresh, "bootstrap", fresh.target_sha).returncode == 0
+    # missing / non-numeric / digit-then-junk / extra argument all refuse (non-zero, no launch)
+    for argv in (("start-acceptance",),
+                 ("start-acceptance", "abc"),
+                 ("start-acceptance", "7x"),
+                 ("start-acceptance", "7; id"),
+                 ("start-acceptance", "7", "8")):
+        proc = run_verb(fresh, *argv)
+        assert proc.returncode != 0, f"the program accepted a bad id: {argv}"
+
+
+@pytest.mark.skipif(shutil.which("sudo") is None or shutil.which("setpriv") is None,
+                    reason="the real sudo-hop test needs sudo and setpriv")
+def test_the_real_sudo_hop_permits_only_start_acceptance(tmp_path):
+    """Control 6: the previously untested hop — unprivileged user -> `sudo -n` -> root entry —
+    exercised with REAL sudo. A stub stands in for the entry so this isolates the sudoers ROUTE
+    from the program's internals (those are covered above); the drop-in uses the exact line
+    format write_acceptance_sudoers emits. sudo permits ONLY the start-acceptance verb on the
+    exact entry path; apply/rollback/start-run, a missing id, a non-digit id and an alternate
+    executable path are denied by sudo itself. (Extra trailing args and digit-then-junk ids are
+    permitted by sudo's trailing wildcard and refused by the program — see the test above.)"""
+    import pwd
+
+    stub = tmp_path / "entry.sh"
+    stub.write_text('#!/bin/bash\necho "ran: $*"\n')
+    stub.chmod(0o755); os.chown(stub, 0, 0)
+    other = tmp_path / "other.sh"
+    other.write_text('#!/bin/bash\necho other\n')
+    other.chmod(0o755); os.chown(other, 0, 0)
+
+    caller = "nobody"
+    pw = pwd.getpwnam(caller)
+    dropin = Path("/etc/sudoers.d/tc-u4d2-suhop")
+    # The SAME one-line format the generator emits, with the stub as the fixed entry path.
+    dropin.write_text(f"{caller} ALL=(root) NOPASSWD: {stub} start-acceptance [0-9]*\n")
+    os.chown(dropin, 0, 0); dropin.chmod(0o440)
+    assert subprocess.run(["visudo", "-c", "-f", str(dropin)],
+                          capture_output=True).returncode == 0
+
+    def as_caller(*argv):
+        return subprocess.run(
+            ["setpriv", "--reuid", str(pw.pw_uid), "--regid", str(pw.pw_gid), "--clear-groups",
+             "sudo", "-n", *argv], capture_output=True, text=True, timeout=60)
+    try:
+        ok = as_caller(str(stub), "start-acceptance", "7")
+        assert ok.returncode == 0 and "ran: start-acceptance 7" in ok.stdout, \
+            f"sudo denied the legitimate hop: rc={ok.returncode} err={ok.stderr}"
+        for denied in ([str(stub), "apply", "0" * 40],
+                       [str(stub), "rollback"],
+                       [str(stub), "start-run", "7"],
+                       [str(stub), "start-acceptance"],         # missing id
+                       [str(stub), "start-acceptance", "abc"],  # non-digit id
+                       [str(other), "start-acceptance", "7"]):  # alternate executable path
+            r = as_caller(*denied)
+            assert r.returncode != 0, f"sudo PERMITTED a case it must deny: {denied}"
+    finally:
+        dropin.unlink(missing_ok=True)
+
+
+def test_bootstrap_fails_closed_when_visudo_rejects_the_grant(fresh):
+    """Review of f929d52: at the sudoers boundary a failing (or absent) validator must stop the
+    install, not warn and proceed — a malformed rule can break sudo on the host. Shadow `visudo`
+    with a stub that rejects everything (its dir is first on the program's fixed PATH); bootstrap
+    must die with NO acceptance drop-in and NO `current` pointer written."""
+    staged_release(fresh)
+    stub = Path("/usr/local/sbin/visudo")
+    had_stub = stub.exists()
+    assert not had_stub, "/usr/local/sbin/visudo already exists; refusing to clobber it"
+    stub.write_text("#!/bin/bash\nexit 1\n")
+    stub.chmod(0o755)
+    os.chown(stub, 0, 0)
+    try:
+        proc = run_verb(fresh, "bootstrap", fresh.target_sha)
+        assert proc.returncode == 2, (proc.returncode, proc.stderr)
+        assert "does not validate" in proc.stderr or "unvalidated" in proc.stderr, proc.stderr
+        assert not Path(f"{fresh.target.sudoers_file}-acceptance").exists(), \
+            "an unvalidated acceptance drop-in was installed"
+        assert not Path(fresh.target.snapshot_dir, "current").exists(), \
+            "the current pointer was written despite a failed sudoers validation"
+    finally:
+        stub.unlink()
+
+
+# --- start-acceptance reaches the durable store (the first on-host BLOCKED run) -----------------
+
+def test_start_acceptance_runs_the_harness_against_the_targets_durable_store(fresh, tmp_path):
+    """The first on-host run (PR #81, production VPS, 2026-08-07) blocked HERE: the verb launched
+    the harness with a scrubbed environment and no store location, so the harness resolved a
+    per-checkout default INSIDE the immutable runtime and could only refuse — the run row it had
+    to finish lives in the store the Console wrote it to. The verb must hand root's own
+    TC_STORE_DB (digest-verified target.conf, exactly as `start-run` already does at its
+    transient unit) to the harness.
+
+    Through the REAL verb against the disposable target, whose stand-in application implements
+    `acceptance-root` with the real harness's store contract (TC_DB_PATH, or the per-checkout
+    fallback that failed production). The stand-in is the right instrument here for the same
+    reason the harness uses it everywhere: the subject is the LAUNCH MECHANICS — what environment
+    and store the verb hands over — not the engine, and the full real-harness integration is
+    exactly what the on-host acceptance itself proves. Pinned: the evidence lands in the target's
+    configured store, and no second store materialises inside the root-owned runtime."""
+    from tc_growth.store import open_store
+
+    staged_release(fresh)
+    assert run_verb(fresh, "bootstrap", fresh.target_sha).returncode == 0
+
+    store = open_store(fresh.target.db_path)
+    try:
+        run_id = store.begin_acceptance_run(requested_by="probe",
+                                            root=str(tmp_path / "acceptance-run-root"))
+        assert run_id is not None
+        assert store.claim_acceptance_run(run_id)  # the launcher's claim; the verb is root's side
+    finally:
+        store.close()
+
+    proc = run_verb(fresh, "start-acceptance", str(run_id))
+    # The harness reports BLOCKED with a non-zero exit, which the verb relays as its refusal
+    # exit — the honest outcome off-host. What must NOT happen is the store going missing.
+    assert proc.returncode == 2, (proc.returncode, proc.stdout, proc.stderr)
+
+    store = open_store(fresh.target.db_path)
+    try:
+        run = store.get_acceptance_run(run_id)
+        names = {p["name"] for p in store.list_acceptance_phases(run_id)}
+    finally:
+        store.close()
+    assert "stand-in-harness" in names, (
+        f"the harness recorded nothing in the target's durable store — the launch never "
+        f"reached it (phases: {names}; stderr: {proc.stderr})")
+    assert run["status"] == "done" and run["verdict"] == "BLOCKED", run
+    assert "durable store" in (run["summary"] or ""), \
+        "the harness's own summary was not preserved on the finished run"
+    # The defect's signature: a second store materialised inside the immutable runtime.
+    runtime_data = (Path(fresh.target.runtime_dir) / fresh.target_sha
+                    / "orchestrator" / "data")
+    assert not runtime_data.exists(), \
+        "the harness resolved a store inside the root-owned runtime instead of TC_STORE_DB"
+
+
+# --- executing a trusted runtime must not invalidate it (PR #81 review, run #3) -----------------
+#
+# Run #3 passed on the production VPS and, in passing, proved a defect: the harness is Python
+# executing FROM the root-owned runtime, so its own imports wrote `__pycache__/*.pyc` into the
+# tree root had just authenticated. The manifest then described a tree that no longer existed,
+# and `verify_runtime` would refuse the SECOND launch from the same runtime. A trusted runtime
+# that invalidates itself by running is not immutable in the sense the receipt claims.
+
+def _tree_digest(root: Path) -> list[str]:
+    """Every file under `root`, path and content, in a stable order — the same shape the
+    program's own manifest records, computed independently of it."""
+    out = []
+    for path in sorted(p for p in root.rglob("*") if p.is_file()):
+        out.append(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.relative_to(root)}")
+    return out
+
+
+def _launch_acceptance(target, run_id_root: Path) -> subprocess.CompletedProcess:
+    """Drive the REAL `start-acceptance` verb into the stand-in harness, exactly as the Console's
+    sudo hop does. The harness reports BLOCKED off-host (exit 2); what matters here is what the
+    launch leaves behind in the runtime, not the verdict."""
+    from tc_growth.store import open_store
+
+    store = open_store(target.target.db_path)
+    try:
+        run_id = store.begin_acceptance_run(requested_by="probe", root=str(run_id_root))
+        assert store.claim_acceptance_run(run_id)
+    finally:
+        store.close()
+    return run_verb(target, "start-acceptance", str(run_id))
+
+
+def test_executing_the_trusted_runtime_leaves_it_byte_for_byte_unchanged(fresh, tmp_path):
+    """Criteria 1, 2 and 4: hash the materialised runtime, launch it through the real privileged
+    path, hash it again. Nothing the interpreter generates may land inside the tree root vouched
+    for. Fails against `b64bfaf`, where the launch wrote `__pycache__` into the runtime."""
+    staged_release(fresh)
+    assert run_verb(fresh, "bootstrap", fresh.target_sha).returncode == 0
+
+    runtime = Path(fresh.target.runtime_dir) / fresh.target_sha
+    manifest = Path(f"{runtime}.manifest")
+    before, manifest_before = _tree_digest(runtime), manifest.read_text()
+
+    proc = _launch_acceptance(fresh, tmp_path / "run-root")
+    assert proc.returncode == 2, (proc.returncode, proc.stdout, proc.stderr)   # BLOCKED off-host
+
+    generated = [str(p.relative_to(runtime)) for p in runtime.rglob("*")
+                 if p.name == "__pycache__" or p.suffix == ".pyc"]
+    assert not generated, f"the launch wrote interpreter artefacts into the trusted tree: {generated}"
+    assert _tree_digest(runtime) == before, "executing the runtime changed the authenticated tree"
+    assert manifest.read_text() == manifest_before, "the runtime manifest was rewritten"
+
+
+def test_the_same_trusted_runtime_can_be_launched_twice_without_re_materialisation(fresh, tmp_path):
+    """Criterion 3. The second launch is the one that used to fail: `verify_runtime` compares the
+    tree against the manifest, and the FIRST launch had changed the tree. No cleanup, no
+    re-materialisation, no regenerated manifest between the two."""
+    staged_release(fresh)
+    assert run_verb(fresh, "bootstrap", fresh.target_sha).returncode == 0
+
+    first = _launch_acceptance(fresh, tmp_path / "run-root-1")
+    assert first.returncode == 2, (first.stdout, first.stderr)
+    second = _launch_acceptance(fresh, tmp_path / "run-root-2")
+    assert second.returncode == 2, (second.stdout, second.stderr)
+
+    # The signature of the defect: the second launch refused because the tree root authenticated
+    # no longer matched the manifest root recorded for it.
+    assert "no longer matches its manifest" not in second.stderr, second.stderr
+    assert "phase=verify-runtime         status=ok" in second.stdout, second.stdout
+
+
+def test_materialisation_takes_only_committed_content_from_a_dirty_release(fresh):
+    """Criterion 5. A release directory is a LIVE working tree — the Console serves out of it, so
+    Python drops `__pycache__` there and deployment leaves an untracked `.env` beside the code.
+    Materialising by copying that directory meant bootstrap refused (`verify_against_commit`
+    caught the extras) until an administrator hand-cleaned a serving tree. Root now builds the
+    tree from the commit, so untracked content is never a candidate for the trusted copy."""
+    release = staged_release(fresh)
+    (release / "orchestrator" / "tc_growth" / "__pycache__").mkdir(parents=True, exist_ok=True)
+    (release / "orchestrator" / "tc_growth" / "__pycache__" / "cli.cpython-312.pyc").write_bytes(b"\x00cached")
+    (release / "orchestrator" / ".env").write_text("TC_SECRET=not-in-any-commit\n")
+
+    proc = run_verb(fresh, "bootstrap", fresh.target_sha)
+    assert proc.returncode == 0, (
+        f"bootstrap refused a release carrying ordinary untracked artefacts, so trusted state "
+        f"still depends on hand-cleaning a serving tree:\n{proc.stdout}\n{proc.stderr}")
+
+    runtime = Path(fresh.target.runtime_dir) / fresh.target_sha
+    assert not list(runtime.rglob("__pycache__")), "untracked bytecode reached the trusted tree"
+    assert not (runtime / "orchestrator" / ".env").exists(), \
+        "an uncommitted .env was copied into the tree root vouches for"
+    assert (runtime / "orchestrator" / "tc_growth" / "cli.py").exists(), "committed content missing"
+
+
+def test_the_deployed_unit_does_not_write_bytecode_into_the_runtime(target):
+    """The same invariant for the long-running service `apply` deploys: it runs FROM the
+    authenticated runtime, so without this its first import would invalidate the manifest root
+    recorded for the runtime it just deployed."""
+    staged_release(target)
+    assert run_verb(target, "apply", target.target_sha).returncode in (0, 3)
+
+    unit = Path(target.target.unit_path).read_text()
+    assert "Environment=PYTHONDONTWRITEBYTECODE=1" in unit, unit
+    exec_start = [ln for ln in unit.splitlines() if ln.startswith("ExecStart=")]
+    assert exec_start and " -B -m tc_growth.cli" in exec_start[0], exec_start
