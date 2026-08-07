@@ -43,12 +43,17 @@ class _Stub:
                  boom: Exception | None = None, evidence=""):
         self.id, self.scope, self._value = cid, scope, value
         self._status, self._boom, self._evidence = status, boom, evidence
+        self._source = "stub"
+
+    def _with_source(self, source):
+        self._source = source
+        return self
 
     def collect(self, c):
         if self._boom:
             raise self._boom
         return inspection.CollectorResult(scope=self.scope, status=self._status,
-                                          value=self._value, source="stub",
+                                          value=self._value, source=self._source,
                                           evidence=self._evidence, reason="stub reading")
 
 
@@ -589,3 +594,100 @@ def test_the_fixture_env_value_is_redacted_by_the_common_boundary(store, monkeyp
     row = store.list_observations(run_id)[0]
     assert "leakme" not in row["value_json"]
     assert "leakme" not in (row["evidence"] or "")
+
+
+# --- every collector-originated string, not just the two obvious ones (PR #85 re-review) --------
+
+def test_a_secret_placed_only_in_reason_never_reaches_the_record_or_the_page(store):
+    """`reason` is written by the collector and rendered to the owner. Its intended purpose —
+    an explanatory sentence — is not a security property."""
+    class _Leaky(_Stub):
+        def collect(self, c):
+            return inspection.CollectorResult(
+                scope="probe.scope", status="warn", value={"v": 1}, source="stub",
+                evidence="", reason="failed to reach TC_API_TOKEN=hunter2-secret while polling")
+
+    run_id = inspection.run_inspection(store, [_Leaky({"v": 1})], ctx(now=T0))
+    row = store.list_observations(run_id)[0]
+    assert "hunter2-secret" not in (row["reason"] or "")
+    assert "redacted" in row["reason"]
+    assert "hunter2-secret" not in _render(store, now=T0)
+
+
+def test_an_oversized_reason_is_bounded(store):
+    class _Verbose(_Stub):
+        def collect(self, c):
+            return inspection.CollectorResult(
+                scope="probe.scope", status="ok", value={"v": 1}, source="stub",
+                evidence="", reason="q" * 20000)
+
+    run_id = inspection.run_inspection(store, [_Verbose({"v": 1})], ctx(now=T0))
+    reason = store.list_observations(run_id)[0]["reason"]
+    assert len(reason.encode()) <= inspection.MAX_REASON_BYTES + 100
+    assert "truncated" in reason
+
+
+def test_a_credential_bearing_source_cannot_persist_or_display_raw(store):
+    """`source` is rendered too. Held to the identifier contract, a credential-bearing URL
+    cannot survive it — and the reading it accompanied is no longer trusted."""
+    run_id = inspection.run_inspection(
+        store, [_Stub({"v": 1}, scope="probe.scope",
+                      cid="stub")._with_source("https://user:pa55w0rd@example.com/api?token=abc")],
+        ctx(now=T0))
+    row = store.list_observations(run_id)[0]
+    # Replaced outright, not de-punctuated: stripping the offending characters would have left
+    # `httpsuserpa55w0rdexample.comapitokenabc` — still the password, now looking harmless.
+    assert "pa55w0rd" not in row["source"] and "token" not in row["source"]
+    assert row["source"].startswith("unknown.source.")
+    assert "pa55w0rd" not in _render(store, now=T0)
+    assert row["status"] == inspection.STATUS_UNKNOWN
+
+
+def test_a_hostile_scope_cannot_poison_the_diff_key(store):
+    payload = "<script>alert('xss')</script>"
+    run_id = inspection.run_inspection(store, [_Stub({"v": 1}, scope=payload)], ctx(now=T0))
+    row = store.list_observations(run_id)[0]
+    assert "<" not in row["scope"] and "alert" not in row["scope"]
+    assert row["scope"].startswith("unnamed.scope.")
+    assert row["status"] == inspection.STATUS_UNKNOWN
+
+
+def test_a_consistently_malformed_identifier_still_diffs_deterministically(store):
+    """Sanitization has to be a function, not a guess: the same bad scope must land on the same
+    safe one, or the predecessor is never found and every sweep reads as drift."""
+    bad = "wp inventory!"
+    inspection.run_inspection(store, [_Stub({"v": 1}, scope=bad)], ctx(now=T0))
+    second = inspection.run_inspection(store, [_Stub({"v": 1}, scope=bad)], ctx(now=T0))
+    row = store.list_observations(second)[0]
+    assert row["change_class"] == inspection.CHANGE_UNCHANGED
+    assert row["predecessor_id"] is not None
+
+
+def test_an_empty_identifier_falls_back_rather_than_writing_a_blank_key(store):
+    run_id = inspection.run_inspection(store, [_Stub({"v": 1}, scope="   ")], ctx(now=T0))
+    row = store.list_observations(run_id)[0]
+    assert row["scope"] == "unnamed.scope"
+    assert row["status"] == inspection.STATUS_UNKNOWN
+
+
+def test_confidence_is_sanitized_like_any_other_collector_string(store):
+    class _Conf(_Stub):
+        def collect(self, c):
+            return inspection.CollectorResult(
+                scope="probe.scope", status="ok", value={"v": 1}, source="stub",
+                evidence="", reason="fine", confidence="high TC_SECRET=leaky")
+
+    run_id = inspection.run_inspection(store, [_Conf({"v": 1})], ctx(now=T0))
+    assert "leaky" not in (store.list_observations(run_id)[0]["confidence"] or "")
+
+
+def test_a_well_behaved_collector_is_untouched_by_the_boundary(store):
+    """The boundary must be invisible to correct collectors, or it will be worked around."""
+    run_id = inspection.run_inspection(store, [FixtureCollector("stable")], ctx(now=T0))
+    row = store.list_observations(run_id)[0]
+    assert row["scope"] == "fixture.probe"
+    assert row["collector_id"] == "fixture"
+    assert row["source"] == "TC_U5_FIXTURE_VALUE"
+    assert row["status"] == inspection.STATUS_OK
+    assert row["confidence"] == "high"
+    assert "truncated" not in (row["reason"] or "")

@@ -84,6 +84,16 @@ _REDACTED = "***redacted***"
 #: to find out is how a monitoring sweep takes down the Console.
 _MAX_VALUE_DEPTH = 12
 
+#: An owner-facing sentence, not a place to put a log excerpt.
+MAX_REASON_BYTES = 400
+#: `confidence` is a label ('high'), not prose.
+MAX_CONFIDENCE_BYTES = 64
+#: Identifiers are authored by collector CODE, never derived from inspected data, so they can be
+#: held to a strict contract rather than merely sanitized. Anything outside it is a collector
+#: bug, and the honest response is to keep the evidence but stop trusting the reading.
+MAX_IDENTIFIER_LEN = 64
+_IDENTIFIER_ALLOWED = re.compile(r"[^A-Za-z0-9._\-]+")
+
 
 class CollectionRefused(Exception):
     """Raised before any collection happens when the request itself is not answerable."""
@@ -236,17 +246,54 @@ def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def bound_evidence(text: str, *, limit: int = MAX_EVIDENCE_BYTES) -> str:
-    """Redact, then truncate, then say so. Order matters: truncating first could cut a secret in
-    half and leave the readable half in the record."""
+def safe_text(text: object, *, limit: int) -> str:
+    """Redact, then truncate, then say so.
+
+    Order matters: truncating first could cut a secret in half and leave the readable half in
+    the record. Every collector-originated string reaching durable evidence or the owner surface
+    goes through here — `reason` and `confidence` as much as `evidence`, because a field's
+    intended purpose is not a security property (PR #85 re-review).
+    """
     if not text:
         return ""
-    safe = deploy.redact(text)
+    safe = deploy.redact(str(text))
     raw = safe.encode("utf-8")
     if len(raw) <= limit:
         return safe
     kept = raw[:limit].decode("utf-8", errors="ignore")
     return f"{kept}\n[... truncated at {limit} bytes of {len(raw)}]"
+
+
+def bound_evidence(text: str, *, limit: int = MAX_EVIDENCE_BYTES) -> str:
+    """Evidence, redacted and bounded. Kept as its own name because it is the field most likely
+    to carry scraped source text, and reads better at the call site."""
+    return safe_text(text, limit=limit)
+
+
+def safe_identifier(raw: object, *, fallback: str) -> tuple[str, bool]:
+    """Hold an identifier to a strict contract; return it and whether it already complied.
+
+    `scope` is the key drift is computed against and `source`/`collector_id` are rendered, so an
+    identifier carrying markup, a URL or a credential is both a display hazard and a diff
+    hazard. These fields are written by collector code rather than derived from the systems
+    being inspected, so a strict `[A-Za-z0-9._-]` contract costs a well-behaved collector
+    nothing — and a violation is a bug worth surfacing rather than quietly cleaning up.
+
+    A non-conforming identifier is replaced ENTIRELY, never cleaned up in place. Stripping the
+    offending characters looks like sanitizing and is not: it turns
+    `https://user:pa55w0rd@host` into `httpsuserpa55w0rdhost`, which still contains the
+    password and now looks harmless. The replacement carries a short digest of the original so
+    it stays deterministic — the same bad identifier always lands on the same safe one, so drift
+    still works and two different broken collectors do not collide — while carrying not one
+    character of the source text. The caller degrades the reading to `unknown`, because a
+    collector that cannot name its own scope is not one whose reading should be believed.
+    """
+    text = str(raw or "").strip()
+    if not text:
+        return fallback, False
+    if len(text) <= MAX_IDENTIFIER_LEN and not _IDENTIFIER_ALLOWED.search(text):
+        return text, True
+    return f"{fallback}.{_sha256(text)[:8]}", False
 
 
 # --- classification -----------------------------------------------------------------------------
@@ -409,27 +456,42 @@ def run_inspection(store, collectors: list[Collector], ctx: CollectionContext, *
         except Exception as exc:  # noqa: BLE001 — an unreadable source is evidence, not a crash
             result = _unknown_result(collector, exc)
 
-        # The one boundary where a reading becomes evidence: redacted and bounded BEFORE it is
-        # digested or stored, so no collector — including ones not yet written — can put a
-        # credential into an append-only table (issue #82, PR #85 review).
+        # The one boundary where a reading becomes evidence. EVERY collector-originated string
+        # crosses it — value, evidence, reason, confidence and the identifiers — because a
+        # field's intended purpose is not a security property, and the collectors that will
+        # actually carry plugin names, log lines and service output have not been written yet
+        # (issue #82; PR #85 review and re-review).
         normalized = prepare_value(result.value, limit=ctx.max_value_bytes)
-        status = STATUS_UNKNOWN if normalized.oversized else result.status
-        reason = result.reason or None
+        scope, scope_ok = safe_identifier(result.scope, fallback="unnamed.scope")
+        source, source_ok = safe_identifier(result.source, fallback="unknown.source")
+        collector_id, id_ok = safe_identifier(collector.id, fallback="unknown.collector")
+        version, version_ok = safe_identifier(getattr(collector, "version", ""), fallback="0")
+        identifiers_ok = scope_ok and source_ok and id_ok and version_ok
+
+        status = result.status
+        reason = safe_text(result.reason, limit=MAX_REASON_BYTES) or None
         if normalized.oversized:
+            status = STATUS_UNKNOWN
             reason = ("this source returned more than can be recorded faithfully, so its state "
                       "is unknown — not healthy")
+        elif not identifiers_ok:
+            # A collector that cannot name its own scope or source is not one whose reading
+            # should be believed, even though the reading is still kept as evidence.
+            status = STATUS_UNKNOWN
+            reason = ("this collector returned a malformed identifier, so its reading is not "
+                      "trusted — the observation is kept, its state is unknown")
 
         previous = store.latest_observation(profile=ctx.profile, environment=ctx.environment,
-                                            scope=result.scope)
+                                            scope=scope)
         change_class = classify(previous, status=status, digest=normalized.digest)
         severity = severity_for(status, change_class)
         severities.append(severity)
         store.record_observation(
             run_id,
-            collector_id=collector.id,
-            collector_version=collector.version,
-            scope=result.scope,
-            source=result.source,
+            collector_id=collector_id,
+            collector_version=version,
+            scope=scope,
+            source=source,
             profile=ctx.profile,
             environment=ctx.environment,
             captured_at=ctx.now_iso(),
@@ -440,7 +502,7 @@ def run_inspection(store, collectors: list[Collector], ctx: CollectionContext, *
             predecessor_id=previous["id"] if previous else None,
             change_class=change_class,
             severity=severity,
-            confidence=result.confidence,
+            confidence=safe_text(result.confidence, limit=MAX_CONFIDENCE_BYTES) or None,
             reason=reason,
             # case_id is deliberately never passed: U5.1/U5.2 create no cases (amendment 2).
         )
