@@ -30,6 +30,9 @@
     python -m tc_growth.cli validation                   # Release 0.3 validation report (from docs/VALIDATION.md)
     python -m tc_growth.cli dashboard [port]             # read-only web view (127.0.0.1 only)
     python -m tc_growth.cli console [port]               # Operations Console (execute ops; 127.0.0.1 + token)
+    python -m tc_growth.cli deploy-run <id> [--target-config FILE]  # what the transient unit runs
+    python -m tc_growth.cli deploy-vps-acceptance <dir> [--keep]  # bounded acceptance run for a DISPOSABLE target
+    python -m tc_growth.cli deploy-harness <dir> [--tamper] [--keep] [--stand-in]  # build a DISPOSABLE deploy target and run the real chain against it
 
 `smoke` exercises a single host-side tool WITHOUT the AI runtime — the fastest way to surface
 OAuth/vault/credential problems (the usual first failure point). `weekly-report` runs the full
@@ -41,6 +44,7 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 
 from .config import get_settings, load_env
 from .core.approval import Phase
@@ -529,7 +533,7 @@ def cmd_validation() -> int:
 
 
 
-def cmd_deploy_run(run_id_raw: str) -> int:
+def cmd_deploy_run(run_id_raw: str, target_config: str | None = None) -> int:
     """WP-U4d: execute an ALREADY-AUTHORIZED deployment (issue #77 Decision 2).
 
     This is what the detached runner runs. It takes a run id — never a commit — because the
@@ -545,14 +549,109 @@ def cmd_deploy_run(run_id_raw: str) -> int:
     except ValueError:
         print("deploy-run takes the numeric id of a planned deploy run")
         return 2
-    store = open_store()
+    context = None
+    if target_config:
+        # The transient unit was created by a specific target's privileged helper, and says so by
+        # passing that helper's ROOT-OWNED config. Without this the runner resolves production by
+        # default, which is right for production and silently wrong for everything else.
+        from . import deploy_target
+
+        deploy_target.open_cli_target_gate()
+        try:
+            target = deploy_target.from_root_owned_config(target_config)
+        finally:
+            deploy_target.close_cli_target_gate()
+        context = deploy.context_for(target)
+        print(f"deploying target {target.name} ({target.evidence_namespace})")
+    store = open_store(context["db_path"]) if context else open_store()
     try:
-        outcome = deploy.execute(store, run_id)
+        outcome = deploy.execute(store, run_id, context=context)
     except deploy.DeployRefused as exc:
         print(f"refused: {exc}")
         return 2
     print(outcome)
     return 0 if outcome == "succeeded" else 1
+
+
+def cmd_deploy_harness(root_raw: str, *, tamper: bool, keep: bool,
+                       stand_in: bool = False) -> int:
+    """WP-U4d.1: build a disposable deployment target and run the real chain against it.
+
+    **This is the only caller that opens the deployment target gate**, and it is a command-line
+    verb precisely so that the gate has no path from an HTTP request. `tc_growth.deploy_target`
+    latches shut in any process that binds or serves the Console, so a Console process reaching
+    this code could not open the gate even if something managed to call it.
+
+    `--tamper` substitutes content into the staged release worktree after checkout and expects the
+    chain to refuse before the privileged step: with it, a zero exit means the deployment was
+    REFUSED and neither the privileged step nor the substituted payload ran.
+
+    Run as root, the harness installs and drives the REAL privileged program. Run unprivileged it
+    cannot, so `--stand-in` forces the increment-1 stand-in explicitly — which proves nothing
+    about the root boundary and says so in its own report.
+    """
+    from . import deploy_harness, deploy_target
+
+    root = Path(root_raw).expanduser()
+    if root.exists() and any(root.iterdir()):
+        print(f"refusing to build a disposable target in a non-empty directory: {root}")
+        return 2
+    deploy_target.open_cli_target_gate()
+    try:
+        disposable = deploy_harness.build(root, privileged=False if stand_in else None)
+    finally:
+        # Shut the gate as soon as the target exists. The run itself needs no gate — it carries the
+        # target it was given — so the window stays as small as the work requires.
+        deploy_target.close_cli_target_gate()
+
+    try:
+        if tamper:
+            payload = deploy_harness.tamper_with_release(disposable)
+            print(f"substituted release content at {payload}\n")
+        report = deploy_harness.run(disposable)
+        print(deploy_harness.report_text(report))
+        if tamper:
+            clean = (report["status"] == "refused"
+                     and not report["privileged_mutation_reached"]
+                     and not report["payload_executed"])
+            print("\nEXPECTED: refused before any privileged mutation — "
+                  + ("CONFIRMED" if clean else "NOT CONFIRMED"))
+            return 0 if clean else 1
+        return 0 if report["status"] == "succeeded" else 1
+    finally:
+        if keep:
+            print(f"\ndisposable target kept at {disposable.root}")
+        else:
+            deploy_harness.teardown(disposable)
+
+
+def cmd_deploy_vps_acceptance(root_raw: str, *, keep: bool) -> int:
+    """WP-U4d.1: the bounded acceptance run for a DISPOSABLE target.
+
+    One command, so nobody assembles plan rows, permissions, services or failure injection by hand
+    — the previous runbook asked for exactly that and review found five defects in it. It refuses,
+    before mutating anything, if any resolved value is production's.
+
+    Exit 0 means every criterion this machine can execute passed. Where systemd is not booted the
+    manager-level phases are reported as NOT EXECUTED and the exit code is 3, because a run that
+    could not restart a service has not accepted a deployment.
+    """
+    from . import deploy_acceptance
+
+    root = Path(root_raw).expanduser()
+    if root.exists() and any(root.iterdir()):
+        print(f"refusing to use a non-empty directory: {root}")
+        return 2
+    try:
+        report = deploy_acceptance.run(root, keep=keep)
+    except deploy_acceptance.AcceptanceRefused as exc:
+        print(f"REFUSED: {exc}")
+        return 2
+    print(deploy_acceptance.report_text(report))
+    if keep:
+        (root / "acceptance-report.json").write_text(json.dumps(report, indent=2, default=str))
+        print(f"\nreport JSON: {root}/acceptance-report.json")
+    return 0 if not report["deferred"] else 3
 
 
 def cmd_decisions() -> int:
@@ -641,7 +740,27 @@ def main(argv: list[str] | None = None) -> int:
         if not rest:
             print("Usage: deploy-run <planned-run-id>")
             return 1
-        return cmd_deploy_run(rest[0])
+        config = None
+        if "--target-config" in rest:
+            index = rest.index("--target-config")
+            if index + 1 >= len(rest):
+                print("--target-config needs the path to a root-owned target.conf")
+                return 1
+            config = rest[index + 1]
+        return cmd_deploy_run(rest[0], config)
+    if cmd == "deploy-vps-acceptance":
+        positional = [a for a in rest if not a.startswith("--")]
+        if not positional:
+            print("Usage: deploy-vps-acceptance <empty-directory> [--keep]")
+            return 1
+        return cmd_deploy_vps_acceptance(positional[0], keep="--keep" in rest)
+    if cmd == "deploy-harness":
+        positional = [a for a in rest if not a.startswith("--")]
+        if not positional:
+            print("Usage: deploy-harness <empty-directory> [--tamper] [--keep] [--stand-in]")
+            return 1
+        return cmd_deploy_harness(positional[0], tamper="--tamper" in rest,
+                                  keep="--keep" in rest, stand_in="--stand-in" in rest)
     if cmd == "case-note":
         if len(rest) < 2:
             print('Usage: case-note <ref> "<text>"')
