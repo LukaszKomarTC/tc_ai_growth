@@ -105,12 +105,33 @@ def test_an_unreadable_cgroup_is_none_rather_than_a_guess(tmp_path):
 
 def test_an_unknown_unit_is_not_reported_as_a_mismatch(monkeypatch, tmp_path):
     """None means 'we cannot establish it' — a CLI run, a test, a container without systemd.
-    Converting that into a mismatch would make the panel cry wolf everywhere but production."""
+    Calling that a MISMATCH would be a claim we cannot make either, so the panel does not."""
     monkeypatch.setenv(ri.DOCROOT_ENV, str(tmp_path))
     identity = ri.describe(unit_reader=lambda: None)
     assert identity.unit is None
     assert identity.unit_matches
-    assert not any("running under" in p for p in identity.problems)
+    assert not any("running under tc-" in p for p in identity.problems)
+
+
+def test_an_unestablished_unit_is_not_acceptance_ready(monkeypatch, tmp_path):
+    """The distinction `unit_matches` was quietly doing double duty over.
+
+    "Not contradicted" and "confirmed" are different, and the acceptance pre-flight needs the
+    second. Before this, a Console that could not read its own cgroup was `ready_to_inspect`
+    while the panel said it was not running under systemd — the module docstring said an unknown
+    must never be converted into something else, and readiness was converting it into `ready`
+    (PR #88 review).
+    """
+    monkeypatch.setenv(ri.DOCROOT_ENV, str(tmp_path))
+    identity = ri.describe(unit_reader=lambda: None)
+
+    assert identity.unit_matches          # still not a mismatch
+    assert not identity.unit_proven       # but never positively established
+    assert not identity.ready_to_inspect
+    assert any("cannot establish which systemd unit" in p for p in identity.problems)
+    # And it says so without calling the reading dishonest — a sweep from here still tells the
+    # truth; what is missing is proof of whose truth it is.
+    assert any("still honest" in p for p in identity.problems)
 
 
 def test_the_wrong_unit_is_reported_in_words_the_owner_can_act_on(monkeypatch, tmp_path):
@@ -142,8 +163,59 @@ def test_a_docroot_that_is_not_a_directory_is_distinguished_from_an_unset_one(mo
     monkeypatch.setenv(ri.DOCROOT_ENV, str(missing))
     identity = ri.describe(unit_reader=lambda: ri.CONSOLE_UNIT)
 
+    assert identity.docroot_state == ri.DOCROOT_MISSING
     assert not identity.docroot_readable
-    assert any("not a readable directory" in p for p in identity.problems)
+    assert any("no directory at that path" in p for p in identity.problems)
+
+
+def test_readability_is_exercised_rather_than_predicted(monkeypatch, tmp_path):
+    """A directory that EXISTS but this process cannot open is a third state, not a pass.
+
+    The first version asked `os.path.isdir()` and stored the answer in a field called
+    `docroot_readable`. That is existence, and labelling existence as readability is exactly the
+    kind of claim this project keeps having to correct (PR #88 review): the panel would have
+    shown no problem while the runbook told the owner the docroot was readable.
+
+    The probe is injected here because the real permission bits cannot be exercised as root,
+    which bypasses them — see the unprivileged test below for the genuine filesystem case.
+    """
+    monkeypatch.setenv(ri.DOCROOT_ENV, str(tmp_path))
+
+    def refuse(path):
+        raise PermissionError(13, "Permission denied", path)
+
+    identity = ri.describe(unit_reader=lambda: ri.CONSOLE_UNIT, docroot_probe=refuse)
+
+    assert identity.docroot_state == ri.DOCROOT_INACCESSIBLE
+    assert not identity.docroot_readable
+    assert not identity.ready_to_inspect
+    problem = " ".join(identity.problems)
+    assert "cannot open" in problem and "wp-cli" in problem
+
+
+@pytest.mark.skipif(os.geteuid() == 0,
+                    reason="root bypasses the permission bits this test is about")
+def test_an_existing_but_unopenable_docroot_is_detected_on_a_real_filesystem(tmp_path):
+    """The same case without the injection seam — real directory, real mode, real refusal."""
+    locked = tmp_path / "docroot"
+    locked.mkdir()
+    (locked / "index.php").write_text("<?php")
+    locked.chmod(0o000)
+    try:
+        assert ri.probe_docroot(str(locked)) == ri.DOCROOT_INACCESSIBLE
+    finally:
+        locked.chmod(0o755)   # so tmp_path teardown can remove it
+
+
+def test_an_empty_docroot_is_readable_because_we_got_into_it(tmp_path):
+    """We opened the directory; there was simply nothing in it. That is a successful read, and
+    calling it inaccessible would be its own overstatement in the other direction."""
+    assert ri.probe_docroot(str(tmp_path)) == ri.DOCROOT_READABLE
+
+
+def test_a_populated_docroot_reads_as_readable(tmp_path):
+    (tmp_path / "wp-config.php").write_text("<?php")
+    assert ri.probe_docroot(str(tmp_path)) == ri.DOCROOT_READABLE
 
 
 def test_the_identity_fallbacks_are_unchanged_by_this_increment(monkeypatch):
@@ -219,7 +291,7 @@ def _panel(**kw) -> str:
 
     defaults = dict(profile="tossa-cycling", environment="production", unit=ri.CONSOLE_UNIT,
                     expected_unit=ri.CONSOLE_UNIT, build_commit="f23094ca2a12b871",
-                    docroot="/var/www/site", docroot_readable=True, problems=())
+                    docroot="/var/www/site", docroot_state=ri.DOCROOT_READABLE, problems=())
     defaults.update(kw)
     return console_views.runtime_panel(ri.RuntimeIdentity(**defaults))
 
@@ -235,11 +307,30 @@ def test_a_healthy_runtime_folds_away():
 def test_a_broken_runtime_is_not_behind_a_fold():
     """The one thing that must not be missable. A collapsed <details> is exactly how a missing
     docroot gets discovered from the `unknown` row it produced instead of before the run."""
-    html = _panel(docroot="", docroot_readable=False,
+    html = _panel(docroot="", docroot_state=ri.DOCROOT_UNSET,
                   problems=("TC_SITE_DOCROOT is not set in this service's environment",))
     assert "<details" not in html
     assert "not fully configured" in html
     assert "TC_SITE_DOCROOT" in html
+
+
+def test_the_panel_states_only_what_it_established_about_the_docroot():
+    """"exists" and "this service can open it" are different claims; it makes only the proved
+    one, in words rather than a bare boolean."""
+    assert "opened by this service" in _panel()
+    inaccessible = _panel(docroot_state=ri.DOCROOT_INACCESSIBLE,
+                          problems=("cannot open",))
+    assert "could not open it" in inaccessible
+    assert "no directory at that path" in _panel(docroot_state=ri.DOCROOT_MISSING,
+                                                 problems=("missing",))
+
+
+def test_the_panel_marks_an_unverified_unit_as_unverified():
+    """Not a mismatch, so no "expected" clause — but not silently fine either."""
+    html = _panel(unit=None, problems=("cannot establish which systemd unit",))
+    assert "could not be established" in html
+    assert "unverified" in html
+    assert "expected" not in html
 
 
 def test_the_panel_says_which_unit_was_expected_when_they_differ():
@@ -281,7 +372,7 @@ def test_the_health_page_renders_the_panel_and_still_renders_without_one():
         None, [], identity=ri.RuntimeIdentity(
             profile="p", environment="production", unit=ri.CONSOLE_UNIT,
             expected_unit=ri.CONSOLE_UNIT, build_commit="abc123", docroot="/srv/w",
-            docroot_readable=True), **common)
+            docroot_state=ri.DOCROOT_READABLE), **common)
     assert "Runtime" in with_id
 
 

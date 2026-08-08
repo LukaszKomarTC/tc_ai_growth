@@ -887,16 +887,24 @@ def runtime_panel(identity) -> str:
     Nothing here is a secret: it is a service name, a profile, an environment, a commit and a
     directory path, all of which already appear in the evidence this page renders.
     """
-    unit = identity.unit or "not running under systemd"
+    unit = identity.unit or "could not be established"
     docroot = identity.docroot or "not set"
+    # Each line says what was ESTABLISHED, never what was assumed. "exists" and "this service can
+    # open it" are different claims and the panel makes only the one it proved (PR #88 review).
+    docroot_note = {
+        "readable": " — opened by this service",
+        "inaccessible": " — exists, but this service could not open it",
+        "missing": " — no directory at that path",
+        "unset": "",
+    }.get(identity.docroot_state, "")
     rows = (
         ("Service", f"{_e(unit)}"
                     + ("" if identity.unit_matches
-                       else f" — expected <strong>{_e(identity.expected_unit)}</strong>")),
+                       else f" — expected <strong>{_e(identity.expected_unit)}</strong>")
+                    + ("" if identity.unit_proven else " · <em>unverified</em>")),
         ("Identity", f"{_e(identity.profile)} · {_e(identity.environment)}"),
         ("Deployed commit", f"<code>{_e(identity.build_commit[:12])}</code>"),
-        ("WordPress docroot", f"<code>{_e(docroot)}</code>"
-                              + ("" if identity.docroot_readable else " — not readable")),
+        ("WordPress docroot", f"<code>{_e(docroot)}</code>{docroot_note}"),
     )
     body = "".join(f"<div class='muted'>{label}: {value}</div>" for label, value in rows)
     if identity.ready_to_inspect:

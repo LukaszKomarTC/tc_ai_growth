@@ -68,7 +68,40 @@ LEGACY_DASHBOARD_UNIT = "tc-dashboard.service"
 #: `deploy-console.sh` writes it into the unit, so the owner never pastes it before a run.
 DOCROOT_ENV = "TC_SITE_DOCROOT"
 
+#: What the docroot pre-flight actually established. Four states, because "set" and "exists" and
+#: "this process can use it" are three different claims and only the last is the one `wp.inventory`
+#: depends on.
+DOCROOT_UNSET = "unset"
+DOCROOT_MISSING = "missing"
+DOCROOT_INACCESSIBLE = "inaccessible"
+DOCROOT_READABLE = "readable"
+
 _CGROUP_UNIT = re.compile(r"/([A-Za-z0-9_.@-]+\.(?:service|scope))")
+
+
+def probe_docroot(path: str) -> str:
+    """Can THIS process actually use this directory the way `wp.inventory` needs to?
+
+    The first version of this asked `os.path.isdir()` and stored the answer in a field called
+    `docroot_readable`. That is existence, not readability (PR #88 review): a directory can exist
+    while the service user cannot traverse or list it, and the panel would have shown no problem
+    while the runbook told the owner it was readable.
+
+    So the access is *exercised* rather than predicted. `os.access` asks the kernel's opinion
+    about a uid; opening the directory is the operation itself, which is what wp-cli will do when
+    it runs with `cwd` set here. An empty docroot is still readable — we got in, there was
+    nothing to see.
+    """
+    if not path:
+        return DOCROOT_UNSET
+    if not os.path.isdir(path):
+        return DOCROOT_MISSING
+    try:
+        with os.scandir(path) as entries:
+            next(entries, None)
+    except OSError:
+        return DOCROOT_INACCESSIBLE
+    return DOCROOT_READABLE
 
 
 def unit_of_this_process(*, cgroup_path: str = "/proc/self/cgroup") -> str | None:
@@ -102,24 +135,45 @@ class RuntimeIdentity:
     expected_unit: str
     build_commit: str
     docroot: str
-    docroot_readable: bool
+    docroot_state: str
     problems: tuple[str, ...] = field(default=())
 
     @property
     def unit_matches(self) -> bool:
-        """False only when we KNOW we are under a different unit — an unknown unit is not a
-        mismatch, it is an unknown, and this module does not convert one into the other."""
+        """False only when we KNOW we are under a different unit.
+
+        This is a RENDERING question — should the panel say "expected tc-console.service"? — and
+        an unknown unit is genuinely not a mismatch, so it does not. Readiness is a different
+        question with a different answer; see `unit_proven`.
+        """
         return self.unit is None or self.unit == self.expected_unit
 
     @property
-    def ready_to_inspect(self) -> bool:
-        """Would an inspection right now produce evidence worth accepting?
+    def unit_proven(self) -> bool:
+        """Positively established as the canonical unit — not merely *not disproven*.
 
-        This is what makes a missing docroot obvious BEFORE a sweep rather than after it, which
-        was the reviewer's requirement: an acceptance run spent discovering an unset variable is
-        an acceptance run wasted.
+        The distinction is the whole point. `unit_matches` was doing double duty as both "not
+        contradicted" and "confirmed", so a Console that could not read its own cgroup was
+        acceptance-ready while the panel said `not running under systemd` (PR #88 review). The
+        module docstring already said an unknown must not be converted into something else, and
+        `ready_to_inspect` was converting it into `ready`.
         """
-        return not self.problems
+        return self.unit == self.expected_unit
+
+    @property
+    def docroot_readable(self) -> bool:
+        """Proven, not assumed: this process opened the directory."""
+        return self.docroot_state == DOCROOT_READABLE
+
+    @property
+    def ready_to_inspect(self) -> bool:
+        """Would an inspection right now produce evidence worth ACCEPTING?
+
+        Deliberately stricter than "would it produce honest evidence" — a sweep is always honest,
+        and reports `unknown` when it cannot see. This answers the acceptance pre-flight's
+        question instead, which needs positive proof rather than absence of contradiction.
+        """
+        return not self.problems and self.unit_proven
 
 
 #: What an unresolvable profile or environment is called. Never a silent default: a reading filed
@@ -163,32 +217,51 @@ def resolve_identity() -> tuple[str, str]:
     return profile, environment
 
 
-def describe(*, unit_reader=unit_of_this_process) -> RuntimeIdentity:
+def describe(*, unit_reader=unit_of_this_process, docroot_probe=probe_docroot) -> RuntimeIdentity:
     """Resolve the running identity from configuration and from the process itself.
 
     Never raises. A Console that cannot describe itself must still render the page saying so —
     a self-check that takes the surface down when it fails is worse than none.
+
+    `docroot_probe` is injectable because the negative case cannot otherwise be exercised as
+    root, which bypasses the permission bits the probe exists to detect.
     """
     profile, environment = resolve_identity()
 
     docroot = (os.environ.get(DOCROOT_ENV, "") or "").strip()
-    docroot_readable = bool(docroot) and os.path.isdir(docroot)
+    try:
+        docroot_state = docroot_probe(docroot)
+    except OSError:
+        docroot_state = DOCROOT_INACCESSIBLE
     unit = unit_reader()
 
     problems: list[str] = []
-    if not docroot:
+    if docroot_state == DOCROOT_UNSET:
         problems.append(
             f"{DOCROOT_ENV} is not set in this service's environment, so WordPress cannot be "
             f"inspected and `wp.inventory` will report `unknown`")
-    elif not docroot_readable:
+    elif docroot_state == DOCROOT_MISSING:
         problems.append(
-            f"{DOCROOT_ENV} is set but is not a readable directory, so WordPress cannot be "
-            f"inspected")
+            f"{DOCROOT_ENV} is set but there is no directory at that path, so WordPress cannot "
+            f"be inspected")
+    elif docroot_state == DOCROOT_INACCESSIBLE:
+        problems.append(
+            f"{DOCROOT_ENV} points at a directory this service cannot open — it exists, but the "
+            f"account this Console runs as may not traverse or list it, which is what wp-cli "
+            f"needs in order to inspect the site")
     if profile == UNRESOLVED or environment == UNRESOLVED:
         problems.append(
             "this Console cannot state whose environment it is, and evidence that cannot name "
             "its subject must not be recorded")
-    if unit is not None and unit != CONSOLE_UNIT:
+    if unit is None:
+        # NOT the same statement as a mismatch, and not a reason to call the sweep dishonest —
+        # but the acceptance pre-flight asks for positive proof that the process serving this
+        # page is the unit the collectors watch, and an unestablished unit is not that proof.
+        problems.append(
+            f"this process cannot establish which systemd unit it is running under, so it cannot "
+            f"prove it is the {CONSOLE_UNIT} the collectors watch — the reading is still honest, "
+            f"but the identity behind it is unverified")
+    elif unit != CONSOLE_UNIT:
         problems.append(
             f"this process is running under {unit}, not {CONSOLE_UNIT}; the collectors watch "
             f"{CONSOLE_UNIT}, so they would report the Console missing while it is in fact "
@@ -197,4 +270,4 @@ def describe(*, unit_reader=unit_of_this_process) -> RuntimeIdentity:
     return RuntimeIdentity(
         profile=profile, environment=environment, unit=unit, expected_unit=CONSOLE_UNIT,
         build_commit=(os.environ.get("TC_BUILD_COMMIT", "") or "unknown"),
-        docroot=docroot, docroot_readable=docroot_readable, problems=tuple(problems))
+        docroot=docroot, docroot_state=docroot_state, problems=tuple(problems))

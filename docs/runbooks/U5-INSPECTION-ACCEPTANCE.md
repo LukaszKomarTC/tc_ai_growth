@@ -32,8 +32,10 @@ silently, so they are the ones the owner is asked to confirm by eye:
 
 ## 0. One-time setup (technical maintainer, terminal, once)
 
-1. **Deploy the merged head** through the existing governed path. No new install step: U5 is
-   application code inside the same runtime.
+1. **Deploy the merged head** through the existing governed path — an explicit
+   `deploy-console.sh` run against a release worktree checked out at the reviewed commit. U5 adds
+   no new *kind* of install step, but it is still a real deployment action and the Console does
+   not advance without it.
 2. **The store migrates itself on first open** (schema v9 → v10, two nullable columns on
    `observations`). It is additive and forward-only; no existing row is rewritten. Nothing to
    run by hand. If a v9 store already holds observations, the first sweep after the upgrade
@@ -58,10 +60,16 @@ silently, so they are the ones the owner is asked to confirm by eye:
    an execution surface is never auto-advanced. Advancing it is an explicit `deploy-console.sh`
    run.
 
-**You no longer need SSH to check any of this.** The Console's own **Runtime** panel on Operations
-Health states the effective unit, profile, environment, deployed commit and docroot — and refuses
-to hide behind a fold when something is wrong. That panel is the pre-flight; §2 begins by reading
-it.
+**What the browser can now do, stated precisely.** The Console's **Runtime** panel on Operations
+Health states the effective unit, profile, environment, deployed commit and docroot, and refuses
+to hide behind a fold when something is wrong. That makes the **acceptance pre-flight** a browser
+task: the owner can confirm the runtime is fit to inspect without opening a terminal.
+
+It does **not** mean there is no host-side step. Installing the merged head and advancing the
+pinned Console is an explicit governed deployment action, performed once by the technical
+maintainer in a terminal — §0 above. The goal is no *routine* owner SSH, and it is deliberately
+not met by auto-advancing the Console: that would defeat the reviewed-commit pinning. §2 begins by
+reading the panel.
 
 `run_inspection` ships `enabled=True` and `self_service=False`: it is reachable only from the
 dedicated Operations Health surface, never as an argument-less call through `/api/execute`. No
@@ -87,7 +95,15 @@ registry flip is part of this run.
       rather than about the Inspector. Stop and fix the deployment.
 - [ ] **Identity** is the profile and environment you intend to file this evidence under.
 - [ ] **Deployed commit** matches the head you deployed.
-- [ ] **WordPress docroot** is set and readable — no red banner.
+- [ ] **WordPress docroot** reads *"opened by this service"*. Anything else is a distinct
+      problem with a distinct fix: *not set* (missing from the unit), *no directory at that path*
+      (wrong value), or *exists, but this service could not open it* (the account the Console
+      runs as cannot traverse or list it — which is exactly what wp-cli needs). The panel claims
+      only what it actually established.
+- [ ] **Service** is not marked *unverified*. That marking means the process could not establish
+      which unit it is running under, so it cannot prove it is the one the collectors watch. The
+      sweep would still be honest; the identity behind it would be unproven, which is not an
+      acceptance-quality starting point.
 
 If the panel shows the red *"This Console is not fully configured to inspect"* block, fix that
 first. A sweep will still run and will still be honest, but `unknown` from a misconfiguration is
