@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import os
 import re
+import stat
 from dataclasses import dataclass, field
 
 #: The canonical Console unit. One name, used by deployment, monitoring and documentation alike.
@@ -94,7 +95,19 @@ def probe_docroot(path: str) -> str:
     """
     if not path:
         return DOCROOT_UNSET
-    if not os.path.isdir(path):
+    # NOT os.path.isdir(): it answers False for "does not exist" AND for "cannot be reached",
+    # which are opposite diagnoses with opposite fixes. The first on-host acceptance run proved
+    # the difference matters — a docroot behind a 0710 parent was reported as "there is no
+    # directory at that path", which is a positive claim about the filesystem that was simply
+    # untrue, and would send the reader hunting for a wrong path instead of a permission.
+    try:
+        st = os.stat(path)
+    except PermissionError:
+        # The path could not even be examined: something on the way in denies traversal.
+        return DOCROOT_INACCESSIBLE
+    except OSError:
+        return DOCROOT_MISSING
+    if not stat.S_ISDIR(st.st_mode):
         return DOCROOT_MISSING
     try:
         with os.scandir(path) as entries:
