@@ -38,6 +38,8 @@ import subprocess
 import time
 from dataclasses import dataclass
 
+from ..runtime_identity import PROJECT_UNITS
+
 # --- the exact commands this platform may run ---------------------------------------------------
 
 #: systemd fields `platform.services` reads. One fixed string: a caller cannot ask for others.
@@ -53,11 +55,10 @@ JOURNAL_PRIORITY = "warning"
 #: and a journal read of any unit on the box: read-only, but a host-introspection capability
 #: wider than the collectors that were reviewed (PR #86 re-review). The collectors already know
 #: their units literally, so the boundary can too.
-ALLOWED_UNITS = frozenset({
-    "tc-console.service",
-    "tc-weekly-report.timer",
-    "tc-autodeploy.timer",
-})
+#: Imported, not spelled. Two places naming the Console independently is how the deployment ended
+#: up with two apparently-current service identities in the first place (U5.2b review); the set
+#: stays exactly as closed as it was, it just has one author now.
+ALLOWED_UNITS = frozenset(PROJECT_UNITS)
 
 
 class _UnitSlot:

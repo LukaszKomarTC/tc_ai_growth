@@ -830,10 +830,9 @@ class _Handler(BaseHTTPRequestHandler):
                 # The identity is derived on the SERVER from this Console's own configuration —
                 # never from the query string, so a crafted URL cannot make one business's page
                 # display another's evidence (issue #82 amendment 1).
-                from .config import active_site, get_settings
+                from .runtime_identity import resolve_identity
 
-                profile = active_site() or "default"
-                environment = (get_settings().env_kind or "staging").strip().lower()
+                profile, environment = resolve_identity()
                 store = open_store()
                 try:
                     run = store.latest_inspection_run(profile=profile, environment=environment)
@@ -842,10 +841,12 @@ class _Handler(BaseHTTPRequestHandler):
                 finally:
                     store.close()
                 from .core.actions import get_operation
+                from .runtime_identity import describe as describe_runtime
 
                 body = console_views.operations_health_body(
                     run, observations, profile=profile, environment=environment,
                     csrf=csrf_for(session, secret),
+                    identity=describe_runtime(),
                     offered=get_operation("run_inspection").enabled,
                     now=datetime.now(timezone.utc),
                     effective=inspection.effective_status,
@@ -941,13 +942,15 @@ class _Handler(BaseHTTPRequestHandler):
         HERE, on the server, from this Console's own configuration and handed to the executor as
         an explicit identity. Nothing a request can carry reaches a collector.
         """
-        from .config import active_site, get_settings
         from .core.approval import Phase
         from .core.executor import Executor
+        from .runtime_identity import resolve_identity
 
         try:
-            profile = active_site() or "default"
-            environment = (get_settings().env_kind or "staging").strip().lower()
+            # The SAME resolution the page renders and the self-check reports. Computing it a
+            # second time here is how a Runtime panel could reassure an owner about an identity
+            # the sweep was not actually filing under (WP-U5.2b).
+            profile, environment = resolve_identity()
             Executor(phase=Phase.READ_ONLY, environment=environment,
                      profile=profile).execute("run_inspection", {}, actor="human")
             param = "msg=ran"

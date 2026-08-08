@@ -26,6 +26,8 @@ from typing import Callable
 
 from ..inspection import (STATUS_ACTION, STATUS_OK, STATUS_UNKNOWN, STATUS_WARN,
                           CollectionContext, CollectorResult)
+from ..runtime_identity import (AUTODEPLOY_TIMER, CONSOLE_UNIT, PROJECT_UNITS,
+                                WEEKLY_REPORT_TIMER)
 from ._exec import CommandResult, run_command, systemctl_show
 
 #: The project's own units, and what "running" MEANS for each. Literals: no unit name is ever
@@ -38,15 +40,15 @@ from ._exec import CommandResult, run_command, systemctl_show
 #: doubt, and a timer that cannot prove it ever ran is `unknown`, never `ok`.
 #:
 #: The windows are the schedule plus generous slack, so an ordinary late run is not an alert.
-UNITS = ("tc-console.service", "tc-weekly-report.timer", "tc-autodeploy.timer")
+UNITS = PROJECT_UNITS
 
 UNIT_POLICY: dict[str, dict] = {
     # A long-running service proves itself by being active; it has no trigger cadence.
-    "tc-console.service": {"kind": "service"},
+    CONSOLE_UNIT: {"kind": "service"},
     # Weekly, Monday 07:00 Europe/Madrid — 9 days covers a missed run plus a DST edge.
-    "tc-weekly-report.timer": {"kind": "timer", "max_trigger_age_hours": 9 * 24},
+    WEEKLY_REPORT_TIMER: {"kind": "timer", "max_trigger_age_hours": 9 * 24},
     # Every 5 minutes; hours of silence means the deploy path is dead, not merely late.
-    "tc-autodeploy.timer": {"kind": "timer", "max_trigger_age_hours": 3},
+    AUTODEPLOY_TIMER: {"kind": "timer", "max_trigger_age_hours": 3},
 }
 
 #: Where the v0 integrity scan appends. Overridable because the scan's own docs make it so.
