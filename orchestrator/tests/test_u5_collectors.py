@@ -479,18 +479,22 @@ def test_the_journal_read_is_bounded_at_the_source():
 
 # --- the set, and the whole chain ---------------------------------------------------------------
 
-def test_the_default_set_is_the_four_real_collectors_and_not_the_fixture():
+def test_the_default_set_is_the_real_collectors_and_not_the_fixture():
+    """Extended deliberately in U5.3a. The fixture stays out — it observes nothing real, and a
+    production page should not carry a row that exists to exercise the machinery."""
     ids = [c.id for c in default_collectors()]
-    assert ids == ["wp.inventory", "platform.services", "host.capacity", "logs.signatures"]
+    assert ids == ["wp.inventory", "platform.services", "host.capacity", "logs.signatures",
+                   "backup.coverage"]
+    assert "fixture" not in ids
     assert "fixture" not in ids
 
 
 def test_a_sweep_with_every_source_missing_still_produces_a_readable_page(store):
     """The worst realistic case on a fresh host: nothing is installed. The page must say
-    `unknown` four times, not disappear and not go green."""
+    `unknown` for every scope, not disappear and not go green."""
     run_id = inspection.run_inspection(store, default_collectors(), ctx(now=T0))
     rows = store.list_observations(run_id)
-    assert len(rows) == 4
+    assert len(rows) == len(default_collectors())
     assert all(r["severity"] in ("unknown", "ok", "warn", "action") for r in rows)
     assert any(r["severity"] == inspection.STATUS_UNKNOWN for r in rows)
 

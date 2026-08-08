@@ -12,10 +12,17 @@ scan runs from root's crontab, which the service user cannot read, so it observe
 schedule. That is both privilege-free and better evidence, since a configured schedule is not
 proof of execution.
 
-Still absent by design: Plesk, Duplicator and Google Drive (U5.3, and gated on credentials that
-do not exist yet), case creation (U5.4), and scheduled collection.
+U5.3a adds `backup.coverage`, which is a different shape from the other four: it reads a declared
+policy rather than a live source. That is the honest first increment for Backup Guardian, because
+on this host the platform can reach none of the real backup sources — and a Guardian whose first
+act is to state exactly what it cannot see, and what each gap would need, is more useful than one
+reporting green from a config file.
+
+Still absent by design: Plesk, Duplicator and Google Drive readings (U5.3b, gated on the
+credential review and on R9), case creation (U5.4), and scheduled collection.
 """
 
+from .backup_coverage import BackupCoverageCollector
 from .fixture import FixtureCollector
 from .host_capacity import HostCapacityCollector
 from .logs_signatures import LogSignaturesCollector
@@ -23,6 +30,7 @@ from .platform_services import PlatformServicesCollector
 from .wp_inventory import WpInventoryCollector
 
 __all__ = [
+    "BackupCoverageCollector",
     "FixtureCollector",
     "HostCapacityCollector",
     "LogSignaturesCollector",
@@ -44,4 +52,5 @@ def default_collectors() -> list:
         PlatformServicesCollector(),
         HostCapacityCollector(),
         LogSignaturesCollector(),
+        BackupCoverageCollector(),
     ]
