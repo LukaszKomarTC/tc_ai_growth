@@ -935,7 +935,14 @@ def operations_health_body(run: dict | None, observations: list[dict], *,
             f"<code>{_e(obs.get('collector_id'))}</code> v{_e(obs.get('collector_version'))} · "
             f"source <code>{_e(obs.get('source'))}</code> · captured "
             f"{_e(obs.get('captured_at'))} ({_e(fresh)}) · change {_e(change)} · "
-            f"digest <code>{_e(str(obs.get('value_digest'))[:12])}</code></div>"
+            # Two digests, named for what they each answer. `digest` binds this row's bytes;
+            # `compared` is the material state drift was actually decided on, so a reader can
+            # tell the difference between "the reading changed" and "the host changed" instead
+            # of being shown one digest beside a change class derived from another.
+            f"digest <code>{_e(str(obs.get('value_digest'))[:12])}</code>"
+            + (f" · compared <code>{_e(str(obs.get('material_digest'))[:12])}</code>"
+               if obs.get("material_digest") else "")
+            + "</div>"
             f"<pre style='white-space:pre-wrap'>{_e(canonical_preview(value_of(obs)))}</pre>"
             + (f"<pre style='white-space:pre-wrap'>{_e(obs.get('evidence'))}</pre>"
                if obs.get("evidence") else "")

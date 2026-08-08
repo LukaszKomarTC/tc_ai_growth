@@ -1111,7 +1111,8 @@ def record_observation(conn: sqlite3.Connection, run_id: int, *, collector_id: s
                        environment: str, captured_at: str, status: str, value_json: str,
                        value_digest: str, evidence: str | None, predecessor_id: int | None,
                        change_class: str, severity: str, confidence: str | None,
-                       reason: str | None) -> int:
+                       reason: str | None, material_json: str | None = None,
+                       material_digest: str | None = None) -> int:
     profile, environment = _require_identity(profile, environment)
     if status not in _OBSERVATION_STATUSES:
         raise ValueError(f"not an observation status: {status}")
@@ -1131,11 +1132,12 @@ def record_observation(conn: sqlite3.Connection, run_id: int, *, collector_id: s
     cur = conn.execute(
         "INSERT INTO observations (run_id, collector_id, collector_version, scope, source, "
         "profile, environment, captured_at, status, value_json, value_digest, evidence, "
-        "predecessor_id, change_class, severity, confidence, reason) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "predecessor_id, change_class, severity, confidence, reason, material_json, "
+        "material_digest) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (run_id, collector_id, collector_version, scope, source, profile, environment,
          captured_at, status, value_json, value_digest, evidence, predecessor_id, change_class,
-         severity, confidence, reason))
+         severity, confidence, reason, material_json, material_digest))
     conn.commit()
     return int(cur.lastrowid)
 

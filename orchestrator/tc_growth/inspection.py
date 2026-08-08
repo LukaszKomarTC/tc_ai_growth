@@ -143,6 +143,10 @@ class CollectorResult:
     evidence: str = ""
     reason: str = ""
     confidence: str | None = None
+    #: The MATERIAL state — the part of `value` whose change means something. `None` means the
+    #: whole value is material, which is only true for a collector whose reading does not move
+    #: on its own. See `MATERIAL STATE` below for why this exists.
+    material: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if self.status not in STATUSES:
@@ -246,6 +250,50 @@ def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+# --- MATERIAL STATE ------------------------------------------------------------------------------
+#
+# Drift is computed over the MATERIAL state, not over the whole reading. The difference is not a
+# refinement; without it the feature reports change on every sweep of a host where nothing
+# happened, which was measured on the U5.2 collectors as merged:
+#
+#     platform.services   changed   warn      <- ages recomputed against now(); ALWAYS differs
+#     host.capacity       changed   warn      <- free space moved 0.2 GB in ten minutes
+#     logs.signatures     changed   warn      <- the same error occurred once more
+#
+# Every one of those is a WARN the owner must read and dismiss, on a host where nothing changed.
+# That is the alert fatigue issue #82 §7 forbids, arriving by a route nobody looked at: the
+# collectors were each judged sound in isolation, and the defect lives in what the digest is
+# taken OVER. `platform.services` is the clearest case — `last_trigger_age_hours` is `now` minus
+# a fixed instant, so its digest cannot be equal to its predecessor's, ever, by construction.
+#
+# So a collector separates two things it was previously conflating:
+#
+# * `value`    — everything observed, stored in full as evidence. Ages, byte counts, percentages.
+# * `material` — the state whose CHANGE is a fact about the host rather than about the clock.
+#                A judged band (`low`), a verdict (`overdue`), a set of signatures, a version.
+#
+# Two digests follow, and they answer different questions:
+#
+# * `value_digest`    — binds the exact bytes this row holds. Integrity. Unchanged in meaning.
+# * `material_digest` — what `classify` compares. Drift.
+#
+# The alternative — an override in `_SCOPE_CHANGE_SEVERITY` per noisy scope — was rejected: with
+# every scope overridden to `ok`, change detection would still be wrong on every sweep and would
+# additionally have stopped saying so. Suppressing the alarm is not fixing the smoke.
+
+def material_of(result: "CollectorResult") -> dict[str, Any]:
+    """The material state to compare, defaulting to the whole value.
+
+    A collector that declares nothing gets exactly the pre-existing behaviour. That default is
+    right for a genuinely stable reading and wrong for a moving one, which is why the moving ones
+    declare.
+    """
+    material = result.material
+    if material is None:
+        return result.value if isinstance(result.value, dict) else {"value": result.value}
+    return material if isinstance(material, dict) else {"material": material}
+
+
 def safe_text(text: object, *, limit: int) -> str:
     """Redact, then truncate, then say so.
 
@@ -298,12 +346,14 @@ def safe_identifier(raw: object, *, fallback: str) -> tuple[str, bool]:
 
 # --- classification -----------------------------------------------------------------------------
 
-def classify(previous: dict | None, *, status: str, digest: str) -> str:
+def classify(previous: dict | None, *, status: str, digest: str,
+             value_digest: str | None = None) -> str:
     """What changed, decided from the durable predecessor row and the fresh reading.
 
-    `digest` is the digest of the SAFE stored value, so this compares what the record holds
-    against what the record held. Comparing a raw reading against a redacted predecessor would
-    never match, and every sweep would report drift forever.
+    `digest` is the MATERIAL digest — see `MATERIAL STATE` above. Both digests are taken over
+    SAFE stored values, so this compares what the record holds against what the record held.
+    Comparing a raw reading against a redacted predecessor would never match, and every sweep
+    would report drift forever.
 
     A first observation is `baseline`. Reporting it as `unchanged` would be a claim about a
     comparison that never happened, and it is the single easiest way for this kind of system to
@@ -321,9 +371,16 @@ def classify(previous: dict | None, *, status: str, digest: str) -> str:
         # Still unreadable. Nothing was compared, so nothing changed — but it is not healthy
         # either; the severity table keeps it `unknown`.
         return CHANGE_UNCHANGED
-    if previous["value_digest"] == digest:
-        return CHANGE_UNCHANGED
-    return CHANGE_CHANGED
+    stored = previous.get("material_digest")
+    if stored:
+        return CHANGE_UNCHANGED if stored == digest else CHANGE_CHANGED
+    # A predecessor written before schema v10 has no material digest. Compare it the way it was
+    # written rather than against a digest of a different thing — otherwise the upgrade itself
+    # would report every scope as changed on the first sweep after it, which is a fact about the
+    # migration and not about the host. `value_digest` defaults to `digest` so a caller with one
+    # digest (a collector that declares no material state) behaves exactly as before.
+    legacy = digest if value_digest is None else value_digest
+    return CHANGE_UNCHANGED if previous["value_digest"] == legacy else CHANGE_CHANGED
 
 
 #: (change_class) -> severity, applied when the collector itself reported `ok`.
@@ -343,13 +400,27 @@ _CHANGE_SEVERITY: dict[str, str] = {
 
 #: Per-scope override of how a CHANGE is judged, where the default is wrong for that scope.
 #:
-#: `wp.inventory` is the case that needs one. Plugin and theme versions change because somebody
-#: applied an update, which is routine maintenance rather than an incident — warning on every one
-#: is precisely the alert fatigue issue #82 §7 forbids, and a page that cries wolf weekly is a
-#: page nobody reads on the week it matters. What IS worth attention there is not "a version
-#: moved" but "something active went missing", which `_DIFFERS` below decides from the values.
+#: This table is for scopes where a MATERIAL change is real but already accounted for elsewhere —
+#: not for quietening scopes that report change spuriously. That failure is fixed at the source,
+#: by narrowing what the digest is taken over (see `MATERIAL STATE`); an override there would
+#: leave the wrong comparison in place and merely stop it speaking.
+#:
+#: `wp.inventory` — plugin and theme versions change because somebody applied an update, which is
+#: routine maintenance rather than an incident. What IS worth attention is not "a version moved"
+#: but "something active went missing", which `_DIFFERS` below decides from the values and
+#: escalates on its own.
+#:
+#: `host.capacity` — a material change here is a threshold band moving, and the collector already
+#: returns `warn`/`action` when a band is breached. That status dominates severity, so the only
+#: change this override can affect is the OTHER direction: a filesystem recovering from `low`
+#: back to healthy. Warning an owner because a disk got emptier is not a defensible page.
+#:
+#: `platform.services` and `logs.signatures` are deliberately absent. A unit's judged verdict
+#: changing, or an error signature appearing that was not there yesterday, is exactly the kind of
+#: thing a monitoring sweep exists to raise, and neither is implied by the collector's own status.
 _SCOPE_CHANGE_SEVERITY: dict[str, dict[str, str]] = {
     "wp.inventory": {CHANGE_CHANGED: STATUS_OK},
+    "host.capacity": {CHANGE_CHANGED: STATUS_OK},
 }
 
 
@@ -525,6 +596,9 @@ def run_inspection(store, collectors: list[Collector], ctx: CollectionContext, *
         # actually carry plugin names, log lines and service output have not been written yet
         # (issue #82; PR #85 review and re-review).
         normalized = prepare_value(result.value, limit=ctx.max_value_bytes)
+        # The material state goes through the SAME boundary, because it is stored too and a
+        # projection of a value is not automatically safer than the value.
+        material = prepare_value(material_of(result), limit=ctx.max_value_bytes)
         scope, scope_ok = safe_identifier(result.scope, fallback="unnamed.scope")
         source, source_ok = safe_identifier(result.source, fallback="unknown.source")
         collector_id, id_ok = safe_identifier(collector.id, fallback="unknown.collector")
@@ -533,7 +607,7 @@ def run_inspection(store, collectors: list[Collector], ctx: CollectionContext, *
 
         status = result.status
         reason = safe_text(result.reason, limit=MAX_REASON_BYTES) or None
-        if normalized.oversized:
+        if normalized.oversized or material.oversized:
             status = STATUS_UNKNOWN
             reason = ("this source returned more than can be recorded faithfully, so its state "
                       "is unknown — not healthy")
@@ -546,7 +620,8 @@ def run_inspection(store, collectors: list[Collector], ctx: CollectionContext, *
 
         previous = store.latest_observation(profile=ctx.profile, environment=ctx.environment,
                                             scope=scope)
-        change_class = classify(previous, status=status, digest=normalized.digest)
+        change_class = classify(previous, status=status, digest=material.digest,
+                                value_digest=normalized.digest)
         severity = severity_for(status, change_class, scope=scope)
 
         # What changed WITHIN the value, for scopes that can say. The note is appended to the
@@ -574,6 +649,10 @@ def run_inspection(store, collectors: list[Collector], ctx: CollectionContext, *
             status=status,
             value_json=normalized.canonical,
             value_digest=normalized.digest,
+            # Stored, not merely computed: the row can then show WHAT was compared, so a
+            # `changed` verdict is auditable instead of asserted.
+            material_json=material.canonical,
+            material_digest=material.digest,
             evidence=bound_evidence(result.evidence, limit=ctx.max_evidence_bytes),
             predecessor_id=previous["id"] if previous else None,
             change_class=change_class,

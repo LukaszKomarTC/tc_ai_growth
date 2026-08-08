@@ -77,12 +77,15 @@ class HostCapacityCollector:
         critical: list[str] = []
         low: list[str] = []
 
+        bands: dict[str, str] = {}
+
         for path in self._resolve_paths():
             try:
                 st = self._statvfs(path)
             except OSError as exc:
                 filesystems[path] = {"state": "unreadable", "error": type(exc).__name__}
                 unreadable.append(path)
+                bands[path] = "unreadable"
                 continue
             total = st.f_blocks * st.f_frsize
             free = st.f_bavail * st.f_frsize
@@ -96,12 +99,17 @@ class HostCapacityCollector:
                 "inodes_free_percent": inodes_pct,
             }
             worst_percent = free_pct if worst_percent is None else min(worst_percent, free_pct)
+            band = "healthy"
             if free_pct < ACTION_BELOW_PERCENT and free / 1e9 < ACTION_BELOW_FREE_GB:
                 critical.append(path)
+                band = "critical"
             elif free_pct < WARN_BELOW_PERCENT:
                 low.append(path)
+                band = "low"
             if inodes_pct is not None and inodes_pct < ACTION_BELOW_PERCENT:
                 critical.append(path)
+                band = "critical-inodes"
+            bands[path] = band
 
         store = self._resolve_store()
         value = {
@@ -118,12 +126,21 @@ class HostCapacityCollector:
                            "verified": False},
         }
 
+        # Which BAND each filesystem is in, never how full it is. Free space moves every minute
+        # on a live host: on a ten-minute re-run of a completely idle box, 55.0% became 54.8%
+        # and this scope reported `changed`. A digest over a continuously-varying measurement is
+        # a drift detector that fires on the measurement, and an owner who is warned about disk
+        # movement every sweep learns to click past the row that finally matters (#82 §7).
+        # Crossing a threshold IS material, and that is what a band records.
+        material = {"filesystems": bands,
+                    "thresholds": value["thresholds"]}
+
         if not filesystems or len(unreadable) == len(filesystems):
             return CollectorResult(
                 scope=self.scope, status=STATUS_UNKNOWN, value=value, source="statvfs",
                 evidence=f"unreadable: {', '.join(unreadable)}" if unreadable else "no paths",
                 reason="no project filesystem could be read, so capacity is unknown",
-                confidence="none")
+                confidence="none", material=material)
 
         if critical:
             status, reason = STATUS_ACTION, (
@@ -145,4 +162,4 @@ class HostCapacityCollector:
             scope=self.scope, status=status, value=value, source="statvfs",
             evidence="; ".join(f"{p}={d.get('free_percent', d.get('state'))}%"
                                for p, d in filesystems.items()),
-            reason=reason, confidence="high")
+            reason=reason, confidence="high", material=material)
