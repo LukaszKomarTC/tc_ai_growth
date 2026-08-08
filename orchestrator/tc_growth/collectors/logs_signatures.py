@@ -105,13 +105,26 @@ class LogSignaturesCollector:
             "truncated": len(counts) > TOP_N,
         }
 
+        # WHICH errors are happening, not how many times. A signature that was not there
+        # yesterday is news; the same fault ticking from 25 occurrences to 26 is the same fault,
+        # and a rolling 24-hour window guarantees those counts move on their own. Digesting them
+        # made every sweep of a site with any recurring error report `changed` (#82 §7). The
+        # threshold crossing is kept, because "started repeating" is a real transition — and the
+        # window is kept, because comparing a 24-hour read against a 1-hour one is not a
+        # comparison at all.
+        material = {
+            **window,
+            "signatures": sorted(counts),
+            "repeating": sorted(sig for sig, n in counts.items() if n >= WARN_AT_OCCURRENCES),
+        }
+
         if not counts:
             return CollectorResult(
                 scope=self.scope, status=STATUS_OK, value=value, source="journalctl",
                 evidence=f"{self._unit}, last {WINDOW_HOURS}h, priority {PRIORITY} and above",
                 reason=(f"no errors observed for {self._unit} in the last {WINDOW_HOURS}h at "
                         f"priority {PRIORITY} and above"),
-                confidence="high")
+                confidence="high", material=material)
 
         worst_sig, worst_count = top[0]
         if worst_count >= WARN_AT_OCCURRENCES:
@@ -120,14 +133,14 @@ class LogSignaturesCollector:
                 evidence=f"{self._unit}, last {WINDOW_HOURS}h",
                 reason=(f"one error signature recurred {worst_count} times in {WINDOW_HOURS}h — "
                         f"a repeating fault, not a one-off"),
-                confidence="high")
+                confidence="high", material=material)
 
         return CollectorResult(
             scope=self.scope, status=STATUS_OK, value=value, source="journalctl",
             evidence=f"{self._unit}, last {WINDOW_HOURS}h",
             reason=(f"{len(counts)} error signature(s) in {WINDOW_HOURS}h, none recurring more "
                     f"than {worst_count} times"),
-            confidence="high")
+            confidence="high", material=material)
 
     def _unknown(self, window: dict, evidence: str, why: str) -> CollectorResult:
         """Every unreadable path lands here, so none of them can accidentally look healthy."""

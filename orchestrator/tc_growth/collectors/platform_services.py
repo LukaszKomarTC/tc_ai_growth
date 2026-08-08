@@ -146,7 +146,8 @@ class PlatformServicesCollector:
             scope=self.scope, status=status, value=value, source="systemd",
             evidence="; ".join(f"{u}={units[u].get('active_state', units[u].get('state'))}"
                                for u in self._units),
-            reason=reason, confidence="medium" if status == STATUS_UNKNOWN else "high")
+            reason=reason, confidence="medium" if status == STATUS_UNKNOWN else "high",
+            material=_material(units, scan))
 
     def _scan_evidence(self, now: datetime) -> dict:
         """The scan's effect, not its schedule. No privilege required to stat a log file."""
@@ -165,6 +166,32 @@ class PlatformServicesCollector:
             "proves_scheduled_execution": False,
             "path": path, "age_hours": round(age, 1), "size_bytes": st.st_size,
         }
+
+
+#: The fields whose change is a fact about the host. Everything else this collector records is
+#: still stored as evidence — it just does not decide `changed`.
+_MATERIAL_UNIT_FIELDS = ("state", "load_state", "active_state", "sub_state", "result",
+                         "last_exit_status", "verdict")
+
+
+def _material(units: dict[str, dict], scan: dict) -> dict:
+    """The judged state, with the clock taken out of it.
+
+    `last_trigger_age_hours` and `last_run_age_hours` are `now` minus a fixed instant, so they
+    differ on every sweep of a host where nothing whatsoever happened — a digest over them can
+    never equal its predecessor's, and this collector reported `changed` every single time it
+    ran. The *verdict* those ages feed (`running` / `overdue` / `unproven`) is the fact worth
+    comparing: it changes when the unit's health changes and holds still when it does not.
+
+    Same argument for the scan: `age_hours` and `size_bytes` move whenever the log is appended
+    to, which is the log doing its job. `state` — `log-activity-observed` versus `stale` versus
+    `unreadable` — is what an owner would want to be told changed.
+    """
+    return {
+        "units": {name: {k: entry[k] for k in _MATERIAL_UNIT_FIELDS if k in entry}
+                  for name, entry in units.items()},
+        "integrity_scan": {"state": scan.get("state"), "path": scan.get("path")},
+    }
 
 
 def _judge_execution(unit: str, entry: dict) -> tuple[str, str]:

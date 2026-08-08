@@ -97,6 +97,14 @@ class WpInventoryCollector:
             "updates_available": sorted(updatable),
         }
 
+        # What is INSTALLED here, minus what is available elsewhere. `updates_available` is a
+        # fact about upstream release schedules, not about this host: WordPress publishing 6.9
+        # would otherwise make this scope report that the site changed, on a site nobody
+        # touched. The module docstring already says update availability must never influence
+        # status — until now that was true of the collector and false of the digest taken over
+        # its output.
+        material = {k: value[k] for k in ("core", "plugins", "themes", "counts")}
+
         # The one condition this collector treats as a malfunction on a single reading: a
         # WordPress with no active plugins is not a tidy site, it is a broken one.
         if not active:
@@ -104,7 +112,7 @@ class WpInventoryCollector:
                 scope=self.scope, status=STATUS_ACTION, value=value, source="wp-cli",
                 evidence=f"docroot {docroot}",
                 reason="WordPress reports no active plugins at all, which a working site does not",
-                confidence="high")
+                confidence="high", material=material)
 
         note = (f"{len(updatable)} update(s) available — recorded, not a fault"
                 if updatable else "no updates pending")
@@ -112,7 +120,7 @@ class WpInventoryCollector:
             scope=self.scope, status=STATUS_OK, value=value, source="wp-cli",
             evidence=f"docroot {docroot}; core {core.stdout.strip()}",
             reason=f"WordPress {core.stdout.strip()} with {len(active)} active plugin(s); {note}",
-            confidence="high")
+            confidence="high", material=material)
 
     def _json_list(self, argv: tuple[str, ...], docroot: str) -> tuple[list[dict] | None, str]:
         result = self._run(argv, cwd=docroot)

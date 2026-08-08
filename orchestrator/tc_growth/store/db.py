@@ -16,7 +16,7 @@ from pathlib import Path
 
 from ..config import BASE_DIR, active_site, get_settings
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 # One statement per table; CREATE ... IF NOT EXISTS makes init idempotent.
 _SCHEMA = """
@@ -238,7 +238,13 @@ CREATE TABLE IF NOT EXISTS observations (
     -- read; it is never absence and never green (issue #82 §14).
     status            TEXT NOT NULL,       -- ok | warn | action | unknown
     value_json        TEXT NOT NULL,       -- canonical JSON of the normalized value
-    value_digest      TEXT NOT NULL,       -- sha256 of those exact bytes
+    value_digest      TEXT NOT NULL,       -- sha256 of those exact bytes: integrity of THIS row
+    -- WP-U5.2a: the MATERIAL state and its digest — the subset of the value whose change is a
+    -- fact about the host rather than about the clock, and the digest drift is computed over.
+    -- Nullable because rows written under schema v9 predate it; `classify` compares those the
+    -- way they were written rather than manufacturing drift at the migration.
+    material_json     TEXT,
+    material_digest   TEXT,
     evidence          TEXT,                -- bounded + redacted; never a raw log tail
     -- The predecessor is resolved for the same (profile, environment, scope), so a diff can
     -- never be computed across businesses or environments.
@@ -533,6 +539,20 @@ def _migrate(conn: sqlite3.Connection, *, from_version: int) -> None:
             try:
                 conn.execute(stmt)
             except sqlite3.OperationalError as exc:
+                if "duplicate column" not in str(exc).lower():
+                    raise
+    if from_version < 10:
+        # v9 -> v10 (WP-U5.2a): the material state and its digest on observations. Nullable and
+        # additive: no existing row is rewritten, and `inspection.classify` compares a
+        # predecessor that has no material digest the way that row was originally written, so
+        # the migration itself cannot report a scope as changed.
+        for stmt in (
+            "ALTER TABLE observations ADD COLUMN material_json TEXT;",
+            "ALTER TABLE observations ADD COLUMN material_digest TEXT;",
+        ):
+            try:
+                conn.execute(stmt)
+            except sqlite3.OperationalError as exc:  # column already there (fresh-create race)
                 if "duplicate column" not in str(exc).lower():
                     raise
     if from_version < 9:

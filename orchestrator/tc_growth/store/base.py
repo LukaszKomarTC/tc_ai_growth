@@ -266,7 +266,9 @@ class Store(Protocol):
                            scope: str, source: str, profile: str, environment: str,
                            captured_at: str, status: str, value_json: str, value_digest: str,
                            evidence: str | None, predecessor_id: int | None, change_class: str,
-                           severity: str, confidence: str | None, reason: str | None) -> int: ...
+                           severity: str, confidence: str | None, reason: str | None,
+                           material_json: str | None = None,
+                           material_digest: str | None = None) -> int: ...
 
     def list_observations(self, run_id: int) -> list[dict]: ...
 
