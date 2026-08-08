@@ -40,9 +40,12 @@ class _Stub:
     version = "1"
 
     def __init__(self, value, *, status="ok", scope="probe.scope", cid="stub",
-                 boom: Exception | None = None, evidence=""):
+                 boom: Exception | None = None, evidence="", comparable=True):
         self.id, self.scope, self._value = cid, scope, value
         self._status, self._boom, self._evidence = status, boom, evidence
+        # Stated, never inferred — the stub obeys the same contract as a real collector, so a
+        # test that wants an unreadable source has to say so (PR #90 review).
+        self._comparable = comparable
         self._source = "stub"
 
     def _with_source(self, source):
@@ -54,7 +57,8 @@ class _Stub:
             raise self._boom
         return inspection.CollectorResult(scope=self.scope, status=self._status,
                                           value=self._value, source=self._source,
-                                          evidence=self._evidence, reason="stub reading")
+                                          evidence=self._evidence, reason="stub reading",
+                                          comparable=self._comparable)
 
 
 # --- identity: the amendment-1 boundary ---------------------------------------------------------
@@ -605,7 +609,8 @@ def test_a_secret_placed_only_in_reason_never_reaches_the_record_or_the_page(sto
         def collect(self, c):
             return inspection.CollectorResult(
                 scope="probe.scope", status="warn", value={"v": 1}, source="stub",
-                evidence="", reason="failed to reach TC_API_TOKEN=hunter2-secret while polling")
+                evidence="", reason="failed to reach TC_API_TOKEN=hunter2-secret while polling",
+                comparable=True)
 
     run_id = inspection.run_inspection(store, [_Leaky({"v": 1})], ctx(now=T0))
     row = store.list_observations(run_id)[0]
@@ -619,7 +624,7 @@ def test_an_oversized_reason_is_bounded(store):
         def collect(self, c):
             return inspection.CollectorResult(
                 scope="probe.scope", status="ok", value={"v": 1}, source="stub",
-                evidence="", reason="q" * 20000)
+                evidence="", reason="q" * 20000, comparable=True)
 
     run_id = inspection.run_inspection(store, [_Verbose({"v": 1})], ctx(now=T0))
     reason = store.list_observations(run_id)[0]["reason"]
@@ -675,7 +680,7 @@ def test_confidence_is_sanitized_like_any_other_collector_string(store):
         def collect(self, c):
             return inspection.CollectorResult(
                 scope="probe.scope", status="ok", value={"v": 1}, source="stub",
-                evidence="", reason="fine", confidence="high TC_SECRET=leaky")
+                evidence="", reason="fine", confidence="high TC_SECRET=leaky", comparable=True)
 
     run_id = inspection.run_inspection(store, [_Conf({"v": 1})], ctx(now=T0))
     assert "leaky" not in (store.list_observations(run_id)[0]["confidence"] or "")

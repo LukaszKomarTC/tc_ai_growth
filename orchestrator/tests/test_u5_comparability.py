@@ -180,6 +180,135 @@ def test_an_oversized_value_is_not_comparable(store):
     assert row["status"] == inspection.STATUS_UNKNOWN
 
 
+# === the contract: omission cannot mean "proven" =================================================
+
+def test_a_collector_cannot_omit_comparability():
+    """The fail-closed contract, as a mechanical fact rather than a convention.
+
+    The first cut of this defaulted `comparable=True`, reasoning that a collector which returns
+    has normally read something. That is backwards for an evidence system (PR #90 review):
+    comparability is a POSITIVE claim, and a default makes *omission* mean *proven*. A collector
+    added later that returns `status=unknown` and forgets the flag would silently become
+    comparable and turn a changing error payload into false drift — and U5.3 adds collectors
+    next, handing the footgun straight to the code most likely to fire it.
+
+    Required and keyword-only, so the author has to answer the question once, in writing.
+    """
+    with pytest.raises(TypeError, match="comparable"):
+        inspection.CollectorResult(scope="s", status=inspection.STATUS_OK,
+                                   value={"a": 1}, source="x")
+
+    # And it cannot be smuggled in positionally either.
+    with pytest.raises(TypeError):
+        inspection.CollectorResult("s", inspection.STATUS_OK, {"a": 1}, "x", "", "", None,
+                                   None, True)
+
+
+def test_a_collector_that_forgets_the_flag_cannot_produce_drift(store):
+    """Criterion 3 end to end: a forgetful collector fails loudly at the boundary and its reading
+    becomes `unknown`, rather than quietly claiming comparability it never established."""
+    class Forgetful:
+        id, version, scope = "forgetful", "1", "forgetful.scope"
+
+        def __init__(self, payload):
+            self.payload = payload
+
+        def collect(self, c):
+            return inspection.CollectorResult(          # noqa: no `comparable=` on purpose
+                scope=self.scope, status=inspection.STATUS_UNKNOWN, source="x",
+                value={"error": self.payload})
+
+    first = sweep(store, Forgetful("attempt 1"))
+    second = sweep(store, Forgetful("attempt 2"), now=T0 + timedelta(minutes=5))
+
+    assert first["material_comparable"] == 0
+    assert second["change_class"] != inspection.CHANGE_CHANGED
+
+
+# === each real collector's branches ==============================================================
+
+def test_platform_services_branches():
+    """Comparable when systemd answered — whatever its verdict; not when it did not."""
+    c = ctx()
+    assert PlatformServicesCollector(runner=systemd(), scan_log=__file__).collect(c).comparable
+    assert not PlatformServicesCollector(runner=systemd(readable=False),
+                                         scan_log=__file__).collect(c).comparable
+
+
+def test_host_capacity_branches(tmp_path):
+    """A partial reading is comparable — its material names every path and band, `unreadable`
+    included. Nothing readable at all is not."""
+    from tc_growth.collectors.host_capacity import HostCapacityCollector
+
+    class Stat:
+        f_frsize, f_blocks, f_bavail, f_files, f_favail = 4096, 26_000_000, 13_000_000, 10, 9
+
+    def half(path):
+        if path == "/unreadable":
+            raise PermissionError(13, "denied")
+        return Stat()
+
+    partial = HostCapacityCollector(paths=(str(tmp_path), "/unreadable"), statvfs=half,
+                                    store_path="").collect(ctx())
+    assert partial.comparable
+    assert partial.status == inspection.STATUS_UNKNOWN     # honest about the half it missed
+
+    def none(path):
+        raise PermissionError(13, "denied")
+
+    assert not HostCapacityCollector(paths=("/a", "/b"), statvfs=none,
+                                     store_path="").collect(ctx()).comparable
+
+
+def test_logs_signatures_branches():
+    """A read journal is comparable; an unreadable one is not — that is the case the old
+    classifier comment described, and the only one it was right about."""
+    from tc_growth.collectors._exec import CommandResult
+    from tc_growth.collectors.logs_signatures import LogSignaturesCollector
+
+    def journal(readable):
+        def run(argv, **kw):
+            if not readable:
+                return CommandResult(argv=argv, returncode=1, stdout="", stderr="denied",
+                                     ok=False)
+            if "-p" not in argv:
+                return CommandResult(argv=argv, returncode=0, stdout="started\n", stderr="",
+                                     ok=True)
+            return CommandResult(argv=argv, returncode=0, stdout="timeout on db1\n", stderr="",
+                                 ok=True)
+        return run
+
+    assert LogSignaturesCollector(runner=journal(True)).collect(ctx()).comparable
+    assert not LogSignaturesCollector(runner=journal(False)).collect(ctx()).comparable
+
+
+def test_wp_inventory_branches(tmp_path):
+    """An inventory that parsed is comparable; every unreadable docroot state is not."""
+    import json as _json
+
+    from tc_growth.collectors._exec import CommandResult
+    from tc_growth.collectors.wp_inventory import WpInventoryCollector
+
+    def wp(argv, **kw):
+        if argv[:3] == ("wp", "core", "version"):
+            return CommandResult(argv=argv, returncode=0, stdout="6.8.1\n", stderr="", ok=True)
+        if argv[:3] == ("wp", "plugin", "list"):
+            return CommandResult(argv=argv, returncode=0, ok=True, stderr="", stdout=_json.dumps(
+                [{"name": "akismet", "status": "active", "version": "5.3", "update": "none"}]))
+        return CommandResult(argv=argv, returncode=0, stdout="[]", stderr="", ok=True)
+
+    assert WpInventoryCollector(runner=wp, docroot=str(tmp_path)).collect(ctx()).comparable
+    for docroot in ("", "/no/such/docroot"):
+        assert not WpInventoryCollector(runner=wp, docroot=docroot).collect(ctx()).comparable
+
+
+def test_the_fixture_collector_states_it_too():
+    from tc_growth.collectors.fixture import FixtureCollector
+
+    assert FixtureCollector("stable").collect(ctx()).comparable
+    assert not FixtureCollector("x" * 10_000).collect(ctx()).comparable
+
+
 # === the transitions ============================================================================
 
 def test_becoming_comparable_is_appeared_and_losing_it_is_disappeared(store):

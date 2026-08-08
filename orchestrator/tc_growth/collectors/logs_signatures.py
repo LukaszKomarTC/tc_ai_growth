@@ -125,7 +125,7 @@ class LogSignaturesCollector:
                 evidence=f"{self._unit}, last {WINDOW_HOURS}h, priority {PRIORITY} and above",
                 reason=(f"no errors observed for {self._unit} in the last {WINDOW_HOURS}h at "
                         f"priority {PRIORITY} and above"),
-                confidence="high", material=material)
+                confidence="high", material=material, comparable=True)
 
         worst_sig, worst_count = top[0]
         if worst_count >= WARN_AT_OCCURRENCES:
@@ -134,14 +134,14 @@ class LogSignaturesCollector:
                 evidence=f"{self._unit}, last {WINDOW_HOURS}h",
                 reason=(f"one error signature recurred {worst_count} times in {WINDOW_HOURS}h — "
                         f"a repeating fault, not a one-off"),
-                confidence="high", material=material)
+                confidence="high", material=material, comparable=True)
 
         return CollectorResult(
             scope=self.scope, status=STATUS_OK, value=value, source="journalctl",
             evidence=f"{self._unit}, last {WINDOW_HOURS}h",
             reason=(f"{len(counts)} error signature(s) in {WINDOW_HOURS}h, none recurring more "
                     f"than {worst_count} times"),
-            confidence="high", material=material)
+            confidence="high", material=material, comparable=True)
 
     def _unknown(self, window: dict, evidence: str, why: str) -> CollectorResult:
         """Every unreadable path lands here, so none of them can accidentally look healthy.

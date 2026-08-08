@@ -149,10 +149,18 @@ class CollectorResult:
     material: dict[str, Any] | None = None
     #: Did this reading ESTABLISH a material state that may legitimately be compared to its
     #: predecessor? A separate question from health, and the collector is the only thing that
-    #: knows the answer — see `classify`. The default is True because a collector that returns
-    #: at all has normally read something; a collector that could not reach its source says so
-    #: explicitly, which is a one-word admission rather than a status to be reverse-engineered.
-    comparable: bool = True
+    #: knows the answer — see `classify`.
+    #:
+    #: **Required, with no default, and keyword-only.** The first cut defaulted it to `True` on
+    #: the reasoning that a collector which returns has normally read something. That is
+    #: backwards for an evidence system (PR #90 review): comparability is a POSITIVE claim —
+    #: "material state fit to compare was established" — and a default makes *omission* mean
+    #: *proven*. A future collector that returns `status=unknown` and forgets the flag would
+    #: silently become comparable and turn a changing error payload into false drift. U5.3 adds
+    #: collectors next, so the footgun would be handed straight to the code most likely to fire
+    #: it. Failing closed is not enough either: an author who must think about it once is worth
+    #: more than one who inherits a safe answer without noticing the question.
+    comparable: bool = field(kw_only=True)
 
     def __post_init__(self) -> None:
         if self.status not in STATUSES:

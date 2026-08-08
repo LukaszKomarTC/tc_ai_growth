@@ -334,7 +334,7 @@ def test_wp_inventory_still_escalates_an_active_plugin_going_missing(store):
 def test_a_collector_that_declares_nothing_compares_its_whole_value():
     """The default is the old behaviour, which is correct for a reading that does not move."""
     result = inspection.CollectorResult(scope="s", status=inspection.STATUS_OK,
-                                        value={"a": 1}, source="x")
+                                        value={"a": 1}, source="x", comparable=True)
     assert inspection.material_of(result) == {"a": 1}
 
 
@@ -347,7 +347,7 @@ def test_the_material_state_is_redacted_like_everything_else(store):
             return inspection.CollectorResult(
                 scope=self.scope, status=inspection.STATUS_OK, source="x",
                 value={"api_token": "s3cret", "state": "up"},
-                material={"api_token": "s3cret", "state": "up"})
+                material={"api_token": "s3cret", "state": "up"}, comparable=True)
 
     row = sweep(store, Leaky())
     assert "s3cret" not in row["material_json"]
@@ -362,7 +362,7 @@ def test_an_oversized_material_state_degrades_the_reading_to_unknown(store):
         def collect(self, ctx):
             return inspection.CollectorResult(
                 scope=self.scope, status=inspection.STATUS_OK, source="x",
-                value={"state": "up"}, material={"blob": "x" * 20_000})
+                value={"state": "up"}, material={"blob": "x" * 20_000}, comparable=True)
 
     row = sweep(store, Huge())
     assert row["status"] == inspection.STATUS_UNKNOWN

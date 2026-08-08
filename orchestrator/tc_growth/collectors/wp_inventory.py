@@ -141,7 +141,7 @@ class WpInventoryCollector:
                 scope=self.scope, status=STATUS_ACTION, value=value, source="wp-cli",
                 evidence=f"docroot {docroot}",
                 reason="WordPress reports no active plugins at all, which a working site does not",
-                confidence="high", material=material)
+                confidence="high", material=material, comparable=True)
 
         note = (f"{len(updatable)} update(s) available — recorded, not a fault"
                 if updatable else "no updates pending")
@@ -149,7 +149,7 @@ class WpInventoryCollector:
             scope=self.scope, status=STATUS_OK, value=value, source="wp-cli",
             evidence=f"docroot {docroot}; core {core.stdout.strip()}",
             reason=f"WordPress {core.stdout.strip()} with {len(active)} active plugin(s); {note}",
-            confidence="high", material=material)
+            confidence="high", material=material, comparable=True)
 
     def _json_list(self, argv: tuple[str, ...], docroot: str) -> tuple[list[dict] | None, str]:
         result = self._run(argv, cwd=docroot)

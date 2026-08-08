@@ -177,4 +177,7 @@ class HostCapacityCollector:
             scope=self.scope, status=status, value=value, source="statvfs",
             evidence="; ".join(f"{p}={d.get('free_percent', d.get('state'))}%"
                                for p, d in filesystems.items()),
-            reason=reason, confidence="high", material=material)
+            reason=reason, confidence="high", material=material,
+            # At least one filesystem was read; the material names every path and its band,
+            # `unreadable` included, so this partial reading honestly represents what was seen.
+            comparable=True)
