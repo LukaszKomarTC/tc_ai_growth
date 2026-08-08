@@ -147,11 +147,15 @@ class HostCapacityCollector:
                     "thresholds": value["thresholds"]}
 
         if not filesystems or len(unreadable) == len(filesystems):
+            # Nothing was read, so nothing was established — the one branch here that is not
+            # comparable. A PARTIAL reading still is: its material names each path and its band,
+            # `unreadable` included, so the record honestly represents what was and was not seen
+            # and a band moving is a real change worth reporting (issue #82, U5.2d).
             return CollectorResult(
                 scope=self.scope, status=STATUS_UNKNOWN, value=value, source="statvfs",
                 evidence=f"unreadable: {', '.join(unreadable)}" if unreadable else "no paths",
                 reason="no project filesystem could be read, so capacity is unknown",
-                confidence="none", material=material)
+                confidence="none", material=material, comparable=False)
 
         if critical:
             status, reason = STATUS_ACTION, (

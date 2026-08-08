@@ -222,14 +222,16 @@ class SqliteStore:
                            evidence: str | None, predecessor_id: int | None, change_class: str,
                            severity: str, confidence: str | None, reason: str | None,
                            material_json: str | None = None,
-                           material_digest: str | None = None) -> int:
+                           material_digest: str | None = None,
+                           material_comparable: bool | None = None) -> int:
         return records.record_observation(
             self._conn, run_id, collector_id=collector_id, collector_version=collector_version,
             scope=scope, source=source, profile=profile, environment=environment,
             captured_at=captured_at, status=status, value_json=value_json,
             value_digest=value_digest, evidence=evidence, predecessor_id=predecessor_id,
             change_class=change_class, severity=severity, confidence=confidence, reason=reason,
-            material_json=material_json, material_digest=material_digest)
+            material_json=material_json, material_digest=material_digest,
+            material_comparable=material_comparable)
 
     def list_observations(self, run_id: int) -> list[dict]:
         return records.list_observations(self._conn, run_id)

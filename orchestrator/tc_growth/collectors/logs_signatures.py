@@ -144,10 +144,16 @@ class LogSignaturesCollector:
             confidence="high", material=material)
 
     def _unknown(self, window: dict, evidence: str, why: str) -> CollectorResult:
-        """Every unreadable path lands here, so none of them can accidentally look healthy."""
+        """Every unreadable path lands here, so none of them can accidentally look healthy.
+
+        `comparable=False`: the journal was not read, so no material state was established. This
+        is the case the old classifier's comment described and the only one it was right about —
+        comparing one "journal unavailable" against the next would turn a changing error message
+        into drift (issue #82, U5.2d).
+        """
         return CollectorResult(
             scope=self.scope, status=STATUS_UNKNOWN,
             value={"error": "journal unavailable", **window}, source="journalctl",
             evidence=evidence,
             reason=f"{why}, so recent errors are unknown — this is not a clean bill of health",
-            confidence="none")
+            confidence="none", comparable=False)

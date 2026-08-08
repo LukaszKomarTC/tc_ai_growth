@@ -159,10 +159,20 @@ def test_platform_services_still_reports_a_unit_that_failed(store):
     assert second["severity"] == inspection.STATUS_ACTION
 
 
-def test_platform_services_reports_a_unit_that_stopped_as_disappeared(store):
-    """An inactive unit makes the whole reading `unknown` — the collector cannot confirm the
-    work is happening — so the change class is `disappeared`, not `changed`. Both are attention;
-    recording which one it is keeps `unknown` from being quietly folded into ordinary drift."""
+def test_platform_services_reports_a_unit_that_stopped_as_changed(store):
+    """A unit going inactive is a CHANGE, not a disappearance — and this assertion is the
+    inverse of what it was.
+
+    It used to expect `disappeared`, because health going `ok` -> `unknown` was what drove the
+    classification. That was the defect: `status` was answering both "is this healthy?" and "may
+    this be compared?". systemd answered every query here and the material state is fully
+    established, so the honest verdict is that the state changed. Health still degrades to
+    `unknown` — the collector cannot confirm the work is happening — and the two facts are now
+    reported separately instead of one overwriting the other (issue #82, U5.2d).
+
+    `disappeared` keeps its own meaning: the source stopped being readable at all. See
+    tests/test_u5_comparability.py.
+    """
     sweep(store, PlatformServicesCollector(
         runner=systemd_runner(last_trigger=T0 - timedelta(hours=1)), scan_log=__file__), now=T0)
 
@@ -170,7 +180,8 @@ def test_platform_services_reports_a_unit_that_stopped_as_disappeared(store):
         runner=systemd_runner(last_trigger=T0 - timedelta(hours=1), active="inactive"),
         scan_log=__file__), now=T0 + timedelta(minutes=10))
 
-    assert second["change_class"] == inspection.CHANGE_DISAPPEARED
+    assert second["change_class"] == inspection.CHANGE_CHANGED
+    assert second["status"] == inspection.STATUS_UNKNOWN
     assert second["severity"] == inspection.STATUS_UNKNOWN
 
 
@@ -377,10 +388,10 @@ def test_a_predecessor_written_before_material_digests_is_compared_the_old_way()
     """
     legacy = {"status": inspection.STATUS_OK, "value_digest": "abc"}
 
-    assert inspection.classify(legacy, status=inspection.STATUS_OK,
+    assert inspection.classify(legacy, comparable=True,
                                digest="material-xyz", value_digest="abc") == \
         inspection.CHANGE_UNCHANGED
-    assert inspection.classify(legacy, status=inspection.STATUS_OK,
+    assert inspection.classify(legacy, comparable=True,
                                digest="material-xyz", value_digest="def") == \
         inspection.CHANGE_CHANGED
 
