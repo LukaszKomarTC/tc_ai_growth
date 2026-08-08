@@ -21,8 +21,7 @@ from typing import Callable
 
 from ..inspection import (STATUS_ACTION, STATUS_OK, STATUS_UNKNOWN, STATUS_WARN,
                           CollectionContext, CollectorResult)
-from ..runtime_identity import (DOCROOT_ENV, DOCROOT_INACCESSIBLE, DOCROOT_READABLE,
-                                probe_docroot)
+from ..runtime_identity import DOCROOT_ENV, DOCROOT_PRESENT_STATES, probe_docroot
 
 #: Proposed defaults pending owner confirmation. Percent free, per filesystem.
 WARN_BELOW_PERCENT = 20.0
@@ -48,16 +47,18 @@ class HostCapacityCollector:
         if self._paths is not None:
             return self._paths
         candidates = [os.path.dirname(self._resolve_store()) or "/"]
-        # A docroot that EXISTS but this service cannot reach is still one of the project's
-        # filesystems, and dropping it silently made the page say "1 project filesystem(s)" while
-        # the site's own disk went unwatched with nothing to say so (first on-host acceptance
-        # run). It is included and fails to read, which degrades this scope to `unknown` —
-        # correct, because the capacity of that filesystem genuinely is unknown.
+        # A configured docroot this service cannot reach — or cannot even classify — is still
+        # one of the project's filesystems, and dropping it silently made the page say "1 project
+        # filesystem(s)" while the site's own disk went unwatched with nothing to say so (first
+        # on-host acceptance run). It is included, fails to read, and degrades this scope to
+        # `unknown` — correct, because that filesystem's capacity genuinely is unknown.
         #
-        # A docroot that is unset or simply absent is NOT included: there is no filesystem to
-        # report on, and inventing an unreadable row for a path nobody configured would be noise.
+        # `unverified` is in the present set deliberately: a probe error is the case where the
+        # temptation to drop the path is strongest and the justification weakest (PR #89
+        # re-review). Only `unset` and an ESTABLISHED absence are excluded — there is no
+        # filesystem to report on, and an unreadable row for a path nobody configured is noise.
         docroot = os.environ.get(DOCROOT_ENV, "").strip()
-        if docroot and probe_docroot(docroot) in (DOCROOT_READABLE, DOCROOT_INACCESSIBLE):
+        if docroot and probe_docroot(docroot) in DOCROOT_PRESENT_STATES:
             candidates.append(docroot)
         # De-duplicate while keeping order: two paths on one filesystem are one fact.
         seen, out = set(), []
