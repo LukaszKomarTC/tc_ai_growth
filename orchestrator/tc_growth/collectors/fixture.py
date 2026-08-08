@@ -43,6 +43,8 @@ class FixtureCollector:
                 source=FIXTURE_ENV,
                 evidence=f"{len(raw)} characters, limit {MAX_FIXTURE_LEN}",
                 reason="the fixture source was not readable within its bounds",
+                # Nothing was read within bounds, so nothing was established.
+                comparable=False,
             )
         return CollectorResult(
             scope=self.scope,
@@ -52,4 +54,5 @@ class FixtureCollector:
             evidence=f"{FIXTURE_ENV}={raw}",
             reason="fixture probe — exercises the collection machinery, observes nothing real",
             confidence="high",
+            comparable=True,
         )

@@ -144,12 +144,18 @@ class PlatformServicesCollector:
                 f"{len(self._units)} project unit(s) active and running on schedule; "
                 f"integrity-scan log active")
 
+        # Comparable whenever systemd answered for at least one unit — which is the case this
+        # collector exposed on the real host: every query succeeded, a material state WAS
+        # established, and health was still `unknown` because a timer is inactive. Those are
+        # different questions, and conflating them made a stopped timer read as `unchanged`
+        # (issue #82, U5.2d). Only a systemd we could not talk to at all establishes nothing.
         return CollectorResult(
             scope=self.scope, status=status, value=value, source="systemd",
             evidence="; ".join(f"{u}={units[u].get('active_state', units[u].get('state'))}"
                                for u in self._units),
             reason=reason, confidence="medium" if status == STATUS_UNKNOWN else "high",
-            material=_material(units, scan))
+            material=_material(units, scan),
+            comparable=len(unreadable) < len(self._units))
 
     def _scan_evidence(self, now: datetime) -> dict:
         """The scan's effect, not its schedule. No privilege required to stat a log file."""

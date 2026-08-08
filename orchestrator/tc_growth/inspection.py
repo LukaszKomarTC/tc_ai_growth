@@ -147,6 +147,20 @@ class CollectorResult:
     #: whole value is material, which is only true for a collector whose reading does not move
     #: on its own. See `MATERIAL STATE` below for why this exists.
     material: dict[str, Any] | None = None
+    #: Did this reading ESTABLISH a material state that may legitimately be compared to its
+    #: predecessor? A separate question from health, and the collector is the only thing that
+    #: knows the answer — see `classify`.
+    #:
+    #: **Required, with no default, and keyword-only.** The first cut defaulted it to `True` on
+    #: the reasoning that a collector which returns has normally read something. That is
+    #: backwards for an evidence system (PR #90 review): comparability is a POSITIVE claim —
+    #: "material state fit to compare was established" — and a default makes *omission* mean
+    #: *proven*. A future collector that returns `status=unknown` and forgets the flag would
+    #: silently become comparable and turn a changing error payload into false drift. U5.3 adds
+    #: collectors next, so the footgun would be handed straight to the code most likely to fire
+    #: it. Failing closed is not enough either: an author who must think about it once is worth
+    #: more than one who inherits a safe answer without noticing the question.
+    comparable: bool = field(kw_only=True)
 
     def __post_init__(self) -> None:
         if self.status not in STATUSES:
@@ -346,14 +360,46 @@ def safe_identifier(raw: object, *, fallback: str) -> tuple[str, bool]:
 
 # --- classification -----------------------------------------------------------------------------
 
-def classify(previous: dict | None, *, status: str, digest: str,
+def was_comparable(previous: dict) -> bool:
+    """Was the PREDECESSOR row a comparable observation?
+
+    Read from the stored property, never inferred from `status` — that inference is the defect
+    this whole mechanism replaces. The one exception is a row written before schema v11, which
+    has nothing stored: there, the honest move is to reproduce exactly what the old classifier
+    did, rather than guess. The old code compared a row iff its status was not `unknown`, so a
+    legacy row is comparable iff its status was not `unknown` — no transition is invented and no
+    `changed` is manufactured by the migration itself.
+    """
+    stored = previous.get("material_comparable")
+    if stored is None:
+        return previous.get("status") != STATUS_UNKNOWN
+    return bool(stored)
+
+
+def classify(previous: dict | None, *, comparable: bool, digest: str,
              value_digest: str | None = None) -> str:
     """What changed, decided from the durable predecessor row and the fresh reading.
 
+    **Comparability, not health.** `status` answers "is this thing healthy?"; it was also being
+    asked "may this reading legitimately be compared to its predecessor?", and those are not the
+    same property (PR #89 review, on evidence from the first on-host acceptance run).
+    `platform.services` is the case that separates them: systemd answered every query and a
+    material state was established, but health is `unknown` because a timer is inactive. The old
+    rule — both unknown, therefore `unchanged` — suppressed a real material change, and its
+    comment claimed "nothing was compared" about a comparison that could perfectly well have been
+    made. **While any scope read `unknown`, changes inside it were invisible**, which is exactly
+    the window in which an owner most needs to see movement.
+
+    So the decision is now structural, and `status` plays no part in it:
+
+    * no predecessor                             -> `baseline`
+    * predecessor not comparable, this one is    -> `appeared`
+    * predecessor comparable, this one is not    -> `disappeared`
+    * neither comparable                         -> `unchanged` (severity still says `unknown`)
+    * both comparable                            -> compare material digests, whatever the health
+
     `digest` is the MATERIAL digest — see `MATERIAL STATE` above. Both digests are taken over
     SAFE stored values, so this compares what the record holds against what the record held.
-    Comparing a raw reading against a redacted predecessor would never match, and every sweep
-    would report drift forever.
 
     A first observation is `baseline`. Reporting it as `unchanged` would be a claim about a
     comparison that never happened, and it is the single easiest way for this kind of system to
@@ -361,15 +407,15 @@ def classify(previous: dict | None, *, status: str, digest: str,
     """
     if previous is None:
         return CHANGE_BASELINE
-    was_unknown = previous["status"] == STATUS_UNKNOWN
-    is_unknown = status == STATUS_UNKNOWN
-    if was_unknown and not is_unknown:
+    previously = was_comparable(previous)
+    if comparable and not previously:
         return CHANGE_APPEARED
-    if is_unknown and not was_unknown:
+    if previously and not comparable:
         return CHANGE_DISAPPEARED
-    if is_unknown and was_unknown:
-        # Still unreadable. Nothing was compared, so nothing changed — but it is not healthy
-        # either; the severity table keeps it `unknown`.
+    if not comparable:
+        # Neither reading established a material state, so there is genuinely nothing to compare
+        # — the claim the old rule made everywhere, now made only where it is true. Health is
+        # untouched: the severity table keeps this `unknown`.
         return CHANGE_UNCHANGED
     stored = previous.get("material_digest")
     if stored:
@@ -568,6 +614,9 @@ def _unknown_result(collector: Collector, exc: Exception) -> CollectorResult:
         source=getattr(collector, "id", "unknown"),
         evidence=bound_evidence(f"{type(exc).__name__}: {exc}"),
         reason="this source could not be read, so its state is unknown — not healthy",
+        # A collector that raised established nothing. Comparing an exception name against a
+        # previous exception name would turn a changing error message into drift.
+        comparable=False,
     )
 
 
@@ -606,21 +655,28 @@ def run_inspection(store, collectors: list[Collector], ctx: CollectionContext, *
         identifiers_ok = scope_ok and source_ok and id_ok and version_ok
 
         status = result.status
+        comparable = bool(result.comparable)
         reason = safe_text(result.reason, limit=MAX_REASON_BYTES) or None
         if normalized.oversized or material.oversized:
             status = STATUS_UNKNOWN
+            # Nothing faithful was retained, so there is nothing legitimate to compare — and the
+            # replacement stub would otherwise digest identically forever and read as `unchanged`.
+            comparable = False
             reason = ("this source returned more than can be recorded faithfully, so its state "
                       "is unknown — not healthy")
         elif not identifiers_ok:
             # A collector that cannot name its own scope or source is not one whose reading
             # should be believed, even though the reading is still kept as evidence.
             status = STATUS_UNKNOWN
+            # Untrusted, therefore not compared: the conservative direction is to withhold a
+            # `changed` verdict we could not stand behind, not to publish one.
+            comparable = False
             reason = ("this collector returned a malformed identifier, so its reading is not "
                       "trusted — the observation is kept, its state is unknown")
 
         previous = store.latest_observation(profile=ctx.profile, environment=ctx.environment,
                                             scope=scope)
-        change_class = classify(previous, status=status, digest=material.digest,
+        change_class = classify(previous, comparable=comparable, digest=material.digest,
                                 value_digest=normalized.digest)
         severity = severity_for(status, change_class, scope=scope)
 
@@ -628,7 +684,7 @@ def run_inspection(store, collectors: list[Collector], ctx: CollectionContext, *
         # owner-facing reason so the page answers "what changed since last time" in words, and
         # a differ may escalate — a plugin that was active and is not is worth more than the
         # informational verdict `wp.inventory` gives ordinary drift.
-        if change_class == CHANGE_CHANGED and status != STATUS_UNKNOWN:
+        if change_class == CHANGE_CHANGED:
             escalation, note = describe_change(
                 scope, observation_value(previous) if previous else None, normalized.value)
             if escalation and _ROLLUP_ORDER.index(escalation) < _ROLLUP_ORDER.index(severity):
@@ -653,6 +709,7 @@ def run_inspection(store, collectors: list[Collector], ctx: CollectionContext, *
             # `changed` verdict is auditable instead of asserted.
             material_json=material.canonical,
             material_digest=material.digest,
+            material_comparable=comparable,
             evidence=bound_evidence(result.evidence, limit=ctx.max_evidence_bytes),
             predecessor_id=previous["id"] if previous else None,
             change_class=change_class,

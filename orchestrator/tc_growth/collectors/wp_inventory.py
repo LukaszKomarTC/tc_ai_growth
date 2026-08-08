@@ -30,7 +30,9 @@ from ..inspection import STATUS_ACTION, STATUS_OK, STATUS_UNKNOWN, CollectionCon
 #: inspecting whichever site happens to live at a familiar path and filing the result under this
 #: profile's name, the cross-identity failure U5 exists to prevent. One owner for the contract:
 #: the collector that READS it must not be a second place that NAMES it.
-from ..runtime_identity import DOCROOT_ENV
+from ..runtime_identity import (DOCROOT_ENV, DOCROOT_INACCESSIBLE, DOCROOT_MISSING,
+                                DOCROOT_READABLE, DOCROOT_UNSET, DOCROOT_UNVERIFIED,
+                                probe_docroot)
 from ._exec import CommandResult, run_command, wp_core_version, wp_plugin_list, wp_theme_list
 
 # The argv comes from `_exec`'s builders: a collector names the command it wants and cannot
@@ -51,17 +53,42 @@ class WpInventoryCollector:
         self._run = runner or run_command
         self._docroot = docroot
 
-    def _resolve_docroot(self) -> str | None:
+    #: One sentence per docroot state, because four different problems have four different
+    #: fixes. The old wording — "not set to a readable directory" — was said about a docroot that
+    #: WAS set, whose real problem was that the service account could not traverse to it, and it
+    #: pointed the reader at the configuration instead of the permission (issue #82, U5.2d).
+    _DOCROOT_REASON = {
+        DOCROOT_UNSET: (
+            f"{DOCROOT_ENV} is not set in this service's environment, so WordPress was not "
+            f"inspected"),
+        DOCROOT_MISSING: (
+            f"{DOCROOT_ENV} is set, but there is no directory at that path, so WordPress was "
+            f"not inspected"),
+        DOCROOT_INACCESSIBLE: (
+            f"{DOCROOT_ENV} points at a directory this service cannot open — it is there, but "
+            f"the account this platform runs as cannot traverse or list it, which is what "
+            f"wp-cli needs"),
+        DOCROOT_UNVERIFIED: (
+            f"{DOCROOT_ENV} could not be examined at all — the filesystem returned an error "
+            f"establishing neither absence nor refusal, so its state is genuinely unknown"),
+    }
+
+    def _resolve_docroot(self) -> tuple[str, str]:
+        """The configured docroot and what was ESTABLISHED about it.
+
+        Uses the canonical `probe_docroot` rather than making a second `os.path.isdir()` decision
+        — one truth about the governed docroot, in one place. `isdir()` cannot tell absence from
+        an unreachable parent, which is how this collector came to report a set docroot as unset.
+        """
         root = self._docroot if self._docroot is not None else os.environ.get(DOCROOT_ENV, "")
         root = (root or "").strip()
-        return root if root and os.path.isdir(root) else None
+        return root, probe_docroot(root)
 
     def collect(self, ctx: CollectionContext) -> CollectorResult:
-        docroot = self._resolve_docroot()
-        if docroot is None:
-            return self._unknown(
-                f"{DOCROOT_ENV} is not set to a readable directory, so WordPress was not "
-                f"inspected", f"{DOCROOT_ENV} unset or not a directory")
+        docroot, state = self._resolve_docroot()
+        if state != DOCROOT_READABLE:
+            return self._unknown(self._DOCROOT_REASON[state],
+                                 f"{DOCROOT_ENV}={docroot or '(unset)'} — {state}")
 
         core = self._run(_CORE, cwd=docroot)
         if core.unavailable:
@@ -114,7 +141,7 @@ class WpInventoryCollector:
                 scope=self.scope, status=STATUS_ACTION, value=value, source="wp-cli",
                 evidence=f"docroot {docroot}",
                 reason="WordPress reports no active plugins at all, which a working site does not",
-                confidence="high", material=material)
+                confidence="high", material=material, comparable=True)
 
         note = (f"{len(updatable)} update(s) available — recorded, not a fault"
                 if updatable else "no updates pending")
@@ -122,7 +149,7 @@ class WpInventoryCollector:
             scope=self.scope, status=STATUS_OK, value=value, source="wp-cli",
             evidence=f"docroot {docroot}; core {core.stdout.strip()}",
             reason=f"WordPress {core.stdout.strip()} with {len(active)} active plugin(s); {note}",
-            confidence="high", material=material)
+            confidence="high", material=material, comparable=True)
 
     def _json_list(self, argv: tuple[str, ...], docroot: str) -> tuple[list[dict] | None, str]:
         result = self._run(argv, cwd=docroot)
@@ -137,7 +164,10 @@ class WpInventoryCollector:
         return [p for p in parsed if isinstance(p, dict)], ""
 
     def _unknown(self, reason: str, evidence: str) -> CollectorResult:
+        """No inventory was read, so no material state was established — `comparable=False`.
+        Comparing one "wordpress inventory unavailable" against the next would turn a changing
+        error message into drift (issue #82, U5.2d)."""
         return CollectorResult(scope=self.scope, status=STATUS_UNKNOWN,
                                value={"error": "wordpress inventory unavailable"},
                                source="wp-cli", evidence=evidence, reason=reason,
-                               confidence="none")
+                               confidence="none", comparable=False)

@@ -16,7 +16,7 @@ from pathlib import Path
 
 from ..config import BASE_DIR, active_site, get_settings
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 # One statement per table; CREATE ... IF NOT EXISTS makes init idempotent.
 _SCHEMA = """
@@ -245,6 +245,12 @@ CREATE TABLE IF NOT EXISTS observations (
     -- way they were written rather than manufacturing drift at the migration.
     material_json     TEXT,
     material_digest   TEXT,
+    -- WP-U5.2d: did this reading ESTABLISH a material state that may be compared? A separate
+    -- property from `status`, which answers health. Asking `status` both questions suppressed
+    -- real changes inside any scope that read `unknown` (issue #82). NULL = written before v11;
+    -- `inspection.was_comparable` reproduces the old classifier's behaviour for those rows
+    -- rather than guessing, so the migration cannot invent a transition.
+    material_comparable INTEGER,
     evidence          TEXT,                -- bounded + redacted; never a raw log tail
     -- The predecessor is resolved for the same (profile, environment, scope), so a diff can
     -- never be computed across businesses or environments.
@@ -541,6 +547,14 @@ def _migrate(conn: sqlite3.Connection, *, from_version: int) -> None:
             except sqlite3.OperationalError as exc:
                 if "duplicate column" not in str(exc).lower():
                     raise
+    if from_version < 11:
+        # v10 -> v11 (WP-U5.2d): material_comparable on observations. Nullable and additive; no
+        # existing row is rewritten and no schema-induced change class is produced.
+        try:
+            conn.execute("ALTER TABLE observations ADD COLUMN material_comparable INTEGER;")
+        except sqlite3.OperationalError as exc:
+            if "duplicate column" not in str(exc).lower():
+                raise
     if from_version < 10:
         # v9 -> v10 (WP-U5.2a): the material state and its digest on observations. Nullable and
         # additive: no existing row is rewritten, and `inspection.classify` compares a

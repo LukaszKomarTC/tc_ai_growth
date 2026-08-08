@@ -268,7 +268,8 @@ class Store(Protocol):
                            evidence: str | None, predecessor_id: int | None, change_class: str,
                            severity: str, confidence: str | None, reason: str | None,
                            material_json: str | None = None,
-                           material_digest: str | None = None) -> int: ...
+                           material_digest: str | None = None,
+                           material_comparable: bool | None = None) -> int: ...
 
     def list_observations(self, run_id: int) -> list[dict]: ...
 

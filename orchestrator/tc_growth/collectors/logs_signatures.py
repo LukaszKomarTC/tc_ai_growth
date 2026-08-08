@@ -125,7 +125,7 @@ class LogSignaturesCollector:
                 evidence=f"{self._unit}, last {WINDOW_HOURS}h, priority {PRIORITY} and above",
                 reason=(f"no errors observed for {self._unit} in the last {WINDOW_HOURS}h at "
                         f"priority {PRIORITY} and above"),
-                confidence="high", material=material)
+                confidence="high", material=material, comparable=True)
 
         worst_sig, worst_count = top[0]
         if worst_count >= WARN_AT_OCCURRENCES:
@@ -134,20 +134,26 @@ class LogSignaturesCollector:
                 evidence=f"{self._unit}, last {WINDOW_HOURS}h",
                 reason=(f"one error signature recurred {worst_count} times in {WINDOW_HOURS}h — "
                         f"a repeating fault, not a one-off"),
-                confidence="high", material=material)
+                confidence="high", material=material, comparable=True)
 
         return CollectorResult(
             scope=self.scope, status=STATUS_OK, value=value, source="journalctl",
             evidence=f"{self._unit}, last {WINDOW_HOURS}h",
             reason=(f"{len(counts)} error signature(s) in {WINDOW_HOURS}h, none recurring more "
                     f"than {worst_count} times"),
-            confidence="high", material=material)
+            confidence="high", material=material, comparable=True)
 
     def _unknown(self, window: dict, evidence: str, why: str) -> CollectorResult:
-        """Every unreadable path lands here, so none of them can accidentally look healthy."""
+        """Every unreadable path lands here, so none of them can accidentally look healthy.
+
+        `comparable=False`: the journal was not read, so no material state was established. This
+        is the case the old classifier's comment described and the only one it was right about —
+        comparing one "journal unavailable" against the next would turn a changing error message
+        into drift (issue #82, U5.2d).
+        """
         return CollectorResult(
             scope=self.scope, status=STATUS_UNKNOWN,
             value={"error": "journal unavailable", **window}, source="journalctl",
             evidence=evidence,
             reason=f"{why}, so recent errors are unknown — this is not a clean bill of health",
-            confidence="none")
+            confidence="none", comparable=False)
