@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import os
 import re
+import stat
 from dataclasses import dataclass, field
 
 #: The canonical Console unit. One name, used by deployment, monitoring and documentation alike.
@@ -75,6 +76,16 @@ DOCROOT_UNSET = "unset"
 DOCROOT_MISSING = "missing"
 DOCROOT_INACCESSIBLE = "inaccessible"
 DOCROOT_READABLE = "readable"
+#: The probe failed in a way that establishes NEITHER absence nor an access refusal — a broken
+#: mount, a stale NFS handle, a symlink loop, a descriptor exhaustion. Folding these into
+#: `missing` was the third instance of this module's recurring defect (PR #89 review): only
+#: ENOENT and ENOTDIR establish that nothing is there, and every other failure asserted it anyway.
+DOCROOT_UNVERIFIED = "unverified"
+
+#: The states in which a configured docroot is still a real filesystem, whatever we can see of it.
+#: `host.capacity` uses this: a source the owner configured must not vanish from the page because
+#: the probe could not classify it.
+DOCROOT_PRESENT_STATES = (DOCROOT_READABLE, DOCROOT_INACCESSIBLE, DOCROOT_UNVERIFIED)
 
 _CGROUP_UNIT = re.compile(r"/([A-Za-z0-9_.@-]+\.(?:service|scope))")
 
@@ -94,13 +105,34 @@ def probe_docroot(path: str) -> str:
     """
     if not path:
         return DOCROOT_UNSET
-    if not os.path.isdir(path):
+    # NOT os.path.isdir(): it answers False for "does not exist" AND for "cannot be reached",
+    # which are opposite diagnoses with opposite fixes. The first on-host acceptance run proved
+    # the difference matters — a docroot behind a 0710 parent was reported as "there is no
+    # directory at that path", which is a positive claim about the filesystem that was simply
+    # untrue, and would send the reader hunting for a wrong path instead of a permission.
+    try:
+        st = os.stat(path)
+    except PermissionError:
+        # EACCES/EPERM — something on the way in denies traversal. An access refusal is itself
+        # an establshed fact: the path is being protected, which means there is something there.
+        return DOCROOT_INACCESSIBLE
+    except (FileNotFoundError, NotADirectoryError):
+        # ENOENT/ENOTDIR — the only two errno families that actually establish absence.
+        return DOCROOT_MISSING
+    except OSError:
+        # EIO, ESTALE, ELOOP, EMFILE, ENAMETOOLONG… none of these tell us the path is absent, and
+        # reporting them as `missing` would be the same overclaim in a third costume.
+        return DOCROOT_UNVERIFIED
+    if not stat.S_ISDIR(st.st_mode):
+        # We reached it and it is not a directory. That IS established.
         return DOCROOT_MISSING
     try:
         with os.scandir(path) as entries:
             next(entries, None)
-    except OSError:
+    except PermissionError:
         return DOCROOT_INACCESSIBLE
+    except OSError:
+        return DOCROOT_UNVERIFIED
     return DOCROOT_READABLE
 
 
@@ -249,6 +281,11 @@ def describe(*, unit_reader=unit_of_this_process, docroot_probe=probe_docroot) -
             f"{DOCROOT_ENV} points at a directory this service cannot open — it exists, but the "
             f"account this Console runs as may not traverse or list it, which is what wp-cli "
             f"needs in order to inspect the site")
+    elif docroot_state == DOCROOT_UNVERIFIED:
+        problems.append(
+            f"{DOCROOT_ENV} could not be examined at all — the filesystem returned an error that "
+            f"says neither that the path is absent nor that access was refused, so its state is "
+            f"genuinely unknown rather than either")
     if profile == UNRESOLVED or environment == UNRESOLVED:
         problems.append(
             "this Console cannot state whose environment it is, and evidence that cannot name "

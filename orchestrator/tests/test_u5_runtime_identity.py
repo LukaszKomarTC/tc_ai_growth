@@ -33,6 +33,13 @@ from tc_growth.collectors.wp_inventory import DOCROOT_ENV
 REPO = Path(__file__).resolve().parents[2]
 
 
+def _raise(exc):
+    """A stand-in that fails the way the kernel would, so the errno branch is what is tested."""
+    def boom(*args, **kwargs):
+        raise exc
+    return boom
+
+
 # --- one author for the contract ------------------------------------------------------------
 
 def test_every_consumer_of_the_console_unit_name_imports_it():
@@ -205,6 +212,127 @@ def test_an_existing_but_unopenable_docroot_is_detected_on_a_real_filesystem(tmp
         assert ri.probe_docroot(str(locked)) == ri.DOCROOT_INACCESSIBLE
     finally:
         locked.chmod(0o755)   # so tmp_path teardown can remove it
+
+
+def test_a_docroot_behind_an_untraversable_parent_is_inaccessible_not_missing(monkeypatch):
+    """The first on-host acceptance run caught this one.
+
+    `os.path.isdir()` answers False for "does not exist" AND for "cannot be reached", so a real
+    docroot behind a 0710 parent was reported as **"there is no directory at that path"** — a
+    positive claim about the filesystem that was simply untrue, and one that sends the reader
+    hunting for a wrong path instead of a permission. Two opposite diagnoses with two opposite
+    fixes must not collapse into one message.
+    """
+    monkeypatch.setattr(os, "stat", _raise(PermissionError(13, "Permission denied")))
+    assert ri.probe_docroot("/var/www/vhosts/example.com/httpdocs") == ri.DOCROOT_INACCESSIBLE
+
+
+def test_a_genuinely_absent_docroot_is_still_missing(monkeypatch):
+    """The other side of the same distinction — this one really is a wrong path."""
+    monkeypatch.setattr(os, "stat", _raise(FileNotFoundError(2, "No such file or directory")))
+    assert ri.probe_docroot("/no/such/place") == ri.DOCROOT_MISSING
+
+
+def test_a_path_component_that_is_not_a_directory_is_missing(monkeypatch):
+    """ENOTDIR is the second — and only other — errno that establishes absence."""
+    monkeypatch.setattr(os, "stat", _raise(NotADirectoryError(20, "Not a directory")))
+    assert ri.probe_docroot("/etc/hostname/httpdocs") == ri.DOCROOT_MISSING
+
+
+@pytest.mark.parametrize("errno_name, exc", [
+    ("EIO", OSError(5, "Input/output error")),
+    ("ESTALE", OSError(116, "Stale file handle")),
+    ("ELOOP", OSError(40, "Too many levels of symbolic links")),
+    ("EMFILE", OSError(24, "Too many open files")),
+    ("ENAMETOOLONG", OSError(36, "File name too long")),
+])
+def test_a_probe_error_establishes_neither_absence_nor_refusal(monkeypatch, errno_name, exc):
+    """The third costume this module's recurring defect wore (PR #89 re-review).
+
+    Only ENOENT and ENOTDIR establish that nothing is there. A broken mount, a stale NFS handle,
+    a symlink loop or descriptor exhaustion tells you the probe failed — nothing whatsoever about
+    whether the directory exists. Rendering any of them as "there is no directory at that path"
+    is the same overclaim as reporting a permission as an absence, one errno family further out.
+    """
+    monkeypatch.setattr(os, "stat", _raise(exc))
+    assert ri.probe_docroot("/var/www/vhosts/example.com/httpdocs") == ri.DOCROOT_UNVERIFIED
+
+
+def test_a_probe_error_while_listing_is_also_unverified(monkeypatch, tmp_path):
+    """The second probe stage has the same obligation as the first: only a PermissionError
+    establishes a refusal, and everything else is simply unknown."""
+    monkeypatch.setattr(os, "scandir", _raise(OSError(5, "Input/output error")))
+    assert ri.probe_docroot(str(tmp_path)) == ri.DOCROOT_UNVERIFIED
+
+    monkeypatch.setattr(os, "scandir", _raise(PermissionError(13, "Permission denied")))
+    assert ri.probe_docroot(str(tmp_path)) == ri.DOCROOT_INACCESSIBLE
+
+
+def test_an_unverified_docroot_is_not_acceptance_ready_and_says_why(monkeypatch):
+    """It must read as its own thing — neither "no directory at that path" nor "cannot open"."""
+    monkeypatch.setenv(ri.DOCROOT_ENV, "/var/www/vhosts/example.com/httpdocs")
+    identity = ri.describe(unit_reader=lambda: ri.CONSOLE_UNIT,
+                           docroot_probe=lambda p: ri.DOCROOT_UNVERIFIED)
+
+    assert not identity.ready_to_inspect
+    problem = " ".join(identity.problems)
+    assert "neither that the path is absent nor that access was refused" in problem
+    assert "no directory at that path" not in problem
+    assert "cannot open" not in problem
+
+
+def test_a_configured_docroot_is_never_silently_dropped_from_capacity(monkeypatch):
+    """No configured source disappears from the page because the probe could not classify it.
+
+    A probe error is exactly where the temptation to drop the path is strongest and the
+    justification weakest: the page would go back to reporting "1 project filesystem(s)" with the
+    site's disk unwatched and nothing anywhere saying so.
+    """
+    from tc_growth.collectors import host_capacity as hc
+
+    monkeypatch.setenv(ri.DOCROOT_ENV, "/var/www/vhosts/example.com/httpdocs")
+
+    for state in ri.DOCROOT_PRESENT_STATES:
+        monkeypatch.setattr(hc, "probe_docroot", lambda p, _s=state: _s)
+        paths = hc.HostCapacityCollector(store_path="")._resolve_paths()
+        assert "/var/www/vhosts/example.com/httpdocs" in paths, state
+
+    # Only an ESTABLISHED absence is excluded — there is no filesystem to report on.
+    monkeypatch.setattr(hc, "probe_docroot", lambda p: ri.DOCROOT_MISSING)
+    assert "/var/www/vhosts/example.com/httpdocs" not in (
+        hc.HostCapacityCollector(store_path="")._resolve_paths())
+
+
+def test_the_panel_names_the_unverified_state_as_its_own(tmp_path):
+    from tc_growth import console_views
+
+    html = console_views.runtime_panel(ri.RuntimeIdentity(
+        profile="p", environment="production", unit=ri.CONSOLE_UNIT,
+        expected_unit=ri.CONSOLE_UNIT, build_commit="abc123", docroot="/srv/w",
+        docroot_state=ri.DOCROOT_UNVERIFIED, problems=("could not be examined",)))
+    assert "could not be examined" in html
+    assert "no directory at that path" not in html
+
+
+def test_a_path_that_is_a_file_is_missing_not_readable(tmp_path):
+    """A docroot that is a regular file is a configuration error, not a readable directory."""
+    a_file = tmp_path / "not-a-dir"
+    a_file.write_text("x")
+    assert ri.probe_docroot(str(a_file)) == ri.DOCROOT_MISSING
+
+
+def test_the_two_docroot_failures_read_differently_to_the_owner(monkeypatch):
+    """The panel must not say "no directory at that path" about a directory that is there."""
+    monkeypatch.setenv(ri.DOCROOT_ENV, "/var/www/vhosts/example.com/httpdocs")
+
+    blocked = ri.describe(unit_reader=lambda: ri.CONSOLE_UNIT,
+                          docroot_probe=lambda p: ri.DOCROOT_INACCESSIBLE)
+    absent = ri.describe(unit_reader=lambda: ri.CONSOLE_UNIT,
+                         docroot_probe=lambda p: ri.DOCROOT_MISSING)
+
+    assert any("cannot open" in p for p in blocked.problems)
+    assert not any("no directory at that path" in p for p in blocked.problems)
+    assert any("no directory at that path" in p for p in absent.problems)
 
 
 def test_an_empty_docroot_is_readable_because_we_got_into_it(tmp_path):

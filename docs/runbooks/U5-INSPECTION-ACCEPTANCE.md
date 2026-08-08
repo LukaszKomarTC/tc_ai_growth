@@ -96,10 +96,12 @@ registry flip is part of this run.
 - [ ] **Identity** is the profile and environment you intend to file this evidence under.
 - [ ] **Deployed commit** matches the head you deployed.
 - [ ] **WordPress docroot** reads *"opened by this service"*. Anything else is a distinct
-      problem with a distinct fix: *not set* (missing from the unit), *no directory at that path*
-      (wrong value), or *exists, but this service could not open it* (the account the Console
-      runs as cannot traverse or list it — which is exactly what wp-cli needs). The panel claims
-      only what it actually established.
+      problem with a distinct fix, and the panel claims only what it actually established:
+      *not set* (missing from the unit) · *no directory at that path* (a wrong value — and this
+      is said **only** when absence was genuinely established) · *exists, but this service could
+      not open it* (the account the Console runs as cannot traverse or list it, which is what
+      wp-cli needs) · *could not be examined* (the filesystem itself errored — a broken mount, a
+      stale handle — which establishes neither absence nor refusal and is simply unknown).
 - [ ] **Service** is not marked *unverified*. That marking means the process could not establish
       which unit it is running under, so it cannot prove it is the one the collectors watch. The
       sweep would still be honest; the identity behind it would be unproven, which is not an

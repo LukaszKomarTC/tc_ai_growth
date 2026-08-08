@@ -894,6 +894,7 @@ def runtime_panel(identity) -> str:
     docroot_note = {
         "readable": " — opened by this service",
         "inaccessible": " — exists, but this service could not open it",
+        "unverified": " — could not be examined; neither absent nor refused, simply unknown",
         "missing": " — no directory at that path",
         "unset": "",
     }.get(identity.docroot_state, "")
