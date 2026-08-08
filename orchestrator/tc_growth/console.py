@@ -841,8 +841,12 @@ class _Handler(BaseHTTPRequestHandler):
                                                              environment=environment)
                 finally:
                     store.close()
+                from .core.actions import get_operation
+
                 body = console_views.operations_health_body(
                     run, observations, profile=profile, environment=environment,
+                    csrf=csrf_for(session, secret),
+                    offered=get_operation("run_inspection").enabled,
                     now=datetime.now(timezone.utc),
                     effective=inspection.effective_status,
                     freshness=inspection.freshness,
@@ -906,6 +910,13 @@ class _Handler(BaseHTTPRequestHandler):
             self._deploy_act(path, form)
             return
 
+        if path == "/operations-health/run":
+            if not valid_csrf(form.get("csrf"), session, secret):
+                self._json(403, {"error": "bad csrf token"})
+                return
+            self._inspection_act()
+            return
+
         if path == "/acceptance/run":
             if not valid_csrf(form.get("csrf"), session, secret):
                 self._json(403, {"error": "bad csrf token"})
@@ -922,6 +933,29 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         self._send(404, b"not found", "text/plain; charset=utf-8")
+
+    def _inspection_act(self) -> None:
+        """WP-U5.2: run one read-only collection sweep.
+
+        The browser contributes a click and a CSRF token; profile and environment are resolved
+        HERE, on the server, from this Console's own configuration and handed to the executor as
+        an explicit identity. Nothing a request can carry reaches a collector.
+        """
+        from .config import active_site, get_settings
+        from .core.approval import Phase
+        from .core.executor import Executor
+
+        try:
+            profile = active_site() or "default"
+            environment = (get_settings().env_kind or "staging").strip().lower()
+            Executor(phase=Phase.READ_ONLY, environment=environment,
+                     profile=profile).execute("run_inspection", {}, actor="human")
+            param = "msg=ran"
+        except Exception as exc:  # noqa: BLE001 — a failed sweep is a page notice, not a 500
+            print(f"[inspection failed: {_redact(str(exc))}]")
+            param = "err=internal"
+        self._headers(303, "text/html; charset=utf-8",
+                      extra=[("Location", f"/operations-health?{param}")], body_len=0)
 
     def _redirect_deploy(self, run_id: int | None, param: str) -> None:
         where = f"/deploy/{run_id}" if run_id else "/deploy"

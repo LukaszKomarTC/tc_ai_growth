@@ -874,9 +874,23 @@ _U5_FRESHNESS_NOTE = {
 }
 
 
+def _u5_run_control(csrf: str, offered: bool) -> str:
+    """The one control on this page. It carries a CSRF token and nothing else — no path, no
+    scope, no profile — so a request cannot steer what gets collected or whose it is."""
+    if not offered:
+        return ("<div class='muted' style='margin-top:10px'>Inspection is not enabled on this "
+                "Console, so this page shows the last recorded evidence only.</div>")
+    return (
+        "<form method='post' action='/operations-health/run' style='margin-top:10px'>"
+        f"<input type='hidden' name='csrf' value='{_e(csrf)}'>"
+        "<button type='submit'>Run inspection now</button>"
+        "<div class='muted' style='margin-top:4px'>Read-only: it inspects and records, and "
+        "changes nothing it looks at.</div></form>")
+
+
 def operations_health_body(run: dict | None, observations: list[dict], *,
                            profile: str, environment: str, now, effective, freshness,
-                           rollup, value_of) -> str:
+                           rollup, value_of, csrf: str = "", offered: bool = False) -> str:
     """The owner's one answer to 'is my operation healthy?'.
 
     Deliberately parameterised over the freshness/severity functions rather than importing them:
@@ -891,7 +905,8 @@ def operations_health_body(run: dict | None, observations: list[dict], *,
             "<section class='card'><p class='lead'>⚪ Nothing observed yet</p>"
             "<div class='muted'>No inspection has run for "
             f"<strong>{_e(profile)}</strong> / <strong>{_e(environment)}</strong>. That is not a "
-            "clean bill of health — it is an absence of evidence.</div></section>")
+            "clean bill of health — it is an absence of evidence.</div>"
+            + _u5_run_control(csrf, offered) + "</section>")
 
     states = [effective(o, now=now) for o in observations]
     overall = rollup(states)
@@ -903,7 +918,8 @@ def operations_health_body(run: dict | None, observations: list[dict], *,
     head = (
         f"<section class='statuscard {_e(cls)}'><p class='lead'>{_e(headline)}</p>"
         f"<div class='muted'>{_e(profile)} · {_e(environment)} · last inspection {_e(when)} · "
-        f"{actions} action{'' if actions == 1 else 's'} required</div></section>")
+        f"{actions} action{'' if actions == 1 else 's'} required</div>"
+        + _u5_run_control(csrf, offered) + "</section>")
 
     rows = []
     for obs, state in zip(observations, states):

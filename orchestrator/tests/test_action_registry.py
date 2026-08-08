@@ -69,9 +69,12 @@ def test_foundation_lists_only_accepted_operations():
     increment's acceptance sheet) — and no write/execution operations at all (those arrive with
     their own capability + acceptance). Set extended DELIBERATELY per increment:
     U3b adds redeliver_latest_report (read-only re-send of a stored immutable artifact; accepted
-    as part of the U3b in-browser acceptance, like SMTP/scan rode the MVP acceptance)."""
+    as part of the U3b in-browser acceptance, like SMTP/scan rode the MVP acceptance).
+    U5.2 adds run_inspection: read-only collection, no arguments, its own dedicated surface
+    (self_service=False), riding the U5 acceptance sheet."""
     assert {op.id for op in OPERATIONS if op.enabled} == {
-        "smtp_test", "run_integrity_scan", "redeliver_latest_report", "deploy_acceptance"}
+        "smtp_test", "run_integrity_scan", "redeliver_latest_report", "deploy_acceptance",
+        "run_inspection"}
     assert [op.id for op in OPERATIONS if op.category is Category.EXECUTION] == []
     # The only enabled operation that is not read-only is deploy_acceptance — a disposable-only,
     # self-attesting op with its own dedicated surface (never on the generic operations page).

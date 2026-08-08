@@ -341,7 +341,67 @@ _CHANGE_SEVERITY: dict[str, str] = {
 }
 
 
-def severity_for(status: str, change_class: str) -> str:
+#: Per-scope override of how a CHANGE is judged, where the default is wrong for that scope.
+#:
+#: `wp.inventory` is the case that needs one. Plugin and theme versions change because somebody
+#: applied an update, which is routine maintenance rather than an incident — warning on every one
+#: is precisely the alert fatigue issue #82 §7 forbids, and a page that cries wolf weekly is a
+#: page nobody reads on the week it matters. What IS worth attention there is not "a version
+#: moved" but "something active went missing", which `_DIFFERS` below decides from the values.
+_SCOPE_CHANGE_SEVERITY: dict[str, dict[str, str]] = {
+    "wp.inventory": {CHANGE_CHANGED: STATUS_OK},
+}
+
+
+def _wp_inventory_diff(previous: dict, current: dict) -> tuple[str | None, str]:
+    """Turn two inventories into the sentence an owner actually wants, and decide if it matters.
+
+    Escalates only for plugins that were active and no longer are. A plugin vanishing or being
+    deactivated is the shape of both a broken update and a compromise; a version moving forward
+    is Tuesday.
+    """
+    def _by_name(value: dict) -> dict[str, dict]:
+        return {p.get("name", ""): p for p in value.get("plugins", []) if isinstance(p, dict)}
+
+    prev, cur = _by_name(previous), _by_name(current)
+    was_active = {n for n, p in prev.items() if p.get("status") == "active"}
+    gone = sorted(n for n in was_active if n not in cur)
+    deactivated = sorted(n for n in was_active
+                         if n in cur and cur[n].get("status") != "active")
+    added = sorted(set(cur) - set(prev))
+    upgraded = sorted(n for n in set(prev) & set(cur)
+                      if prev[n].get("version") != cur[n].get("version"))
+
+    if gone or deactivated:
+        missing = ", ".join(gone + deactivated)
+        return STATUS_WARN, (f"active plugin(s) no longer active: {missing} — worth confirming "
+                             f"this was intended")
+    notes = []
+    if upgraded:
+        notes.append(f"{len(upgraded)} plugin version(s) changed ({', '.join(upgraded[:5])})")
+    if added:
+        notes.append(f"{len(added)} new plugin(s)")
+    return None, "; ".join(notes) if notes else ""
+
+
+#: Scope -> (previous_value, current_value) -> (severity override or None, owner-facing note).
+_DIFFERS: dict[str, Callable[[dict, dict], tuple[str | None, str]]] = {
+    "wp.inventory": _wp_inventory_diff,
+}
+
+
+def describe_change(scope: str, previous: dict | None, current: dict) -> tuple[str | None, str]:
+    """What changed within a scope's value, for scopes that have an opinion about it."""
+    differ = _DIFFERS.get(scope)
+    if differ is None or previous is None:
+        return None, ""
+    try:
+        return differ(previous, current)
+    except Exception:  # noqa: BLE001 — a differ bug must not lose the observation
+        return None, ""
+
+
+def severity_for(status: str, change_class: str, *, scope: str | None = None) -> str:
     """The deterministic severity. Same inputs, same answer, every time.
 
     A collector that reports `warn` or `action` has seen something policy cannot soften — a
@@ -353,6 +413,9 @@ def severity_for(status: str, change_class: str) -> str:
         return STATUS_UNKNOWN
     if status in (STATUS_WARN, STATUS_ACTION):
         return status
+    overrides = _SCOPE_CHANGE_SEVERITY.get(scope or "", {})
+    if change_class in overrides:
+        return overrides[change_class]
     return _CHANGE_SEVERITY.get(change_class, STATUS_UNKNOWN)
 
 
@@ -484,7 +547,20 @@ def run_inspection(store, collectors: list[Collector], ctx: CollectionContext, *
         previous = store.latest_observation(profile=ctx.profile, environment=ctx.environment,
                                             scope=scope)
         change_class = classify(previous, status=status, digest=normalized.digest)
-        severity = severity_for(status, change_class)
+        severity = severity_for(status, change_class, scope=scope)
+
+        # What changed WITHIN the value, for scopes that can say. The note is appended to the
+        # owner-facing reason so the page answers "what changed since last time" in words, and
+        # a differ may escalate — a plugin that was active and is not is worth more than the
+        # informational verdict `wp.inventory` gives ordinary drift.
+        if change_class == CHANGE_CHANGED and status != STATUS_UNKNOWN:
+            escalation, note = describe_change(
+                scope, observation_value(previous) if previous else None, normalized.value)
+            if escalation and _ROLLUP_ORDER.index(escalation) < _ROLLUP_ORDER.index(severity):
+                severity = escalation
+            if note:
+                reason = f"{reason}; {note}" if reason else note
+                reason = safe_text(reason, limit=MAX_REASON_BYTES)
         severities.append(severity)
         store.record_observation(
             run_id,

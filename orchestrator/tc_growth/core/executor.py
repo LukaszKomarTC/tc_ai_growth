@@ -183,7 +183,7 @@ def _provenance(op: Operation, environment: str, profile: str | None = None) -> 
 # operation that can report protocol-level step events (e.g. SMTP: connect/starttls/auth/send).
 # Signature: (args, emit_step) -> (exit_code, output_summary).
 
-def _run_smtp_test(args: dict, emit: Emit) -> tuple[int, str]:
+def _run_smtp_test(args: dict, emit: Emit, identity: "ExecutionIdentity") -> tuple[int, str]:
     from ..report import smtp_test_steps
 
     def _emit(step: str, status: str, detail: str = "") -> None:
@@ -193,8 +193,57 @@ def _run_smtp_test(args: dict, emit: Emit) -> tuple[int, str]:
     return (0 if ok else 1), summary
 
 
-NATIVE_RUNNERS: dict[str, Callable[[dict, Emit], tuple[int, str]]] = {
+@dataclass(frozen=True)
+class ExecutionIdentity:
+    """Whose environment this execution is acting on, passed rather than looked up.
+
+    Native runners that produce evidence of their own — U5's collection sweep is the first —
+    must stamp it with the SAME identity the execution row records, or the two halves of one
+    evidence chain can name different businesses (issue #82 amendment 1). Handing it to the
+    runner is the narrow way to guarantee that; re-deriving it inside the runner from process
+    globals is exactly the bug the amendment exists to prevent.
+    """
+
+    profile: str
+    environment: str
+
+
+def _run_inspection(args: dict, emit: Emit, identity: ExecutionIdentity) -> tuple[int, str]:
+    """WP-U5.2: one read-only collection sweep, launched from the Console.
+
+    Takes no arguments at all — the browser supplies a click, and profile and environment come
+    from this service's own identity. Exits 2 when anything is not `ok`, which the registry's
+    result_policy reads as `findings`: a diagnostic that completed and found something, not a
+    failure (the same distinction `run_integrity_scan` relies on).
+    """
+    from ..collectors import default_collectors
+    from ..inspection import CollectionContext, repo_commit, run_inspection
+    from ..store import open_store
+
+    ctx = CollectionContext(profile=identity.profile, environment=identity.environment,
+                            repo_commit=repo_commit())
+    emit(StepEvent("collect", _STATUS_INFO,
+                   f"{identity.profile}/{identity.environment}"))
+    store = open_store()
+    try:
+        run_id = run_inspection(store, default_collectors(), ctx, trigger="console")
+        rows = store.list_observations(run_id)
+    finally:
+        store.close()
+
+    for row in rows:
+        status = _STATUS_OK if row["severity"] == "ok" else _STATUS_ERROR
+        emit(StepEvent(row["scope"], status,
+                       f"{row['severity']} · {row['change_class']}"))
+    notable = [r for r in rows if r["severity"] != "ok"]
+    summary = (f"inspection #{run_id}: {len(rows)} scope(s), "
+               f"{len(notable) or 'no'} needing attention")
+    return (2 if notable else 0), summary
+
+
+NATIVE_RUNNERS: dict[str, Callable[[dict, Emit, ExecutionIdentity], tuple[int, str]]] = {
     "smtp_test": _run_smtp_test,
+    "run_inspection": _run_inspection,
 }
 
 
@@ -402,7 +451,8 @@ class Executor:
     def _run(self, op: Operation, args: dict, emit: Emit) -> tuple[int, str]:
         runner = NATIVE_RUNNERS.get(op.id)
         if runner is not None:
-            return runner(args, emit)
+            return runner(args, emit,
+                          ExecutionIdentity(self.profile(), self.environment()))
         if op.command is not None:
             return self._run_command(op, args, emit)
         if op.tool is not None:

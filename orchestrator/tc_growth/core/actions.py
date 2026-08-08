@@ -160,6 +160,41 @@ OPERATIONS: tuple[Operation, ...] = (
                                  "and logged; the run is recorded to the ledger as evidence",
     ),
     Operation(
+        id="run_inspection",
+        name="Run operations inspection (WP-U5)",
+        category=Category.DIAGNOSTICS,
+        min_phase=Phase.READ_ONLY,
+        environments=("staging", "production"),
+        approval=Approval.NONE,
+        command="inspect",
+        # No arguments at all. Profile and environment come from the executing service's own
+        # identity, not from the browser — a collection launched for one business must never be
+        # filable under another (issue #82 amendment 1). The CLI equivalent takes them as
+        # explicit flags; the native runner reads them from the ExecutionIdentity.
+        allowed_args=(),
+        # A sweep that finds something COMPLETED and found something. Exit 2 is `findings` —
+        # attention, not failure — the same distinction the integrity scan relies on.
+        result_policy=((0, "clean"), (2, "findings")),
+        timeout_s=180.0,
+        # target_surface stays "site" (the default), as run_integrity_scan does: that field
+        # governs the staging-only cap on WRITE-capable operations, and this one writes nothing.
+        preconditions=("at least one collector's source is readable; unreadable sources report "
+                       "`unknown` rather than failing the sweep",),
+        # Reachable only from the dedicated /operations-health surface, so enabling it cannot
+        # create a second, argument-less invocation path through /api/execute.
+        self_service=False,
+        enforced_by=(_GATE,
+                     "tc_growth.collectors._exec — fixed argv, allowlisted read-only programs, "
+                     "no shell, bounded time and output, scrubbed child environment",
+                     "tc_growth.inspection.run_inspection — every collector string is redacted "
+                     "and bounded before it is digested, stored or rendered",
+                     "read-only: no collector writes to any system it inspects"),
+        rollback_description=_READ_ROLLBACK,
+        verification_description="each collector streams as a step event; every observation is "
+                                 "appended to the durable record with its own provenance, "
+                                 "predecessor and deterministic change class",
+    ),
+    Operation(
         id="deploy_release",
         name="Deploy a reviewed release (WP-U4d)",
         category=Category.PLATFORM,
