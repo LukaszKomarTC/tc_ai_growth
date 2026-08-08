@@ -56,6 +56,14 @@ CONSOLE_ENV_FILE="${TC_CONSOLE_ENV_FILE:-/etc/tc-console.env}"  # holds TC_CONSO
 # checkout's orchestrator/data/tc_growth.db, where the weekly ledger already lives) and the unit
 # pins TC_DB_PATH to it. Empty = legacy per-checkout behaviour, and the plan SAYS so.
 STORE_DB="${TC_STORE_DB:-}"
+# WordPress docroot for THIS profile (WP-U5.2b). The Technical Inspector's `wp.inventory`
+# collector needs it and deliberately has no default: guessing would mean inspecting whichever
+# site sits at a familiar path and filing the result under this profile's name. Making it part of
+# the DEPLOYED unit rather than something the owner exports before a run is the point — the
+# acceptance run is browser-only, and a value the owner has to remember is a value that is wrong
+# on the run that matters. Empty is allowed and SAID SO in the plan: `wp.inventory` then reports
+# `unknown`, which is honest, and the Console's own Runtime panel shows it as a problem.
+SITE_DOCROOT="${TC_SITE_DOCROOT:-}"
 SNAP_DIR="${TC_SNAP_DIR:-/var/backups/tc-console}"
 UNIT="/etc/systemd/system/tc-console.service"
 # Scan permission (D2): the service user cannot read the WP docroot, so the Console runs the
@@ -239,6 +247,7 @@ cat <<PLAN
   Bind address / port ........... 127.0.0.1:$CONSOLE_PORT   (loopback only — NOT internet-exposed)
   Reads secrets from ............ $CONSOLE_ENV_FILE   (READ only — this script never writes it)
   Evidence store ................ $( [ -n "$STORE_DB" ] && echo "$STORE_DB   (durable — survives redeploys)" || echo "PER-CHECKOUT (data/ under the release dir) — evidence will NOT survive the next redeploy; set TC_STORE_DB" )
+  WordPress docroot ............. $( [ -n "$SITE_DOCROOT" ] && { [ -d "$SITE_DOCROOT" ] && echo "$SITE_DOCROOT   (governed service config — wp.inventory can inspect)" || echo "$SITE_DOCROOT   — NOT A DIRECTORY on this host; wp.inventory will report unknown"; } || echo "NOT SET — wp.inventory will report unknown (honest, but not acceptance-quality); set TC_SITE_DOCROOT" )
   Backup / snapshot to .......... $SNAP
   Restarts an existing service .. $( [ "$CUR_UNIT_STATE" = absent ] && echo "no (first install)" || echo "YES — tc-console will restart; active browser sessions are invalidated on redeploy" )
   Modifies any .env / profiles .. NO
@@ -281,7 +290,7 @@ User=$SERVICE_USER
 WorkingDirectory=$APP_DIR
 EnvironmentFile=$CONSOLE_ENV_FILE
 Environment=TC_BUILD_COMMIT=$RELEASE_COMMIT
-Environment=TC_INSPECTOR_SCRIPT=$INSPECTOR_DEST$( [ -n "$STORE_DB" ] && printf '\n%s' "# Durable evidence store — shared with the weekly ledger; survives release redeploys (U1)." "Environment=TC_DB_PATH=$STORE_DB" )
+Environment=TC_INSPECTOR_SCRIPT=$INSPECTOR_DEST$( [ -n "$STORE_DB" ] && printf '\n%s' "# Durable evidence store — shared with the weekly ledger; survives release redeploys (U1)." "Environment=TC_DB_PATH=$STORE_DB" )$( [ -n "$SITE_DOCROOT" ] && printf '\n%s' "# WordPress docroot for this profile — governed configuration, not an owner-pasted value (U5.2b)." "Environment=TC_SITE_DOCROOT=$SITE_DOCROOT" )
 # Integrity scan runs via the single sudoers-allowlisted command (see $SUDOERS_FILE).
 Environment=TC_INSPECTOR_SUDO=true
 # Bind loopback only; remote access is an SSH tunnel, never a public port.

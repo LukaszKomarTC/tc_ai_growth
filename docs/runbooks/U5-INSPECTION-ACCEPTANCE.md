@@ -1,9 +1,11 @@
 # WP-U5.2 — the on-host inspection acceptance run (owner-executed)
 
 *U5.1 (PR #85) built the collect → normalize → snapshot → compare → classify foundation. U5.2
-(PR #86) added the four real collectors and the Console trigger. U5.2a (this PR) fixed drift
-being computed over the measurement rather than the state. This is the on-host run the agent
-cannot perform — it needs the VPS, a real journal, a real filesystem and a real WordPress.*
+(PR #86) added the four real collectors and the Console trigger. U5.2a (PR #87) fixed drift being
+computed over the measurement rather than the state. U5.2b normalized the runtime contract — one
+canonical Console unit, the docroot as governed configuration, and a Runtime panel so the browser
+can state what it is. This is the on-host run the agent cannot perform — it needs the VPS, a real
+journal, a real filesystem and a real WordPress.*
 
 Issue #82 §19 requires the acceptance protocol to be written **before** production installation,
 following the U4 pattern. This is that protocol.
@@ -36,15 +38,30 @@ silently, so they are the ones the owner is asked to confirm by eye:
    `observations`). It is additive and forward-only; no existing row is rewritten. Nothing to
    run by hand. If a v9 store already holds observations, the first sweep after the upgrade
    compares them the way they were written, so the migration itself cannot report drift.
-3. **Set `TC_SITE_DOCROOT` in the Console service's environment**, to the WordPress docroot for
-   this profile. Without it `wp.inventory` returns `unknown` — correctly and by design, since
-   guessing a docroot would mean inspecting whichever site happens to live at a familiar path
-   and filing the result under this profile's name. But it means the run proves nothing about
-   WordPress, so set it before the run rather than discovering it during.
+3. **Set `TC_SITE_DOCROOT` — as governed configuration, not a shell export.** Since U5.2b it is
+   an input to `deploy-console.sh` (`TC_SITE_DOCROOT=/path/to/docroot ./deploy-console.sh
+   --apply`), which writes it into the unit alongside `TC_DB_PATH`. The dry run prints whether it
+   is set and whether the path exists, so an unset docroot is visible **before** `--apply`.
+   Without it `wp.inventory` returns `unknown` — correct and by design, since guessing a docroot
+   would mean inspecting whichever site happens to live at a familiar path and filing the result
+   under this profile's name — but the run then proves nothing about WordPress.
 4. *(Optional)* `TC_INSPECTOR_LOG` if the v0 integrity scan writes somewhere other than
    `/var/log/tc-inspector.log`.
-5. **Confirm the service was restarted** so it is running the deployed code and carrying the new
-   environment.
+5. **Confirm the Console is the canonical unit.** Since U5.2b there is exactly one:
+   `tc-console.service`, named in `tc_growth/runtime_identity.py` and imported by the collectors,
+   the command boundary, the journal read and this runbook. `tc-dashboard.service` is the older
+   read-only dashboard, marked transitional in its own unit file with retirement criteria; it is
+   deliberately **not** inspected.
+6. **Confirm the service was restarted** so it is running the deployed code and carrying the new
+   environment. Note that a merge to `main` does **not** advance the Console: it runs from a
+   release worktree pinned at a reviewed commit, and `autodeploy` deliberately leaves it alone so
+   an execution surface is never auto-advanced. Advancing it is an explicit `deploy-console.sh`
+   run.
+
+**You no longer need SSH to check any of this.** The Console's own **Runtime** panel on Operations
+Health states the effective unit, profile, environment, deployed commit and docroot — and refuses
+to hide behind a fold when something is wrong. That panel is the pre-flight; §2 begins by reading
+it.
 
 `run_inspection` ships `enabled=True` and `self_service=False`: it is reachable only from the
 dedicated Operations Health surface, never as an argument-less call through `/api/execute`. No
@@ -62,6 +79,19 @@ registry flip is part of this run.
 5. Read the page again. This is the real test.
 
 ## 2. What to confirm, in order
+
+### Before the first sweep — read the Runtime panel
+
+- [ ] **Service** is `tc-console.service`. If it names anything else, the collectors are watching
+      a unit that is not serving this page and the run will produce findings about naming drift
+      rather than about the Inspector. Stop and fix the deployment.
+- [ ] **Identity** is the profile and environment you intend to file this evidence under.
+- [ ] **Deployed commit** matches the head you deployed.
+- [ ] **WordPress docroot** is set and readable — no red banner.
+
+If the panel shows the red *"This Console is not fully configured to inspect"* block, fix that
+first. A sweep will still run and will still be honest, but `unknown` from a misconfiguration is
+not an acceptance-quality reading.
 
 ### After the first sweep
 
@@ -87,9 +117,13 @@ registry flip is part of this run.
       shows `changed` with no corresponding host event, **the fix did not hold on the real host
       and the run has failed** — record the row's `digest` and `compared` values from the
       Evidence fold and stop.
-- [ ] Open **Evidence** on a row: it now shows two digests — `digest` (this row's bytes) and
-      `compared` (the material state drift was decided on). They differ, and `compared` is
-      identical between the two sweeps for an unchanged scope.
+- [ ] Open **Evidence** on a row for **both** sweeps and compare the two digests it shows:
+      `digest` (this row's exact bytes) and `compared` (the material state drift was decided on).
+      For an unchanged scope, **`compared` must be identical across the pair while `digest` may
+      differ.** This is the sharpest available proof that the fix works in the right direction —
+      the reading moved and the state did not. If both are identical the host is genuinely
+      frozen and this criterion has not been tested; pick a scope where `digest` moved
+      (`platform.services` always will, since its ages are recomputed against the clock).
 
 ### Then prove it is not simply mute
 

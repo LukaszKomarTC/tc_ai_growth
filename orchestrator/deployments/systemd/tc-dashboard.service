@@ -1,5 +1,22 @@
+# ============================================================================================
+# TRANSITIONAL — SUPERSEDED BY tc-console.service (WP-U5.2b)
+#
+# This is the pre-Console read-only dashboard. The Operations Console (tc-console.service,
+# loopback 8385, deployed by scripts/deploy-console.sh from a pinned release worktree) is the
+# owner surface now, and it is the unit the Technical Inspector watches by name.
+#
+# Two apparently-current Console identities is what this comment exists to stop being. Do not
+# add this unit to tc_growth.runtime_identity.PROJECT_UNITS to make it show up as monitored:
+# widening the inspected set to keep a retired surface green is capability creep, not coverage.
+#
+# Retirement criteria — when all three hold, delete this file, the autodeploy restart line and
+# runtime_identity.LEGACY_DASHBOARD_UNIT:
+#   1. the Console serves every view this dashboard served;
+#   2. nothing references it (autodeploy.sh restarts it today — correct while it still exists);
+#   3. the owner confirms port 8383 is no longer reachable or needed on the host.
+# ============================================================================================
 [Unit]
-Description=TC Growth — read-only dashboard (loopback; fronted by Plesk nginx reverse proxy)
+Description=TC Growth — read-only dashboard (TRANSITIONAL, superseded by tc-console.service)
 After=network.target
 
 [Service]

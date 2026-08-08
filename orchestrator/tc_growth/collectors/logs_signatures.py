@@ -24,6 +24,7 @@ from typing import Callable
 
 from ..inspection import (STATUS_OK, STATUS_UNKNOWN, STATUS_WARN, CollectionContext,
                           CollectorResult)
+from ..runtime_identity import CONSOLE_UNIT
 from ._exec import (JOURNAL_MAX_LINES, JOURNAL_PRIORITY, JOURNAL_WINDOW,
                     CommandResult, journalctl_probe, journalctl_window,
                     run_command)
@@ -34,7 +35,7 @@ WINDOW = JOURNAL_WINDOW
 WINDOW_HOURS = 24
 MAX_LINES = int(JOURNAL_MAX_LINES)
 PRIORITY = JOURNAL_PRIORITY
-UNIT = "tc-console.service"
+UNIT = CONSOLE_UNIT
 MAX_SIGNATURE_LEN = 160
 TOP_N = 12
 #: Enough repetition to mean something rather than one bad request.

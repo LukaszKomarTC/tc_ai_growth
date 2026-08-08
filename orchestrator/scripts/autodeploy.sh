@@ -45,6 +45,13 @@ if (cd "$APP/orchestrator" && "$PY" -m pytest -q >"$PYTEST_OUT" 2>&1); then
     SUMMARY=$(tail -n1 "$PYTEST_OUT" | tr -d '"')
     log "tests green ($SUMMARY) — restarting dashboard"
     # Needs the one-line sudoers rule from deployments/systemd/README.md (restart only, no shell).
+    #
+    # This restarts the TRANSITIONAL read-only dashboard only, and deliberately NOT
+    # tc-console.service. The Console runs from a release worktree pinned at a reviewed commit
+    # and is advanced by an explicit deploy-console.sh run — auto-advancing an execution surface
+    # on every merge would defeat that pinning and silently invalidate active sessions, whose
+    # signatures bind the deploy commit. A merge to main therefore does NOT put new code into
+    # the Console; that is the governed design, not an oversight (WP-U5.2b).
     sudo -n systemctl restart tc-dashboard.service 2>>"$LOG" || log "dashboard restart failed (sudoers rule missing?)"
     report "deployed" "$REMOTE" "$SUMMARY"
     log "deployed $REMOTE OK"

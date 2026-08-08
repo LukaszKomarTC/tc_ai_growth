@@ -874,6 +874,46 @@ _U5_FRESHNESS_NOTE = {
 }
 
 
+def runtime_panel(identity) -> str:
+    """WP-U5.2b: what this Console actually is, said in the browser.
+
+    The U5.2 acceptance pre-flight found two apparently-current Console service identities in the
+    repository and no way to tell from the page which one you had reached, or whether the
+    WordPress docroot was configured at all. The answer the review rejected was a runbook step
+    telling the owner to go and check in SSH; this panel is the answer it asked for instead —
+    the runtime states its own identity, and a misconfiguration is visible BEFORE a sweep is
+    accepted rather than diagnosed from the `unknown` row it produces afterwards.
+
+    Nothing here is a secret: it is a service name, a profile, an environment, a commit and a
+    directory path, all of which already appear in the evidence this page renders.
+    """
+    unit = identity.unit or "not running under systemd"
+    docroot = identity.docroot or "not set"
+    rows = (
+        ("Service", f"{_e(unit)}"
+                    + ("" if identity.unit_matches
+                       else f" — expected <strong>{_e(identity.expected_unit)}</strong>")),
+        ("Identity", f"{_e(identity.profile)} · {_e(identity.environment)}"),
+        ("Deployed commit", f"<code>{_e(identity.build_commit[:12])}</code>"),
+        ("WordPress docroot", f"<code>{_e(docroot)}</code>"
+                              + ("" if identity.docroot_readable else " — not readable")),
+    )
+    body = "".join(f"<div class='muted'>{label}: {value}</div>" for label, value in rows)
+    if identity.ready_to_inspect:
+        return ("<details style='margin-top:10px'><summary class='muted'>Runtime</summary>"
+                f"<div style='margin-top:6px'>{body}</div></details>")
+    # Not a fold when something is wrong: the point is that it cannot be missed.
+    problems = "".join(f"<li>{_e(p)}</li>" for p in identity.problems)
+    return (
+        "<div class='warn' style='margin-top:10px'>"
+        "<strong>This Console is not fully configured to inspect.</strong>"
+        f"<ul style='margin:6px 0 6px 18px'>{problems}</ul>"
+        "<div class='muted'>An inspection will still run and will record what it can, but the "
+        "affected scopes will report <em>unknown</em> — which is honest, and is not an "
+        "acceptance-quality reading.</div>"
+        f"<div style='margin-top:6px'>{body}</div></div>")
+
+
 def _u5_run_control(csrf: str, offered: bool) -> str:
     """The one control on this page. It carries a CSRF token and nothing else — no path, no
     scope, no profile — so a request cannot steer what gets collected or whose it is."""
@@ -890,7 +930,8 @@ def _u5_run_control(csrf: str, offered: bool) -> str:
 
 def operations_health_body(run: dict | None, observations: list[dict], *,
                            profile: str, environment: str, now, effective, freshness,
-                           rollup, value_of, csrf: str = "", offered: bool = False) -> str:
+                           rollup, value_of, csrf: str = "", offered: bool = False,
+                           identity=None) -> str:
     """The owner's one answer to 'is my operation healthy?'.
 
     Deliberately parameterised over the freshness/severity functions rather than importing them:
@@ -906,6 +947,7 @@ def operations_health_body(run: dict | None, observations: list[dict], *,
             "<div class='muted'>No inspection has run for "
             f"<strong>{_e(profile)}</strong> / <strong>{_e(environment)}</strong>. That is not a "
             "clean bill of health — it is an absence of evidence.</div>"
+            + (runtime_panel(identity) if identity else "")
             + _u5_run_control(csrf, offered) + "</section>")
 
     states = [effective(o, now=now) for o in observations]
@@ -919,6 +961,7 @@ def operations_health_body(run: dict | None, observations: list[dict], *,
         f"<section class='statuscard {_e(cls)}'><p class='lead'>{_e(headline)}</p>"
         f"<div class='muted'>{_e(profile)} · {_e(environment)} · last inspection {_e(when)} · "
         f"{actions} action{'' if actions == 1 else 's'} required</div>"
+        + (runtime_panel(identity) if identity else "")
         + _u5_run_control(csrf, offered) + "</section>")
 
     rows = []

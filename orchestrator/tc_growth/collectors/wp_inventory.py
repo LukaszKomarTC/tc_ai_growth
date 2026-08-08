@@ -24,12 +24,14 @@ import os
 from typing import Callable
 
 from ..inspection import STATUS_ACTION, STATUS_OK, STATUS_UNKNOWN, CollectionContext, CollectorResult
+#: Part of the deployed service's GOVERNED configuration since U5.2b: `deploy-console.sh` writes
+#: it into the unit, so the owner never pastes it before a run and the Console can say on its own
+#: page whether it is set. There is deliberately no default — guessing a docroot would mean
+#: inspecting whichever site happens to live at a familiar path and filing the result under this
+#: profile's name, the cross-identity failure U5 exists to prevent. One owner for the contract:
+#: the collector that READS it must not be a second place that NAMES it.
+from ..runtime_identity import DOCROOT_ENV
 from ._exec import CommandResult, run_command, wp_core_version, wp_plugin_list, wp_theme_list
-
-#: Set by the maintainer per site. There is deliberately no default: guessing a docroot would
-#: mean inspecting whichever site happens to live at a familiar path and filing the result under
-#: this profile's name — the cross-identity failure U5 exists to prevent.
-DOCROOT_ENV = "TC_SITE_DOCROOT"
 
 # The argv comes from `_exec`'s builders: a collector names the command it wants and cannot
 # assemble one, so `wp plugin install` is not a variation this module could express.
